@@ -139,6 +139,35 @@ EOF
     success "Programs installed successfully"
 }
 
+# Create systemd service for XDP program
+create_service() {
+    local interface=$1
+    log "Creating systemd service for interface $interface..."
+    
+    cat << EOF > /etc/systemd/system/${SERVICE_NAME}.service
+[Unit]
+Description=eBPF XDP UDP DF Modifier
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$INSTALL_DIR/$PROGRAM_NAME $interface
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable ${SERVICE_NAME}
+}
+
 # Attach XDP program to interface
 attach_xdp() {
     local interface=$1
@@ -147,21 +176,18 @@ attach_xdp() {
     check_existing_xdp "$interface"
     
     log "Attaching XDP program to interface $interface..."
+    create_service "$interface"
     
-    # Use the loader program for safe attachment
-    "$INSTALL_DIR/$PROGRAM_NAME" "$interface" &
-    local pid=$!
-    sleep 2  # Give it time to attach
+    log "Starting XDP service..."
+    systemctl start ${SERVICE_NAME}
     
     # Verify attachment
-    if ip link show "$interface" | grep -q xdp; then
-        success "XDP program successfully attached to $interface"
-        kill $pid 2>/dev/null || true
-        wait $pid 2>/dev/null || true
+    if systemctl is-active --quiet ${SERVICE_NAME} && ip link show "$interface" | grep -q xdp; then
+        success "XDP service started and program attached to $interface"
+        log "Use 'systemctl status ${SERVICE_NAME}' to monitor"
+        log "Use 'journalctl -u ${SERVICE_NAME} -f' to view logs"
     else
-        error "XDP program attachment failed"
-        kill $pid 2>/dev/null || true
-        wait $pid 2>/dev/null || true
+        error "Service failed to start. Check: journalctl -u ${SERVICE_NAME}"
         exit 1
     fi
 }
@@ -169,6 +195,13 @@ attach_xdp() {
 # Detach XDP program
 detach_xdp() {
     local interface=$1
+    
+    # Stop systemd service first
+    if systemctl is-active --quiet ${SERVICE_NAME}; then
+        log "Stopping XDP service..."
+        systemctl stop ${SERVICE_NAME}
+        systemctl disable ${SERVICE_NAME}
+    fi
     
     if [[ -z "$interface" ]]; then
         # Try to detach from all interfaces with XDP

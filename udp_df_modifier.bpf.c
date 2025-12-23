@@ -169,7 +169,12 @@ int udp_df_modifier(struct xdp_md *ctx)
         return XDP_PASS; // Invalid IP header length
     }
     
-    // Parse UDP header with proper bounds checking
+    // Parse UDP header with enhanced bounds checking
+    // ENHANCED: Verify the calculated UDP header position is within bounds
+    if ((void *)((char *)iph + ip_hdr_len) > data_end) {
+        return XDP_PASS; // UDP header position beyond packet boundary
+    }
+    
     struct udphdr *udph = (struct udphdr *)((char *)iph + ip_hdr_len);
     
     // Boundary check: ensure we can read UDP header
@@ -204,12 +209,18 @@ int udp_df_modifier(struct xdp_md *ctx)
         // Clear the DF bit
         iph->frag_off &= ~bpf_htons(IP_DF);
         
-        // Recalculate IP checksum
+        // Recalculate IP checksum using our function
         iph->check = ip_checksum(iph);
         
-        // For UDP over IPv4, we can zero the UDP checksum (RFC allows this)
-        // This avoids expensive UDP checksum recalculation
-        udph->check = 0;
+        // Safer UDP checksum handling:
+        // Only zero if original was already zero (no checksum case)
+        // Otherwise preserve existing checksum to avoid drops at security appliances
+        if (udph->check == 0) {
+            // Already no checksum, safe to leave as-is
+        } else {
+            // Preserve existing UDP checksum (safest approach)
+            // IP DF bit change doesn't affect UDP payload, so UDP checksum remains valid
+        }
         
         // Update modified packets counter
         update_stat(STAT_MODIFIED_PACKETS, 1);
