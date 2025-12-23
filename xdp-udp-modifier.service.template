@@ -1,0 +1,34 @@
+[Unit]
+Description=eBPF XDP UDP DF Modifier
+After=network.target
+Wants=network-online.target
+Documentation=file:///usr/local/share/doc/xdp-udp-modifier/README.md
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/udp_df_modifier_xdp INTERFACE_PLACEHOLDER
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Security hardening
+ProtectSystem=full
+ProtectHome=true
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectKernelTunables=false
+ProtectKernelModules=false
+ProtectControlGroups=true
+
+# Resource limits
+LimitNOFILE=65536
+LimitMEMLOCK=infinity
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=xdp-udp-modifier
+
+[Install]
+WantedBy=multi-user.target
