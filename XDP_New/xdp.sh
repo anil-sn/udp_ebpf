@@ -16,76 +16,95 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# FIX TERMINAL STATE (Prevents stair-stepping output)
-stty sane
+# Helper to force TTY fix
+fix_terminal() {
+    stty sane 2>/dev/null
+    printf "${NC}" # Reset colors
+    tput cnorm 2>/dev/null # Show cursor
+}
 
 start() {
+    fix_terminal
     echo -e "${BLUE}Starting XDP VXLAN Pipeline...${NC}"
     
-    # Check if already running
-    PID=$(pgrep -f vxlan_loader | head -1)
-    if [ -n "$PID" ]; then
-        echo -e "${RED}ERROR: Pipeline already running (PID: $PID)${NC}"
-        echo "Run './xdp.sh stop' first"
-        exit 1
+    # Check if running with more robust detection
+    EXISTING_PID=$(pgrep -f "vxlan_loader.*-i.*$INTERFACE" | head -1)
+    if [ -n "$EXISTING_PID" ]; then
+        echo -e "${RED}ERROR: Pipeline already running (PID: $EXISTING_PID)${NC}"
+        echo -e "${YELLOW}Use './xdp.sh stop' first${NC}"
+        return 1
     fi
     
-    # Cleanup orphans
-    if ip link show $INTERFACE 2>/dev/null | grep -q xdp; then
-        echo "Cleaning up orphaned XDP program..."
-        sudo ip link set $INTERFACE xdp off 2>/dev/null || true
-    fi
+    # Clean orphans
+    echo -e "${YELLOW}Cleaning any orphaned XDP programs...${NC}"
+    sudo ip link set $INTERFACE xdp off 2>/dev/null || true
     
-    # Start background process
+    # Start background process with comprehensive redirection
+    echo -e "${BLUE}Launching vxlan_loader...${NC}"
     nohup sudo ./vxlan_loader -i $INTERFACE -t $TARGET_INTERFACE \
         -a $NAT_IP -p $NAT_PORT -s $SOURCE_PORT -I 5 \
-        </dev/null >/dev/null 2>&1 &
+        </dev/null >/tmp/vxlan_loader.log 2>&1 &
     
-    sleep 2
+    # Give more time for startup
+    sleep 3
     
-    PID=$(pgrep -f vxlan_loader | head -1)
-    if [ -n "$PID" ]; then
-        echo -e "${GREEN}SUCCESS: Pipeline started (PID: $PID)${NC}"
-        status
+    # Verify startup with specific pattern match
+    NEW_PID=$(pgrep -f "vxlan_loader.*-i.*$INTERFACE" | head -1)
+    if [ -n "$NEW_PID" ]; then
+        echo -e "${GREEN}SUCCESS: Pipeline started (PID: $NEW_PID)${NC}"
+        echo -e "${GREEN}Log file: /tmp/vxlan_loader.log${NC}"
+        sleep 1
+        fix_terminal
     else
         echo -e "${RED}ERROR: Failed to start pipeline${NC}"
+        echo -e "${YELLOW}Check log: cat /tmp/vxlan_loader.log${NC}"
+        fix_terminal
         exit 1
     fi
 }
 
 stop() {
+    fix_terminal
     echo -e "${BLUE}Stopping Pipeline...${NC}"
     
-    PID=$(pgrep -f vxlan_loader | head -1)
-    if [ -z "$PID" ]; then
-        # Just clean interface if process is dead
-        sudo ip link set $INTERFACE xdp off 2>/dev/null || true
-        echo "Pipeline was not running."
-        return 0
+    # Kill process if exists
+    if pgrep -f "vxlan_loader" > /dev/null; then
+        sudo pkill -TERM -f "vxlan_loader" 2>/dev/null
+        
+        # Wait loop
+        for i in {1..3}; do
+            pgrep -f "vxlan_loader" > /dev/null || break
+            sleep 1
+        done
+        
+        # Force kill
+        sudo pkill -KILL -f "vxlan_loader" 2>/dev/null || true
     fi
-    
-    # Kill process
-    sudo kill -TERM $PID 2>/dev/null
-    
-    for i in {1..3}; do
-        if ! pgrep -f vxlan_loader > /dev/null; then
-            break
-        fi
-        sleep 1
-    done
-    
-    # Force kill if needed
-    sudo pkill -KILL -f vxlan_loader 2>/dev/null || true
+
+    # Clean interface
     sudo ip link set $INTERFACE xdp off 2>/dev/null || true
     
     echo -e "${GREEN}Stopped and Detached.${NC}"
+    fix_terminal
+}
+
+clean() {
+    # Aggressive cleanup
+    sudo pkill -KILL -f "vxlan_loader" 2>/dev/null || true
+    sudo ip link set $INTERFACE xdp off 2>/dev/null || true
+    
+    # FIX TERMINAL NOW because the kill might have left it raw
+    fix_terminal
+    
+    echo -e "${GREEN}Environment Reset.${NC}"
 }
 
 status() {
+    fix_terminal
     clear
     echo -e "${CYAN}--- XDP VXLAN STATUS ---${NC}"
     
-    PID=$(pgrep -f vxlan_loader | head -1)
+    PID=$(pgrep -f "vxlan_loader" | head -1)
     
     if [ -n "$PID" ]; then
         echo -e "Service:  ${GREEN}RUNNING${NC} (PID: $PID)"
@@ -98,12 +117,11 @@ status() {
         
         echo ""
         echo -e "${BLUE}Configuration:${NC}"
-        # Using simple echo to avoid printf formatting issues
         echo "  Inbound:  $INTERFACE (Port $SOURCE_PORT)"
         echo "  Outbound: $TARGET_INTERFACE -> $NAT_IP:$NAT_PORT"
         
         echo ""
-        echo -e "${BLUE}Traffic:${NC}"
+        echo -e "${BLUE}Traffic Load:${NC}"
         RX1=$(cat /sys/class/net/$INTERFACE/statistics/rx_packets 2>/dev/null || echo "0")
         sleep 1
         RX2=$(cat /sys/class/net/$INTERFACE/statistics/rx_packets 2>/dev/null || echo "0")
@@ -117,17 +135,19 @@ status() {
         
     else
         echo -e "Service:  ${RED}STOPPED${NC}"
-        echo -e "XDP Hook: $(ip link show $INTERFACE 2>/dev/null | grep -q xdp && echo "${YELLOW}ORPHANED${NC}" || echo "${GREEN}CLEAN${NC}")"
+        STATUS_LINK=$(ip link show $INTERFACE 2>/dev/null | grep -q xdp && echo "${YELLOW}ORPHANED${NC}" || echo "${GREEN}CLEAN${NC}")
+        echo -e "XDP Hook: $STATUS_LINK"
     fi
     echo ""
 }
 
 monitor() {
-    if ! pgrep -f vxlan_loader > /dev/null; then
+    if ! pgrep -f "vxlan_loader" > /dev/null; then
         echo -e "${RED}Start pipeline first!${NC}"
         exit 1
     fi
-
+    
+    fix_terminal
     clear
     echo -e "${BLUE}Live Monitor (Ctrl+C to stop)${NC}"
     printf "%-10s | %-10s | %s\n" "TIME" "PPS" "STATUS"
@@ -152,11 +172,8 @@ monitor() {
     done
 }
 
-clean() {
-    sudo pkill -KILL -f vxlan_loader 2>/dev/null
-    sudo ip link set $INTERFACE xdp off 2>/dev/null || true
-    echo -e "${GREEN}Environment Reset.${NC}"
-}
+# Ensure terminal is fixed on exit
+trap fix_terminal EXIT
 
 case "${1:-status}" in
     "start") start ;;
