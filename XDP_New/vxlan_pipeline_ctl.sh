@@ -301,9 +301,11 @@ monitor_performance() {
     echo
     
     # Header
-    printf "%-8s %-10s %-10s %-8s %-12s %-10s %-8s\n" \
+    printf "%-8s %-10s %-10s %-8s %-12s %-10s %-8s
+" \
            "TIME" "PPS" "VXLAN_PPS" "NAT_HIT%" "REDIRECTED" "ERRORS" "STATUS"
-    printf "%-8s %-10s %-10s %-8s %-12s %-10s %-8s\n" \
+    printf "%-8s %-10s %-10s %-8s %-12s %-10s %-8s
+" \
            "--------" "----------" "----------" "--------" "------------" "----------" "--------"
     
     while true; do
@@ -315,4 +317,288 @@ monitor_performance() {
         sleep $STATS_INTERVAL
         local rx_packets_after=$(cat /sys/class/net/$INPUT_INTERFACE/statistics/rx_packets)
         
-        local pps=$(((rx_packets_after - rx_packets_before) / STATS_INTERVAL))\n        \n        # Performance status\n        local status="🔴"\n        if [[ $pps -ge $TARGET_PPS ]]; then\n            status="🟢"\n        elif [[ $pps -ge $((TARGET_PPS * 70 / 100)) ]]; then\n            status="🟡"\n        fi\n        \n        printf "%-8s %-10d %-10s %-8s %-12s %-10s %-8s\\n" \\\n               "$current_time" "$pps" "N/A" "N/A" "N/A" "N/A" "$status"\n        \n        ((iteration++))\n        \n        # Check if monitoring duration exceeded\n        if [[ $MONITOR_DURATION -gt 0 ]]; then\n            local elapsed=$(($(date +%s) - start_time))\n            if [[ $elapsed -ge $MONITOR_DURATION ]]; then\n                break\n            fi\n        fi\n    done\n}\n\nrun_program_with_monitoring() {\n    section "Launching XDP VXLAN Pipeline"\n    \n    # Build command line arguments\n    local args="-i $INPUT_INTERFACE"\n    \n    if [[ -n "$TARGET_INTERFACE" ]]; then\n        args="$args -t $TARGET_INTERFACE"\n    fi\n    \n    args="$args -a $NAT_TARGET_IP -p $NAT_TARGET_PORT -s $NAT_SOURCE_PORT"\n    args="$args --stats-interval $STATS_INTERVAL -v"\n    \n    info "Command: ./vxlan_loader $args"\n    log "Starting VXLAN pipeline..."\n    \n    # Start the program in background for monitoring\n    ./vxlan_loader $args &\n    PROGRAM_PID=$!\n    XDP_ATTACHED=1\n    \n    sleep 2  # Give program time to start\n    \n    if ! kill -0 $PROGRAM_PID 2>/dev/null; then\n        error "XDP program failed to start"\n        return 1\n    fi\n    \n    log "XDP program started (PID: $PROGRAM_PID)"\n    \n    # Start monitoring\n    monitor_performance\n}\n\n# ============================================================================\n# CLEANUP FUNCTIONS\n# ============================================================================\n\ncleanup() {\n    section "Cleaning up VXLAN Pipeline"\n    \n    # Stop program if running\n    if [[ $PROGRAM_PID -gt 0 ]]; then\n        info "Stopping XDP program (PID: $PROGRAM_PID)..."\n        kill -TERM $PROGRAM_PID 2>/dev/null || true\n        sleep 2\n        kill -KILL $PROGRAM_PID 2>/dev/null || true\n    fi\n    \n    # Remove XDP program if attached\n    if [[ $XDP_ATTACHED -eq 1 ]] && ip link show "$INPUT_INTERFACE" 2>/dev/null | grep -q "xdp"; then\n        info "Detaching XDP program from $INPUT_INTERFACE..."\n        ip link set "$INPUT_INTERFACE" xdp off || warn "Failed to detach XDP program"\n    fi\n    \n    log "Cleanup complete"\n}\n\n# ============================================================================\n# MAIN EXECUTION FUNCTIONS\n# ============================================================================\n\nrun_system_check() {\n    section "System Readiness Validation"\n    \n    local failed=0\n    \n    check_kernel_version || failed=1\n    check_xdp_support || failed=1\n    check_interfaces || failed=1\n    check_build_dependencies || failed=1\n    check_system_performance\n    \n    if [[ $failed -eq 0 ]]; then\n        log "✅ System validation passed - ready for deployment"\n        return 0\n    else\n        error "❌ System validation failed - fix issues before proceeding"\n        return 1\n    fi\n}\n\nrun_deployment() {\n    section "XDP Pipeline Deployment"\n    \n    check_existing_xdp\n    optimize_system\n    build_program || return 1\n    \n    log "✅ Deployment preparation complete"\n}\n\nrun_full_pipeline() {\n    display_configuration\n    echo\n    \n    run_system_check || exit 1\n    echo\n    \n    run_deployment || exit 1\n    echo\n    \n    run_program_with_monitoring\n}\n\n# ============================================================================\n# COMMAND LINE INTERFACE\n# ============================================================================\n\nshow_help() {\n    cat << EOF\nVXLAN Pipeline XDP - Unified Deployment & Monitoring Tool\n=========================================================\n\nUSAGE:\n    $0 [COMMAND] [OPTIONS]\n\nCOMMANDS:\n    deploy          Full deployment pipeline (default)\n    check           System readiness validation only\n    build           Build program only\n    monitor         Monitor existing deployment\n    clean           Clean up and remove XDP program\n    help            Show this help\n\nOPTIONS:\n    -i, --input IFACE       Input interface (default: $INPUT_INTERFACE)\n    -t, --target IFACE      Target interface (default: $TARGET_INTERFACE)\n    -a, --nat-ip IP         NAT target IP (default: $NAT_TARGET_IP)\n    -p, --nat-port PORT     NAT target port (default: $NAT_TARGET_PORT)\n    -s, --source-port PORT  Source port to match (default: $NAT_SOURCE_PORT)\n    -r, --rate PPS          Target packet rate (default: $TARGET_PPS)\n    -d, --duration SECS     Monitor duration, 0=infinite (default: $MONITOR_DURATION)\n    --stats-interval SECS   Statistics interval (default: $STATS_INTERVAL)\n    -v, --verbose           Verbose output\n    -h, --help             Show help\n\nEXAMPLES:\n    # Full deployment with monitoring\n    sudo $0 deploy\n    \n    # Custom configuration matching your packet analysis\n    sudo $0 -i ens4 -t ens5 -a 10.2.41.17 -p 8081 -s 42844\n    \n    # System check only\n    sudo $0 check\n    \n    # Monitor for 60 seconds\n    sudo $0 monitor -d 60\n\nNOTES:\n    - Based on your packet analysis: 10.2.41.20:42844 → 10.2.41.17:8081\n    - Processes 2852-byte jumbo frames → 1500-byte packets (DF bit clearing)\n    - Optimized for 85,000+ packets per second sustained performance\n    - Requires root privileges for XDP program attachment\nEOF\n}\n\n# Parse command line arguments\nCOMMAND="deploy"\nVERBOSE=0\n\nwhile [[ $# -gt 0 ]]; do\n    case $1 in\n        deploy|check|build|monitor|clean|help)\n            COMMAND="$1"\n            shift\n            ;;\n        -i|--input)\n            INPUT_INTERFACE="$2"\n            shift 2\n            ;;\n        -t|--target)\n            TARGET_INTERFACE="$2"\n            shift 2\n            ;;\n        -a|--nat-ip)\n            NAT_TARGET_IP="$2"\n            shift 2\n            ;;\n        -p|--nat-port)\n            NAT_TARGET_PORT="$2"\n            shift 2\n            ;;\n        -s|--source-port)\n            NAT_SOURCE_PORT="$2"\n            shift 2\n            ;;\n        -r|--rate)\n            TARGET_PPS="$2"\n            shift 2\n            ;;\n        -d|--duration)\n            MONITOR_DURATION="$2"\n            shift 2\n            ;;\n        --stats-interval)\n            STATS_INTERVAL="$2"\n            shift 2\n            ;;\n        -v|--verbose)\n            VERBOSE=1\n            shift\n            ;;\n        -h|--help)\n            show_help\n            exit 0\n            ;;\n        *)\n            error "Unknown option: $1"\n            show_help\n            exit 1\n            ;;\n    esac\ndone\n\n# ============================================================================\n# MAIN EXECUTION\n# ============================================================================\n\n# Set up signal handlers\ntrap cleanup EXIT\ntrap cleanup SIGINT\ntrap cleanup SIGTERM\n\necho "🚀 VXLAN Pipeline XDP - High-Performance Packet Processing"\necho "============================================================"\necho\n\n# Execute command\ncase $COMMAND in\n    "deploy")\n        check_root\n        run_full_pipeline\n        ;;\n    "check")\n        run_system_check\n        ;;\n    "build")\n        check_root\n        build_program\n        ;;\n    "monitor")\n        check_root\n        monitor_performance\n        ;;\n    "clean")\n        check_root\n        cleanup\n        ;;\n    "help")\n        show_help\n        ;;\n    *)\n        error "Unknown command: $COMMAND"\n        show_help\n        exit 1\n        ;;\nesac
+        local pps=$(((rx_packets_after - rx_packets_before) / STATS_INTERVAL))
+        
+        # Performance status
+        local status="🔴"
+        if [[ $pps -ge $TARGET_PPS ]]; then
+            status="🟢"
+        elif [[ $pps -ge $((TARGET_PPS * 70 / 100)) ]]; then
+            status="🟡"
+        fi
+        
+        printf "%-8s %-10d %-10s %-8s %-12s %-10s %-8s
+" \
+               "$current_time" "$pps" "N/A" "N/A" "N/A" "N/A" "$status"
+        
+        ((iteration++))
+        
+        # Check if monitoring duration exceeded
+        if [[ $MONITOR_DURATION -gt 0 ]]; then
+            local elapsed=$(($(date +%s) - start_time))
+            if [[ $elapsed -ge $MONITOR_DURATION ]]; then
+                break
+            fi
+        fi
+    done
+}
+
+run_program_with_monitoring() {
+    section "Launching XDP VXLAN Pipeline"
+    
+    # Build command line arguments
+    local args="-i $INPUT_INTERFACE"
+    
+    if [[ -n "$TARGET_INTERFACE" ]]; then
+        args="$args -t $TARGET_INTERFACE"
+    fi
+    
+    args="$args -a $NAT_TARGET_IP -p $NAT_TARGET_PORT -s $NAT_SOURCE_PORT"
+    args="$args --stats-interval $STATS_INTERVAL -v"
+    
+    info "Command: ./vxlan_loader $args"
+    log "Starting VXLAN pipeline..."
+    
+    # Start the program in background for monitoring
+    ./vxlan_loader $args &
+    PROGRAM_PID=$!
+    XDP_ATTACHED=1
+    
+    sleep 2  # Give program time to start
+    
+    if ! kill -0 $PROGRAM_PID 2>/dev/null; then
+        error "XDP program failed to start"
+        return 1
+    fi
+    
+    log "XDP program started (PID: $PROGRAM_PID)"
+    
+    # Start monitoring
+    monitor_performance
+}
+
+# ============================================================================
+# CLEANUP FUNCTIONS
+# ============================================================================
+
+cleanup() {
+    section "Cleaning up VXLAN Pipeline"
+    
+    # Stop program if running
+    if [[ $PROGRAM_PID -gt 0 ]]; then
+        info "Stopping XDP program (PID: $PROGRAM_PID)..."
+        kill -TERM $PROGRAM_PID 2>/dev/null || true
+        sleep 2
+        kill -KILL $PROGRAM_PID 2>/dev/null || true
+    fi
+    
+    # Remove XDP program if attached
+    if [[ $XDP_ATTACHED -eq 1 ]] && ip link show "$INPUT_INTERFACE" 2>/dev/null | grep -q "xdp"; then
+        info "Detaching XDP program from $INPUT_INTERFACE..."
+        ip link set "$INPUT_INTERFACE" xdp off || warn "Failed to detach XDP program"
+    fi
+    
+    log "Cleanup complete"
+}
+
+# ============================================================================
+# MAIN EXECUTION FUNCTIONS
+# ============================================================================
+
+run_system_check() {
+    section "System Readiness Validation"
+    
+    local failed=0
+    
+    check_kernel_version || failed=1
+    check_xdp_support || failed=1
+    check_interfaces || failed=1
+    check_build_dependencies || failed=1
+    check_system_performance
+    
+    if [[ $failed -eq 0 ]]; then
+        log "✅ System validation passed - ready for deployment"
+        return 0
+    else
+        error "❌ System validation failed - fix issues before proceeding"
+        return 1
+    fi
+}
+
+run_deployment() {
+    section "XDP Pipeline Deployment"
+    
+    check_existing_xdp
+    optimize_system
+    build_program || return 1
+    
+    log "✅ Deployment preparation complete"
+}
+
+run_full_pipeline() {
+    display_configuration
+    echo
+    
+    run_system_check || exit 1
+    echo
+    
+    run_deployment || exit 1
+    echo
+    
+    run_program_with_monitoring
+}
+
+# ============================================================================
+# COMMAND LINE INTERFACE
+# ============================================================================
+
+show_help() {
+    cat << EOF
+VXLAN Pipeline XDP - Unified Deployment & Monitoring Tool
+=========================================================
+
+USAGE:
+    $0 [COMMAND] [OPTIONS]
+
+COMMANDS:
+    deploy          Full deployment pipeline (default)
+    check           System readiness validation only
+    build           Build program only
+    monitor         Monitor existing deployment
+    clean           Clean up and remove XDP program
+    help            Show this help
+
+OPTIONS:
+    -i, --input IFACE       Input interface (default: $INPUT_INTERFACE)
+    -t, --target IFACE      Target interface (default: $TARGET_INTERFACE)
+    -a, --nat-ip IP         NAT target IP (default: $NAT_TARGET_IP)
+    -p, --nat-port PORT     NAT target port (default: $NAT_TARGET_PORT)
+    -s, --source-port PORT  Source port to match (default: $NAT_SOURCE_PORT)
+    -r, --rate PPS          Target packet rate (default: $TARGET_PPS)
+    -d, --duration SECS     Monitor duration, 0=infinite (default: $MONITOR_DURATION)
+    --stats-interval SECS   Statistics interval (default: $STATS_INTERVAL)
+    -v, --verbose           Verbose output
+    -h, --help             Show help
+
+EXAMPLES:
+    # Full deployment with monitoring
+    sudo $0 deploy
+    
+    # Custom configuration matching your packet analysis
+    sudo $0 -i ens4 -t ens5 -a 10.2.41.17 -p 8081 -s 42844
+    
+    # System check only
+    sudo $0 check
+    
+    # Monitor for 60 seconds
+    sudo $0 monitor -d 60
+
+NOTES:
+    - Based on your packet analysis: 10.2.41.20:42844 → 10.2.41.17:8081
+    - Processes 2852-byte jumbo frames → 1500-byte packets (DF bit clearing)
+    - Optimized for 85,000+ packets per second sustained performance
+    - Requires root privileges for XDP program attachment
+EOF
+}
+
+# Parse command line arguments
+COMMAND="deploy"
+VERBOSE=0
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        deploy|check|build|monitor|clean|help)
+            COMMAND="$1"
+            shift
+            ;;
+        -i|--input)
+            INPUT_INTERFACE="$2"
+            shift 2
+            ;;
+        -t|--target)
+            TARGET_INTERFACE="$2"
+            shift 2
+            ;;
+        -a|--nat-ip)
+            NAT_TARGET_IP="$2"
+            shift 2
+            ;;
+        -p|--nat-port)
+            NAT_TARGET_PORT="$2"
+            shift 2
+            ;;
+        -s|--source-port)
+            NAT_SOURCE_PORT="$2"
+            shift 2
+            ;;
+        -r|--rate)
+            TARGET_PPS="$2"
+            shift 2
+            ;;
+        -d|--duration)
+            MONITOR_DURATION="$2"
+            shift 2
+            ;;
+        --stats-interval)
+            STATS_INTERVAL="$2"
+            shift 2
+            ;;
+        -v|--verbose)
+            VERBOSE=1
+            shift
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        *)
+            error "Unknown option: $1"
+            show_help
+            exit 1
+            ;;
+    esac
+done
+
+# ============================================================================
+# MAIN EXECUTION
+# ============================================================================
+
+# Set up signal handlers
+trap cleanup EXIT
+trap cleanup SIGINT
+trap cleanup SIGTERM
+
+echo "🚀 VXLAN Pipeline XDP - High-Performance Packet Processing"
+echo "============================================================"
+echo
+
+# Execute command
+case $COMMAND in
+    "deploy")
+        check_root
+        run_full_pipeline
+        ;;
+    "check")
+        run_system_check
+        ;;
+    "build")
+        check_root
+        build_program
+        ;;
+    "monitor")
+        check_root
+        monitor_performance
+        ;;
+    "clean")
+        check_root
+        cleanup
+        ;;
+    "help")
+        show_help
+        ;;
+    *)
+        error "Unknown command: $COMMAND"
+        show_help
+        exit 1
+        ;;
+esac
