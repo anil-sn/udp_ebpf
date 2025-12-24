@@ -78,83 +78,23 @@ setup: $(SETUP_SCRIPT)
 
 $(SETUP_SCRIPT):
 	@echo "Creating environment setup script..."
-	@cat > $(SETUP_SCRIPT) << 'EOF'
-#!/bin/bash
-set -e
-
-echo "Setting up VXLAN Pipeline Environment..."
-
-# Check if running as root
-if [[ $$EUID -ne 0 ]]; then
-   echo "This script must be run as root (use sudo)" 
-   exit 1
-fi
-
-# Install required packages
-echo "Installing dependencies..."
-apt-get update
-apt-get install -y \
-    clang \
-    gcc \
-    make \
-    libbpf-dev \
-    linux-headers-$$(uname -r) \
-    iproute2 \
-    net-tools
-
-# Enable IP forwarding
-echo "Configuring system for packet forwarding..."
-echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.conf
-sysctl -p
-
-# Increase socket buffer sizes for high-traffic workloads
-echo "Optimizing network buffers for 85K+ pps..."
-echo 'net.core.rmem_default = 262144' >> /etc/sysctl.conf
-echo 'net.core.rmem_max = 16777216' >> /etc/sysctl.conf
-echo 'net.core.wmem_default = 262144' >> /etc/sysctl.conf  
-echo 'net.core.wmem_max = 16777216' >> /etc/sysctl.conf
-echo 'net.core.netdev_max_backlog = 5000' >> /etc/sysctl.conf
-sysctl -p
-
-# Set CPU governor to performance for consistent latency
-echo "Setting CPU governor to performance mode..."
-for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
-    [ -f "$$cpu" ] && echo performance > "$$cpu"
-done
-
-# Create systemd service
-echo "Creating systemd service..."
-cat > /etc/systemd/system/vxlan-pipeline.service << 'EOD'
-[Unit]
-Description=High-Performance VXLAN Pipeline XDP Service
-After=network.target
-Requires=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/vxlan-pipeline
-ExecStart=/opt/vxlan-pipeline/vxlan_loader -i ens5 -t ens6 -a 127.0.0.1 -p 8080 -s 31765
-Restart=always
-RestartSec=5
-
-# Performance optimizations
-Nice=-10
-IOSchedulingClass=1
-IOSchedulingPriority=4
-
-[Install]
-WantedBy=multi-user.target
-EOD
-
-systemctl daemon-reload
-
-echo "Setup complete! Next steps:"
-echo "1. Build the project: make"
-echo "2. Test manually: sudo ./vxlan_loader --help"
-echo "3. Install service: sudo make install"
-echo "4. Start service: sudo systemctl start vxlan-pipeline"
-EOF
+	@echo '#!/bin/bash' > $(SETUP_SCRIPT)
+	@echo 'set -e' >> $(SETUP_SCRIPT)
+	@echo '' >> $(SETUP_SCRIPT)
+	@echo 'echo "Setting up VXLAN Pipeline Environment..."' >> $(SETUP_SCRIPT)
+	@echo '' >> $(SETUP_SCRIPT)
+	@echo '# Check if running as root' >> $(SETUP_SCRIPT)
+	@echo 'if [[ $$EUID -ne 0 ]]; then' >> $(SETUP_SCRIPT)
+	@echo '   echo "This script must be run as root (use sudo)"' >> $(SETUP_SCRIPT)
+	@echo '   exit 1' >> $(SETUP_SCRIPT)
+	@echo 'fi' >> $(SETUP_SCRIPT)
+	@echo '' >> $(SETUP_SCRIPT)
+	@echo '# Install required packages' >> $(SETUP_SCRIPT)
+	@echo 'echo "Installing dependencies..."' >> $(SETUP_SCRIPT)
+	@echo 'apt-get update' >> $(SETUP_SCRIPT)
+	@echo 'apt-get install -y clang gcc make libbpf-dev linux-headers-$$(uname -r) iproute2 net-tools' >> $(SETUP_SCRIPT)
+	@echo '' >> $(SETUP_SCRIPT)
+	@echo 'echo "Setup complete! Run make to build the project."' >> $(SETUP_SCRIPT)
 	chmod +x $(SETUP_SCRIPT)
 	@echo "Setup script created: $(SETUP_SCRIPT)"
 
