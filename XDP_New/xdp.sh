@@ -12,24 +12,34 @@ start() {
     echo "🚀 Starting XDP VXLAN Pipeline..."
     
     # Check if already running
-    if pgrep -f vxlan_loader > /dev/null; then
-        echo "❌ Pipeline already running (PID: $(pgrep -f vxlan_loader))"
+    PID=$(pgrep -f vxlan_loader | head -1)
+    if [ -n "$PID" ]; then
+        echo "❌ Pipeline already running (PID: $PID)"
         echo "   Run './xdp.sh stop' first"
         exit 1
+    fi
+    
+    # Clean up any orphaned XDP programs first
+    if ip link show $INTERFACE 2>/dev/null | grep -q xdp; then
+        echo "🧹 Cleaning up orphaned XDP program..."
+        sudo ip link set $INTERFACE xdp off 2>/dev/null || true
+        sleep 1
     fi
     
     # Start in background
     sudo ./vxlan_loader -i $INTERFACE -t $TARGET_INTERFACE \
         -a $NAT_IP -p $NAT_PORT -s $SOURCE_PORT -I 5 > /dev/null 2>&1 &
     
-    sleep 2
+    sleep 3
     
-    if pgrep -f vxlan_loader > /dev/null; then
-        echo "✅ Pipeline started successfully (PID: $(pgrep -f vxlan_loader))"
+    PID=$(pgrep -f vxlan_loader | head -1)
+    if [ -n "$PID" ]; then
+        echo "✅ Pipeline started successfully (PID: $PID)"
         echo "   Interface: $INTERFACE → $TARGET_INTERFACE"
         echo "   NAT Rule: port $SOURCE_PORT → $NAT_IP:$NAT_PORT"
     else
         echo "❌ Failed to start pipeline"
+        echo "   Check logs: sudo ./vxlan_loader -i $INTERFACE -t $TARGET_INTERFACE -a $NAT_IP -p $NAT_PORT -s $SOURCE_PORT -v"
         exit 1
     fi
 }
@@ -37,7 +47,7 @@ start() {
 stop() {
     echo "🛑 Stopping XDP VXLAN Pipeline..."
     
-    PID=$(pgrep -f vxlan_loader)
+    PID=$(pgrep -f vxlan_loader | head -1)
     if [ -z "$PID" ]; then
         echo "ℹ️  Pipeline not running"
         
@@ -63,7 +73,7 @@ stop() {
     
     # Force kill if still running
     echo "⚠️  Forcing shutdown..."
-    sudo kill -KILL $PID 2>/dev/null || true
+    sudo pkill -KILL -f vxlan_loader 2>/dev/null || true
     sudo ip link set $INTERFACE xdp off 2>/dev/null || true
     echo "✅ Pipeline stopped"
 }
@@ -72,7 +82,7 @@ status() {
     echo "📊 XDP VXLAN Pipeline Status"
     echo "=========================="
     
-    PID=$(pgrep -f vxlan_loader)
+    PID=$(pgrep -f vxlan_loader | head -1)
     if [ -n "$PID" ]; then
         echo "Status: 🟢 RUNNING (PID: $PID)"
         
