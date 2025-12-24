@@ -21,8 +21,10 @@ fix_terminal() {
     stty sane 2>/dev/null
     # Specifically fix the staircase effect (newline issue)
     stty opost onlcr 2>/dev/null
-    printf "${NC}" # Reset colors
+    # Force immediate terminal reset
+    printf "\r\033[0m" # Carriage return + color reset
     tput cnorm 2>/dev/null # Show cursor
+    tput sgr0 2>/dev/null # Reset all attributes
 }
 
 start() {
@@ -71,7 +73,8 @@ stop() {
     
     # Kill process if exists
     if pgrep -f "vxlan_loader" > /dev/null; then
-        sudo pkill -TERM -f "vxlan_loader" 2>/dev/null
+        sudo pkill -TERM -f "vxlan_loader" 2>/dev/null || true
+        fix_terminal  # Immediate fix after pkill
         
         # Wait loop
         for i in {1..3}; do
@@ -81,11 +84,13 @@ stop() {
         
         # Force kill
         sudo pkill -KILL -f "vxlan_loader" 2>/dev/null || true
+        fix_terminal  # Immediate fix after force kill
     fi
 
     # Clean interface
     sudo ip link set $INTERFACE xdp off 2>/dev/null || true
     
+    fix_terminal  # Final terminal fix
     echo -e "${GREEN}Stopped and Detached.${NC}"
     fix_terminal
 }
@@ -93,12 +98,15 @@ stop() {
 clean() {
     # Aggressive cleanup
     sudo pkill -KILL -f "vxlan_loader" 2>/dev/null || true
+    fix_terminal  # Immediate fix after pkill
+    
     sudo ip link set $INTERFACE xdp off 2>/dev/null || true
     
     # FIX TERMINAL NOW because the kill might have left it raw
     fix_terminal
     
     echo -e "${GREEN}Environment Reset.${NC}"
+    fix_terminal  # Final fix
 }
 
 status() {
@@ -154,6 +162,9 @@ monitor() {
     echo -e "${BLUE}Live Monitor (Ctrl+C to stop)${NC}"
     printf "%-10s | %-10s | %s\n" "TIME" "PPS" "STATUS"
     echo "-----------------------------------"
+    
+    # Set trap for Ctrl+C
+    trap 'fix_terminal; echo; exit 0' INT
     
     while true; do
         RX1=$(cat /sys/class/net/$INTERFACE/statistics/rx_packets 2>/dev/null || echo "0")
