@@ -9,42 +9,18 @@ import os
 import json
 from datetime import datetime
 
-# Add common pip installation paths for scapy
-def add_scapy_paths():
-    """Add common scapy installation paths to sys.path"""
-    import site
-    # Add standard site packages
-    sys.path.extend(site.getsitepackages())
-    
-    # Add user site packages (for --user installs)
-    user_site = site.getusersitepackages()
-    if user_site and os.path.exists(user_site) and user_site not in sys.path:
-        sys.path.insert(0, user_site)
-    
-    # Add common pip installation locations
-    common_paths = [
-        '/usr/local/lib/python3.10/dist-packages',
-        '/usr/local/lib/python3.11/dist-packages', 
-        '/usr/local/lib/python3.9/dist-packages',
-        '/usr/lib/python3/dist-packages'
-    ]
-    
-    for path in common_paths:
-        if os.path.exists(path) and path not in sys.path:
-            sys.path.insert(0, path)
-
-# Add scapy paths before trying to import
-add_scapy_paths()
-
-# Try to import scapy with path adjustments
+# Import scapy modules - now using virtual environment
 try:
     from scapy.all import *
     from scapy.contrib.vxlan import VXLAN
     from scapy.layers.inet import IP, UDP, TCP, ICMP
     from scapy.layers.l2 import Ether, ARP
     import scapy.utils
-except ImportError:
-    print("ERROR: scapy not installed. Install with: pip3 install scapy")
+except ImportError as e:
+    print(f"ERROR: Failed to import scapy: {e}")
+    print("Make sure you're running in the virtual environment:")
+    print("  source .venv/bin/activate")
+    print("  OR use: uv run python tests/generate_packets.py")
     sys.exit(1)
 
 class VXLANPacketConstructor:
