@@ -19,6 +19,8 @@ NC='\033[0m' # No Color
 # Helper to force TTY fix
 fix_terminal() {
     stty sane 2>/dev/null
+    # Specifically fix the staircase effect (newline issue)
+    stty opost onlcr 2>/dev/null
     printf "${NC}" # Reset colors
     tput cnorm 2>/dev/null # Show cursor
 }

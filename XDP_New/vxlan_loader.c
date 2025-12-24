@@ -48,6 +48,7 @@
 #include <signal.h>
 #include <sys/resource.h>
 #include <time.h>
+#include <termios.h>
 #include <net/if.h>
 #include <arpa/inet.h>
 #include <getopt.h>
@@ -117,6 +118,9 @@ static struct config cfg = {
 /* Signal handler for graceful shutdown */
 static void signal_handler(int sig)
 {
+    /* Restore terminal immediately */
+    fflush(stdout);
+    fflush(stderr);
     printf("\nReceived signal %d, shutting down gracefully...\n", sig);
     running = 0;
 }
@@ -124,6 +128,10 @@ static void signal_handler(int sig)
 /* Cleanup function */
 static void cleanup()
 {
+    /* Flush output streams */
+    fflush(stdout);
+    fflush(stderr);
+    
     if (ifindex > 0 && prog_fd >= 0) {
         if (bpf_set_link_xdp_fd(ifindex, -1, 0) < 0) {
             fprintf(stderr, "Warning: Failed to detach XDP program\n");
@@ -135,6 +143,10 @@ static void cleanup()
     if (bpf_obj) {
         bpf_object__close(bpf_obj);
     }
+    
+    /* Final flush */
+    fflush(stdout);
+    fflush(stderr);
 }
 
 /* Get aggregated statistics from per-CPU map */
@@ -178,9 +190,9 @@ static int configure_nat_rules()
         return -1;
     }
     
-    printf("✅ NAT rule configured: src_port %d -> %s:%d\n", 
+    printf("[OK] NAT rule configured: src_port %d -> %s:%d\n", 
            cfg.nat_source_port, cfg.nat_target_ip, cfg.nat_target_port);
-    printf("   (Based on user analysis: 42844 -> 10.2.41.17:8081 pattern)\n");
+    printf("     (Based on user analysis: 42844 -> 10.2.41.17:8081 pattern)\n");
     
     return 0;
 }
@@ -240,36 +252,36 @@ static void display_stats()
     double mbps = (bytes_delta * 8.0) / (interval * 1024 * 1024);
     
     /* Performance status indicators */
-    const char* perf_status = "🔴";
-    if (pps >= 85000) perf_status = "🟢";
-    else if (pps >= 60000) perf_status = "🟡";
+    const char* perf_status = "[!]";
+    if (pps >= 85000) perf_status = "[OK]";
+    else if (pps >= 60000) perf_status = "[--]";
     
     /* Display comprehensive statistics */
     printf("\n%s === VXLAN Pipeline Statistics [%ds interval] ===\n", perf_status, cfg.stats_interval);
-    printf("📦 Total Packets:    %10llu (%8.0f pps)\n", current_stats[STAT_TOTAL_PACKETS], pps);
-    printf("🌐 VXLAN Packets:    %10llu (%8.0f pps, %5.1f%%)\n",
+    printf("[P] Total Packets:    %10llu (%8.0f pps)\n", current_stats[STAT_TOTAL_PACKETS], pps);
+    printf("[V] VXLAN Packets:    %10llu (%8.0f pps, %5.1f%%)\n",
            current_stats[STAT_VXLAN_PACKETS], vxlan_pps,
            current_stats[STAT_TOTAL_PACKETS] > 0 ? 
                (double)current_stats[STAT_VXLAN_PACKETS] * 100.0 / current_stats[STAT_TOTAL_PACKETS] : 0.0);
-    printf("📋 Inner Packets:    %10llu\n", current_stats[STAT_INNER_PACKETS]);
-    printf("🔄 NAT Applied:      %10llu (%8.0f/s)\n", current_stats[STAT_NAT_APPLIED], nat_delta / interval);
-    printf("🚫 DF Bits Cleared:  %10llu (for >1400B pkts)\n", current_stats[STAT_DF_CLEARED]);
-    printf("📤 Forwarded:        %10llu\n", current_stats[STAT_FORWARDED]);
-    printf("⚡ Redirected:       %10llu (XDP_REDIRECT)\n", current_stats[STAT_REDIRECTED]);
-    printf("❌ Errors:           %10llu\n", current_stats[STAT_ERRORS]);
-    printf("🚀 Throughput:       %10.2f Mbps\n", mbps);
+    printf("[I] Inner Packets:    %10llu\n", current_stats[STAT_INNER_PACKETS]);
+    printf("[N] NAT Applied:      %10llu (%8.0f/s)\n", current_stats[STAT_NAT_APPLIED], nat_delta / interval);
+    printf("[D] DF Bits Cleared:  %10llu (for >1400B pkts)\n", current_stats[STAT_DF_CLEARED]);
+    printf("[F] Forwarded:        %10llu\n", current_stats[STAT_FORWARDED]);
+    printf("[R] Redirected:       %10llu (XDP_REDIRECT)\n", current_stats[STAT_REDIRECTED]);
+    printf("[E] Errors:           %10llu\n", current_stats[STAT_ERRORS]);
+    printf("[T] Throughput:       %10.2f Mbps\n", mbps);
     
     /* Performance analysis */
     if (pps >= 85000) {
-        printf("🎉 PERFORMANCE TARGET ACHIEVED! (%0.f PPS)\n", pps);
+        printf("[!] PERFORMANCE TARGET ACHIEVED! (%0.f PPS)\n", pps);
     } else if (current_stats[STAT_TOTAL_PACKETS] > 1000) {
-        printf("📈 Performance: %.0f PPS (target: 85K+)\n", pps);
+        printf("[+] Performance: %.0f PPS (target: 85K+)\n", pps);
     }
     
     /* NAT efficiency analysis */
     if (current_stats[STAT_VXLAN_PACKETS] > 0) {
         double nat_ratio = (current_stats[STAT_NAT_APPLIED] * 100.0) / current_stats[STAT_VXLAN_PACKETS];
-        printf("🎯 NAT Efficiency:   %.1f%% (src_port matching)\n", nat_ratio);
+        printf("[*] NAT Efficiency:   %.1f%% (src_port matching)\n", nat_ratio);
     }
     
     printf("========================================\n");
@@ -277,6 +289,9 @@ static void display_stats()
     /* Update previous stats */
     memcpy(prev_stats, current_stats, sizeof(prev_stats));
     last_time = current_time;
+    
+    /* Flush output to prevent corruption */
+    fflush(stdout);
 }
 
 /* Load and attach eBPF program */
