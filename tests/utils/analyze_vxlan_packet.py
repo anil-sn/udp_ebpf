@@ -41,6 +41,13 @@ def analyze_packet(packet):
             print(f"✅ Inner Ethernet:")
             print(f"   Src: {inner_eth.src}")  
             print(f"   Dst: {inner_eth.dst}")
+            print(f"   Protocol: 0x{inner_eth.type:04x} (should be 0x0800 for IPv4)")
+            
+            if inner_eth.type == 0x0800:
+                print(f"   🎯 Protocol Check: ✅ IPv4 detected")
+            else:
+                print(f"   ❌ Protocol Check: Expected 0x0800, got 0x{inner_eth.type:04x}")
+                print(f"   🐛 This will cause XDP to skip inner packet processing!")
             
             if IP in inner_eth.payload:
                 inner_ip = inner_eth.payload[IP]
@@ -89,8 +96,20 @@ def analyze_packet(packet):
         print(f"   XDP Flags Check (& 0x08): {'✅ PASS' if flags_check else '❌ FAIL'}")
         print(f"   XDP VNI Check (0,0,1): {'✅ PASS' if vni_check else '❌ FAIL'}")
         
-        if not vni_check:
-            print(f"   🐛 VNI Issue: Expected (0,0,1), got ({vxlan_bytes[4]},{vxlan_bytes[5]},{vxlan_bytes[6]})")
+        # Analyze inner Ethernet header specifically  
+        if len(raw_bytes) >= 22:  # VXLAN header (8) + Ethernet header (14)
+            print(f"\n🔍 Inner Ethernet Header Analysis:")
+            eth_start = 8  # After VXLAN header
+            eth_bytes = raw_bytes[eth_start:eth_start+14]
+            if len(eth_bytes) >= 14:
+                eth_type = (eth_bytes[12] << 8) | eth_bytes[13]
+                print(f"   Dst MAC: {eth_bytes[0]:02x}:{eth_bytes[1]:02x}:{eth_bytes[2]:02x}:{eth_bytes[3]:02x}:{eth_bytes[4]:02x}:{eth_bytes[5]:02x}")
+                print(f"   Src MAC: {eth_bytes[6]:02x}:{eth_bytes[7]:02x}:{eth_bytes[8]:02x}:{eth_bytes[9]:02x}:{eth_bytes[10]:02x}:{eth_bytes[11]:02x}")  
+                print(f"   EtherType: 0x{eth_type:04x} ({'IPv4' if eth_type == 0x0800 else 'NOT IPv4'})")
+                
+                if eth_type != 0x0800:
+                    print(f"   🐛 PROBLEM: XDP expects 0x0800 (IPv4), got 0x{eth_type:04x}")
+                    print(f"   📝 Fix needed: Ensure inner Ethernet uses IPv4 EtherType")
 
 if __name__ == "__main__":
     print("🧪 VXLAN Packet Structure Test")
