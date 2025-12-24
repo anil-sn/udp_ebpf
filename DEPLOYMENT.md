@@ -76,16 +76,29 @@ TIME     PPS        VXLAN_PPS  NAT_HIT% REDIRECTED ERRORS  STATUS
 
 ```
 ebpf/
-├── xdp_pipeline.sh            # 🆕 Unified deployment & monitoring
-├── vxlan_pipeline.h           # 🔄 Centralized configuration constants  
-├── vxlan_pipeline.bpf.c       # 🔄 Updated XDP program (uses header)
-├── vxlan_loader.c             # 🔄 Updated userspace loader
-├── README.md                  # 🔄 Comprehensive technical documentation
-├── Makefile                   # 🔄 Updated dependencies
-├── optimize_system.sh         # 🔄 System optimization script
-├── tests/
-│   └── monitor_performance.bt # 🔄 BPFtrace monitoring script
-└── REFACTORING_SUMMARY.md     # 📋 Magic numbers refactoring details
+├── src/                       # 🔧 Core source code  
+│   ├── vxlan_pipeline.bpf.c   # 🔄 XDP program (kernel space)
+│   ├── vxlan_loader.c         # 🔄 Control plane (userspace)
+│   ├── vxlan_pipeline.h       # 🔄 Configuration constants
+│   ├── Makefile               # 🔄 Build system
+│   └── README.md              # 📋 Source documentation
+├── tests/                     # 🧪 Test framework & tools
+│   ├── test_framework.sh      # 🔄 Test orchestrator
+│   ├── traffic_simulator.sh   # 🔄 Traffic generation
+│   ├── pps_monitor.py         # 🔄 PPS monitoring
+│   ├── monitor_performance.bt # 🔄 BPFtrace monitoring
+│   ├── analyze_packets.py     # 🆕 Packet analysis tools
+│   ├── generate_packets.py    # 🆕 Packet generation
+│   ├── validate_config.sh     # 🆕 Configuration validation
+│   ├── README.md              # 📋 Test documentation
+│   └── TESTING.md             # 📋 Testing procedures
+├── .env.example               # 🔧 Configuration template
+├── .env                       # 🔧 Environment configuration
+├── xdp.sh                     # 🔧 Simple control script
+├── xdp_pipeline.sh            # 🆕 Advanced deployment & monitoring
+├── optimize_system.sh         # 🔄 System optimization
+├── DEPLOYMENT.md              # 📋 Deployment guide
+└── README.md                  # 📋 Project documentation
 ```
 
 ## 🚀 **Ready for Deployment**

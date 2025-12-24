@@ -2,6 +2,46 @@
 
 This directory contains a comprehensive test framework for the XDP VXLAN pipeline with advanced packet per second (PPS) monitoring capabilities.
 
+## Prerequisites
+
+### Required Dependencies
+
+**Critical tools** (must be installed):
+```bash
+# Ubuntu/Debian
+sudo apt-get update
+sudo apt-get install -y build-essential clang gcc make iproute2 tcpdump python3
+
+# RHEL/CentOS/Fedora  
+sudo yum install -y clang gcc make iproute tcpdump python3
+```
+
+**Optional tools** (for advanced features):
+```bash
+# Ubuntu/Debian
+sudo apt-get install -y hping3
+pip3 install scapy
+
+# RHEL/CentOS/Fedora
+sudo yum install -y hping3
+pip3 install scapy
+
+# Alternative: try system package (may not be available)
+sudo apt-get install -y python3-scapy  # Ubuntu/Debian
+sudo yum install -y python3-scapy      # RHEL/CentOS
+```
+
+### Dependency Validation
+Run this to check your environment:
+```bash
+# Quick install test dependencies
+./install_test_deps.sh
+
+# Check configuration and dependencies
+./validate_config.sh    # Check .env configuration
+sudo ./test_framework.sh  # Will show missing dependencies
+```
+
 ## Test Framework Structure
 
 ```
@@ -155,11 +195,14 @@ Required packages:
 
 Install dependencies:
 ```bash
-# Ubuntu/Debian
-sudo apt-get install -y python3-scapy hping3 tcpreplay tcpdump
+# Core tools (Ubuntu/Debian)
+sudo apt-get install -y hping3 tcpreplay tcpdump
 
-# Python dependencies
+# Python dependencies (most reliable method)
 pip3 install scapy
+
+# Alternative: try system packages (may not exist on all systems)
+sudo apt-get install -y python3-scapy  # if available
 ```
 
 ## Output Files

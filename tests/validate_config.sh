@@ -11,15 +11,18 @@ NC='\033[0m'
 echo -e "${BLUE}VXLAN Pipeline Configuration Validator${NC}"
 echo "========================================"
 
-# Check if .env file exists
-if [ ! -f ".env" ]; then
+# Check if .env file exists (look in parent directory)
+ENV_FILE="../.env"
+if [ ! -f "$ENV_FILE" ]; then
     echo -e "${RED}ERROR: .env file not found${NC}"
-    echo "Please create a .env file using the template or run the setup."
+    echo "Please create a .env file in the project root using:"
+    echo "  cp .env.example .env"
+    echo "  nano .env"
     exit 1
 fi
 
 # Source the configuration
-source .env
+source "$ENV_FILE"
 
 echo -e "${GREEN}✓ Configuration file found${NC}"
 echo ""
