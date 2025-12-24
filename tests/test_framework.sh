@@ -298,8 +298,16 @@ generate_test_packets() {
         return 0
     fi
     
+    # Use virtual environment Python if available, otherwise system Python
+    PYTHON_CMD="python3"
+    VENV_PYTHON="$TEST_DIR/../.venv/bin/python3"
+    if [ -f "$VENV_PYTHON" ] && [ "$VIRTUAL_ENV" ]; then
+        PYTHON_CMD="$VENV_PYTHON"
+        echo "Using virtual environment Python for packet generation"
+    fi
+    
     # Run external packet generation script with configuration
-    if "$TEST_DIR/generate_packets.py" \
+    if "$PYTHON_CMD" "$TEST_DIR/generate_packets.py" \
         --output "$TEST_DATA_DIR" \
         --nat-source-port "${SOURCE_PORT:-42844}" \
         --nat-target-ip "${NAT_IP:-10.2.41.17}" \
