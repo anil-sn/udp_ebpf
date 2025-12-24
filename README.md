@@ -12,41 +12,33 @@ This project implements VXLAN packet processing using eBPF/XDP for AWS Traffic M
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### Setup
 ```bash
-# Install core dependencies
-sudo apt-get update
-sudo apt-get install -y build-essential clang gcc make libbpf-dev linux-headers-$(uname -r)
-
-# Install network tools  
-sudo apt-get install -y iproute2 net-tools tcpdump
-
-# Install optional testing tools with system dependencies
-sudo apt-get install -y hping3 libpcap-dev
-sudo apt-get install -y python3-scapy || sudo pip3 install scapy
-
-# Note: Scapy requires root privileges for network operations
-```
-
-### Build & Deploy
-```bash
-# Quick setup and verification (recommended)
-./verify_setup.sh
-
-# OR manual steps:
-# Build the XDP program (must be done from src directory)
-cd src && make clean && make all && cd ..
+# Install dependencies and setup virtual environment
+./setup_venv.sh
 
 # Copy and edit configuration
 cp .env.example .env
 nano .env
 
-# Simple control - choose one:
-./xdp.sh start    # Start XDP pipeline
-./xdp.sh status   # Check status
-./xdp.sh monitor  # Live monitoring
-./xdp.sh stop     # Stop pipeline
-./xdp.sh clean    # Force cleanup
+# Build the XDP program
+cd src && make clean && make all && cd ..
+```
+
+### Deploy & Test
+```bash
+# Start XDP pipeline
+./xdp.sh start
+
+# Run tests
+cd tests/
+sudo ./run_tests.sh all
+
+# Monitor performance
+./xdp.sh monitor
+
+# Stop pipeline
+./xdp.sh stop
 ```
 
 ## ⚙️ Configuration
@@ -162,29 +154,35 @@ sudo sysctl -w net.core.netdev_max_backlog=5000 # Queue size
 
 ```
 ebpf/
-├── src/                       # Core source code
-│   ├── vxlan_pipeline.bpf.c   # XDP program (kernel space)
-│   ├── vxlan_loader.c         # Control plane (userspace) 
-│   ├── vxlan_pipeline.h       # Configuration constants
-│   ├── Makefile               # Build system
-│   └── README.md              # Source code documentation
-├── tests/                     # Test framework
-│   ├── test_framework.sh      # Test orchestrator
-│   ├── traffic_simulator.sh   # Traffic generation
-│   ├── pps_monitor.py         # PPS monitoring
-│   ├── monitor_performance.bt # BPFtrace monitoring
-│   ├── analyze_packets.py     # Packet analysis tools
-│   ├── generate_packets.py    # Packet generation
-│   ├── validate_config.sh     # Configuration validation
-│   ├── README.md              # Test documentation
-│   └── TESTING.md             # Testing procedures
-├── .env.example               # Configuration template
-├── .env                       # Environment configuration
-├── xdp.sh                     # Simple control script
-├── xdp_pipeline.sh            # Advanced control script
-├── optimize_system.sh         # Performance tuning
-├── DEPLOYMENT.md              # Deployment documentation
-└── README.md                  # Project documentation
+├── src/                           # Core source code
+│   ├── vxlan_pipeline.bpf.c       # XDP program (kernel space)
+│   ├── vxlan_loader.c             # Control plane (userspace) 
+│   ├── vxlan_pipeline.h           # Configuration constants
+│   ├── Makefile                   # Build system
+│   └── README.md                  # Source code documentation
+├── tests/                         # Professional test framework
+│   ├── run_tests.sh               # Main test runner
+│   ├── config/                    # Configuration validation
+│   │   └── validate_config.sh     # Environment checks
+│   ├── utils/                     # Testing utilities
+│   │   ├── generate_packets.py    # VXLAN packet generation
+│   │   ├── analyze_packets.py     # Packet analysis tools
+│   │   └── run_tests_venv.sh      # Virtual environment runner
+│   ├── integration/               # Integration tests
+│   │   └── test_framework.sh      # Integration test framework
+│   ├── performance/               # Performance & scale testing
+│   │   ├── run_performance.sh     # Performance test runner
+│   │   ├── scale_performance_test.py # Multi-scenario testing
+│   │   ├── performance_benchmark.sh  # System benchmarking
+│   │   ├── system_monitor.py      # Real-time monitoring
+│   │   └── performance_report.py  # HTML report generation
+│   └── reports/                   # Test results and reports
+├── setup_venv.sh                  # Virtual environment setup (uv)
+├── xdp.sh                         # Simple control script
+├── xdp_pipeline.sh                # Advanced control script
+├── optimize_system.sh             # Performance tuning
+├── DEPLOYMENT.md                  # Deployment documentation
+└── README.md                      # Project documentation
 ```
 
 ## 🎯 Performance Targets

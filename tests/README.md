@@ -1,261 +1,120 @@
-# XDP VXLAN Pipeline Test Framework
+# XDP VXLAN Pipeline - Test Suite
 
-This directory contains a comprehensive test framework for the XDP VXLAN pipeline with advanced packet per second (PPS) monitoring capabilities.
-
-## Prerequisites
-
-### Required Dependencies
-
-**Critical tools** (must be installed):
-```bash
-# Ubuntu/Debian
-sudo apt-get update
-sudo apt-get install -y build-essential clang gcc make iproute2 tcpdump python3
-
-# RHEL/CentOS/Fedora  
-sudo yum install -y clang gcc make iproute tcpdump python3
-```
-
-**Optional tools** (for advanced features):
-```bash
-# System dependencies for Scapy (required first)
-sudo apt-get install -y tcpdump libpcap-dev python3-pip
-
-# Option 1: System package (recommended for root usage)
-sudo apt-get install -y python3-scapy
-
-# Option 2: Pip installation (system-wide for root access)
-sudo pip3 install scapy
-
-# Traffic generation tools
-sudo apt-get install -y hping3
-
-# For RHEL/CentOS/Fedora
-sudo yum install -y tcpdump libpcap-devel python3-pip hping3
-sudo pip3 install scapy
-```
-
-**Note**: Scapy requires root privileges for network operations, which is why system-wide installation is recommended for this project.
-
-### Dependency Validation
-Run this to check your environment:
-```bash
-# Quick install test dependencies
-./install_test_deps.sh
-
-# Debug scapy installation issues
-sudo python3 debug_scapy.py
-
-# Check configuration and dependencies
-./validate_config.sh    # Check .env configuration
-sudo ./test_framework.sh  # Will show missing dependencies
-```
-
-## Test Framework Structure
-
-```
-tests/
-├── README.md              # This file
-├── test_framework.sh      # Main test orchestrator
-├── traffic_simulator.sh   # Traffic generation with PPS monitoring
-├── pps_monitor.py         # Advanced PPS monitoring tool
-├── generate_packets.py    # Scapy-based packet generator
-├── analyze_packets.py     # Packet analysis and validation
-├── validate_config.sh     # Configuration validation
-├── monitor_performance.bt # BPFtrace real-time monitoring
-└── TESTING.md            # Detailed testing documentation
-```
+Simple and comprehensive testing framework for the XDP VXLAN pipeline.
 
 ## Quick Start
 
-### Basic Traffic Simulation with PPS Monitoring
-
 ```bash
-# Generate 1000 PPS VXLAN traffic for 30 seconds with real-time PPS monitoring
-./traffic_simulator.sh --rate 1000 --duration 30 --pps-monitor
+# Setup (one time)
+cd ../
+./setup_venv.sh
 
-# High-performance test (50K PPS) with PPS data logging
-./traffic_simulator.sh --performance --pps-log performance_results.json
+# Run all tests
+cd tests/
+sudo ./run_tests.sh all
 
-# Mixed traffic with capture and PPS monitoring
-./traffic_simulator.sh --type mixed --rate 5000 --capture test.pcap --pps-monitor
+# Run specific tests
+./run_tests.sh config      # Configuration only
+./run_tests.sh unit        # Basic functionality
+sudo ./run_tests.sh integration  # Full pipeline test
+sudo ./run_tests.sh performance  # Performance test
 ```
 
-### Standalone PPS Monitoring
+## Test Structure
 
-```bash
-# Monitor interface for 60 seconds
-./pps_monitor.py --interface eth0 --duration 60
-
-# Monitor with detailed JSON output
-./pps_monitor.py --interface lo --duration 30 --output detailed_stats.json
-
-# Monitor with custom peak performance window
-./pps_monitor.py --interface eth0 --duration 120 --window 10 --output results.json
+```
+tests/
+├── run_tests.sh           # Main test runner
+├── config/                # Configuration validation
+│   └── validate_config.sh
+├── utils/                 # Test utilities
+│   ├── generate_packets.py
+│   ├── analyze_packets.py
+│   └── run_tests_venv.sh
+├── integration/           # Full system tests
+│   └── test_framework.sh
+├── performance/           # Performance & scale tests
+│   ├── run_performance.sh
+│   ├── scale_performance_test.py
+│   ├── performance_benchmark.sh
+│   ├── system_monitor.py
+│   └── performance_report.py
+└── reports/               # Test results and reports
 ```
 
-### Complete Test Suite
+## Test Types
+
+### Configuration Tests
+- Validates `.env` configuration
+- Checks interface availability
+- Verifies system dependencies
+
+### Unit Tests  
+- Packet generation functionality
+- Basic scapy operations
+- Virtual environment setup
+
+### Integration Tests
+- eBPF compilation and loading
+- End-to-end packet processing
+- XDP program functionality
+- Error handling
+
+### Performance Tests
+- Throughput benchmarking
+- Scalability testing
+- Resource monitoring
+- Performance reporting
+
+## Performance Testing
 
 ```bash
-# Run full test framework
-./test_framework.sh
+# Quick performance test
+cd performance/
+sudo ./run_performance.sh lo baseline
 
-# Run specific test categories
-./test_framework.sh --build-only
-./test_framework.sh --performance-only
+# Advanced performance testing
+sudo python3 scale_performance_test.py --list  # Show scenarios
+sudo python3 scale_performance_test.py high_throughput --interface eth0
+
+# Full benchmark suite
+sudo ./performance_benchmark.sh eth0 all
 ```
 
-## PPS Monitoring Features
+## Available Performance Scenarios
 
-### Real-time Monitoring
-- Live PPS display (RX, TX, Total)
-- Bandwidth monitoring (Mbps)
-- Timestamped measurements
-- Configurable monitoring duration
+- `baseline` - Basic test (1K PPS, 64B packets)
+- `high_throughput` - High rate (100K PPS, 1400B packets) 
+- `small_packets` - Small packet flood (500K PPS, 64B packets)
+- `large_packets` - Large frames (10K PPS, 9000B packets)
+- `mixed_traffic` - Mixed sizes (50K PPS, varied)
+- `cpu_stress` - CPU stress test (1M PPS, 64B packets)
 
-### Advanced Analytics
-- Peak performance window detection
-- Statistical analysis (min, max, avg)
-- JSON export for detailed analysis
-- Historical data collection (last 1000 measurements)
+## Requirements
 
-### Integration with Traffic Simulator
-- Automatic PPS monitoring during traffic generation
-- Basic and advanced monitoring modes
-- Background monitoring support
-- Performance correlation analysis
-
-## Performance Targets
-
-The XDP VXLAN pipeline is designed to achieve:
-- **Target Rate**: 85,000+ PPS
-- **Latency**: Sub-microsecond processing
-- **CPU Usage**: Minimal impact on system performance
-
-## Usage Examples
-
-### Performance Benchmarking
-```bash
-# Benchmark maximum PPS capacity
-./traffic_simulator.sh --rate 100000 --duration 60 --pps-log benchmark.json --performance
-
-# Sustained load testing
-./traffic_simulator.sh --rate 50000 --duration 300 --pps-monitor --type mixed
-```
-
-### Development Testing
-```bash
-# Quick validation test
-./traffic_simulator.sh --rate 1000 --duration 10 --pps-monitor
-
-# Packet validation with analysis
-./traffic_simulator.sh --rate 5000 --capture validation.pcap
-./analyze_packets.py validation.pcap
-```
-
-### Advanced Monitoring with BPFtrace
-```bash
-# Real-time XDP pipeline monitoring
-sudo ./monitor_performance.bt
-
-# Monitor specific interface activity  
-sudo bpftrace -e 'tracepoint:xdp:* { printf("%s\n", probe); }'
-```
-
-### Monitoring Integration
-```bash
-# Start PPS monitoring in background
-./pps_monitor.py --interface eth0 --duration 300 --output monitoring.json &
-
-# Run traffic simulation
-./traffic_simulator.sh --rate 20000 --duration 60
-
-# Analyze results
-cat monitoring.json | jq '.statistics'
-```
-
-## Configuration
-
-The test framework uses the parent directory's `.env` file for configuration:
-
-```bash
-# Interface Configuration
-INTERFACE="eth0"
-TARGET_INTERFACE="eth1"
-
-# Network Configuration  
-NAT_IP="10.0.0.100"
-NAT_PORT="8080"
-SOURCE_PORT="31765"
-
-# VXLAN Configuration
-VNI="1"
-VXLAN_PORT="4789"
-```
-
-## Dependencies
-
-Required packages:
-- `python3` with `scapy` library
-- `hping3` for traffic generation
-- `tcpreplay` for packet replay
-- `tcpdump` for packet capture
-- Standard Linux networking tools
-
-Install dependencies:
-```bash
-# Core tools (Ubuntu/Debian)
-sudo apt-get install -y hping3 tcpreplay tcpdump
-
-# Python dependencies (most reliable method)
-pip3 install scapy
-
-# Alternative: try system packages (may not exist on all systems)
-sudo apt-get install -y python3-scapy  # if available
-```
-
-## Output Files
-
-The framework generates several output files:
-- `test_results/` - Test execution logs and results
-- `test_data/` - Generated test packets and captured traffic
-- `*.json` - PPS monitoring data and statistics
-- `*.pcap` - Packet captures for analysis
+- Root access (for XDP operations)
+- Virtual environment with dependencies
+- Network interface for testing
+- System monitoring tools (optional)
 
 ## Troubleshooting
 
-### Common Issues
+1. **Permission Denied**: Use `sudo` for XDP operations
+2. **Module Import Error**: Run `../setup_venv.sh` first
+3. **Interface Not Found**: Check interface name with `ip link`
+4. **Build Errors**: Ensure build dependencies installed
 
-1. **Permission Denied**: Ensure running as root for XDP operations
-2. **Interface Not Found**: Verify interface name in `.env` file
-3. **Missing Dependencies**: Install required packages listed above
-4. **High CPU Usage**: Normal during high-rate testing (>50K PPS)
+## Output
 
-### Statistics Issues
+Test results are saved in:
+- `reports/` - Performance reports and charts
+- `test_results/` - Integration test logs  
+- `test_data/` - Generated test packets
 
-If you see extremely large or nonsensical packet counts:
-- **Symptom**: Statistics showing values like `8880356163262302248 packets`
-- **Cause**: Uninitialized per-CPU statistics maps or memory alignment issues
-- **Solutions**:
-  1. Rebuild the project: `cd src && make clean && make`
-  2. Check kernel version compatibility: `uname -r`
-  3. Verify XDP support: `ethtool -i <interface>`
-  4. Use diagnostic script: `sudo ./debug_stats.sh`
+## Development
 
-### Performance Tuning
-
-For optimal PPS measurement accuracy:
-- Use dedicated test interfaces when possible
-- Minimize background network activity
-- Run tests on systems with sufficient resources
-- Consider CPU affinity for high-rate testing
-
-## Integration with XDP Pipeline
-
-The test framework is designed to work with the XDP VXLAN pipeline:
-- Generates VXLAN-encapsulated packets matching AWS Traffic Mirror format
-- Validates DF bit clearing and NAT processing
-- Measures end-to-end pipeline performance
-- Provides detailed packet-level analysis
-
-For more detailed information, see [TESTING.md](TESTING.md).
+Follow KISS principles:
+- Keep tests simple and focused
+- Use clear naming conventions
+- Minimize dependencies
+- Document expected behavior
