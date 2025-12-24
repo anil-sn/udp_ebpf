@@ -679,9 +679,9 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     __u32 *target_ifindex = bpf_map_lookup_elem(&redirect_map, &key);
     
     if (target_ifindex && *target_ifindex > 0) {
-        /* Force redirect to target interface */
+        /* In generic mode, use XDP_PASS with MAC modification for reliable forwarding */
         update_stat(STAT_REDIRECTED, 1);
-        return bpf_redirect(*target_ifindex, 0);
+        return XDP_PASS;  /* Let kernel route with corrected MAC address */
     }
     
     /* No specific target - let kernel routing handle it */
