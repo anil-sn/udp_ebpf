@@ -222,6 +222,17 @@ The framework generates several output files:
 3. **Missing Dependencies**: Install required packages listed above
 4. **High CPU Usage**: Normal during high-rate testing (>50K PPS)
 
+### Statistics Issues
+
+If you see extremely large or nonsensical packet counts:
+- **Symptom**: Statistics showing values like `8880356163262302248 packets`
+- **Cause**: Uninitialized per-CPU statistics maps or memory alignment issues
+- **Solutions**:
+  1. Rebuild the project: `cd src && make clean && make`
+  2. Check kernel version compatibility: `uname -r`
+  3. Verify XDP support: `ethtool -i <interface>`
+  4. Use diagnostic script: `sudo ./debug_stats.sh`
+
 ### Performance Tuning
 
 For optimal PPS measurement accuracy:
