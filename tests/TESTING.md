@@ -1,134 +1,110 @@
-# XDP VXLAN Pipeline Test Framework
+# XDP VXLAN Pipeline Testing Guide
 
-A comprehensive testing suite for validating and verifying the XDP VXLAN pipeline performance, correctness, and reliability.
-
-## 🧪 Test Suite Overview
-
-The test framework consists of several integrated components:
-
-### Core Testing Scripts
-
-1. **`test_framework.sh`** - Main test orchestrator
-2. **`generate_packets.py`** - VXLAN packet generator  
-3. **`traffic_simulator.sh`** - Network traffic simulation
-4. **`analyze_packets.py`** - Packet capture analysis
-5. **`validate_config.sh`** - Configuration validation
+Clean and simple testing framework following KISS principles.
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 ```bash
-# Install dependencies
-sudo apt-get update
-sudo apt-get install -y python3-scapy hping3 tcpdump tcpreplay bc netcat-openbsd
-
-# Ensure you have build tools
-sudo apt-get install -y build-essential clang libbpf-dev linux-headers-$(uname -r)
+# Setup virtual environment (one time)
+cd ../
+./setup_venv.sh
 ```
 
 ### Running Tests
 ```bash
-# Run all tests (requires root for XDP operations)
-sudo ./test_framework.sh
+# All tests (simple)
+cd tests/
+sudo ./run_tests.sh all
 
-# Run specific test suites
-sudo ./test_framework.sh build         # Build verification
-sudo ./test_framework.sh config        # Configuration tests  
-sudo ./test_framework.sh ebpf          # eBPF loading tests
-sudo ./test_framework.sh packets       # Packet processing tests
-sudo ./test_framework.sh performance   # Performance tests
-sudo ./test_framework.sh resources     # Memory/resource tests
-sudo ./test_framework.sh errors        # Error handling tests
+# Specific test types
+./run_tests.sh config       # Configuration validation
+./run_tests.sh unit         # Basic unit tests
+sudo ./run_tests.sh integration   # Full pipeline test
+sudo ./run_tests.sh performance   # Performance & scale tests
 ```
 
-## 📋 Test Categories
+## 📁 Test Structure
 
-### 1. Build Tests
-Validates that the entire project compiles correctly:
-- eBPF program compilation (clang → BPF bytecode)
-- Userspace loader compilation
-- Executable permissions and dependencies
-- Clean build process verification
+Following KISS principles - simple, organized, professional:
 
-### 2. Configuration Tests  
-Ensures configuration management works properly:
-- `.env` file loading and parsing
-- Network interface validation
-- Parameter validation (IPs, ports, ranges)
-- Configuration validation script execution
-
-### 3. eBPF Loading Tests
-Verifies XDP program lifecycle management:
-- eBPF program loading into kernel
-- XDP attachment to network interfaces  
-- Map creation and initialization
-- Graceful program detachment and cleanup
-
-### 4. Packet Processing Tests
-Tests core packet processing functionality:
-- VXLAN packet generation with various scenarios
-- NAT rule application verification
-- DF bit clearing for large packets
-- Packet forwarding and redirection
-- Error handling for malformed packets
-
-### 5. Performance Tests
-Validates high-throughput processing capabilities:
-- Synthetic traffic generation at target rates (85K+ PPS)
-- CPU utilization monitoring
-- Memory usage tracking
-- Latency measurement
-- Throughput verification
-
-### 6. Resource Tests  
-Checks for resource leaks and stability:
-- Memory leak detection over multiple start/stop cycles
-- File descriptor management
-- eBPF map resource cleanup
-- Process cleanup verification
-
-### 7. Error Handling Tests
-Validates robustness and error recovery:
-- Invalid interface handling
-- Invalid parameter rejection
-- Signal handling (SIGTERM, SIGINT)
-- Graceful shutdown procedures
-- Edge case packet handling
-
-## 📊 Test Data Generation
-
-### Packet Generator (`generate_packets.py`)
-Creates comprehensive test packets covering various scenarios:
-
-```bash
-# Generate standard test packets
-./generate_packets.py --output test_data/
-
-# Generate performance test packets  
-./generate_packets.py --performance --count 10000
-
-# Custom configuration
-./generate_packets.py \
-    --nat-source-port 42844 \
-    --nat-target-ip 10.2.41.17 \
-    --nat-target-port 8081 \
-    --vni 1
+```
+tests/
+├── run_tests.sh           # Single entry point
+├── config/                # Configuration tests
+├── utils/                 # Shared utilities
+├── integration/           # System integration
+├── performance/           # Performance & scale
+└── reports/               # Test results
 ```
 
-#### Generated Packet Types:
-- **Normal VXLAN**: Standard packets matching NAT rules
-- **Large Packets**: >1400 bytes requiring DF bit clearing
-- **Non-matching**: Different source ports (no NAT applied)
-- **Invalid VNI**: Wrong VNI values (should be dropped)
-- **Non-VXLAN**: Regular UDP traffic (pass-through)
-- **Edge Cases**: Minimal size, malformed headers
+## 🧪 Test Categories
 
-### Traffic Simulator (`traffic_simulator.sh`)
-Generates realistic network load for testing:
+### Configuration Tests (`config/`)
+- Environment validation (`.env` file)
+- Interface availability checks
+- System dependency verification
 
+### Unit Tests (`unit/`)
+- Basic functionality validation
+- Component isolation tests
+
+### Integration Tests (`integration/`)
+- Full pipeline validation
+- End-to-end packet processing
+- XDP program attachment/detachment
+
+### Performance Tests (`performance/`)
+- Scale testing (7 scenarios)
+- Resource monitoring
+
+## 📊 Performance Testing Details
+
+### Scale Test Scenarios
+1. **Baseline**: 1000 PPS for stability validation
+2. **High Throughput**: 85,000+ PPS target performance
+3. **Small Packets**: 64-byte packet processing
+4. **Large Packets**: 1500-byte jumbo frame handling
+5. **Mixed Traffic**: Variable packet size processing
+6. **Burst Test**: Traffic spike handling
+7. **CPU Stress**: Maximum load validation
+
+### Performance Monitoring
+- Real-time resource monitoring (`system_monitor.py`)
+- HTML report generation with charts
+- Benchmark comparison against baselines
+- Performance regression detection
+
+## 🛠️ Development Workflow
+
+### Testing New Features
 ```bash
-# Basic traffic simulation
-./traffic_simulator.sh --rate 10000 --duration 30
+# 1. Validate configuration
+./run_tests.sh config
+
+# 2. Test basic functionality  
+./run_tests.sh unit
+
+# 3. Integration testing
+sudo ./run_tests.sh integration
+
+# 4. Performance validation
+sudo ./run_tests.sh performance
+```
+
+### Continuous Integration
+The test framework is designed for CI/CD integration with clear exit codes and standardized reporting.
+
+## 📈 Results and Reports
+
+- Test results stored in `reports/` directory
+- Performance charts generated automatically
+- HTML reports with detailed metrics
+- CSV data for analysis and trending
+
+---
+
+**Keep it simple. Keep it clean. Keep it professional.**
 
 # Performance testing mode
 ./traffic_simulator.sh --performance
