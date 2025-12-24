@@ -38,6 +38,7 @@ USER_LDFLAGS := -L$(LIBBPF_DIR)/lib -lbpf -lelf -lz
 # Target files
 BPF_PROG := vxlan_pipeline.bpf.c
 BPF_OBJ := vxlan_pipeline.bpf.o
+BPF_HEADER := vxlan_pipeline.h
 USER_PROG := vxlan_loader.c
 USER_BIN := vxlan_loader
 
@@ -52,13 +53,13 @@ CONFIG_FILE := vxlan_config.conf
 all: check-deps $(BPF_OBJ) $(USER_BIN)
 
 # Compile eBPF program
-$(BPF_OBJ): $(BPF_PROG)
+$(BPF_OBJ): $(BPF_PROG) $(BPF_HEADER)
 	@echo "Compiling eBPF program for high-performance packet processing..."
 	$(CLANG) $(BPF_CFLAGS) -c $< -o $@
 	@echo "eBPF program compiled: $@"
 
 # Compile userspace loader
-$(USER_BIN): $(USER_PROG) $(BPF_OBJ)
+$(USER_BIN): $(USER_PROG) $(BPF_OBJ) $(BPF_HEADER)
 	@echo "Compiling userspace controller..."
 	$(CC) $(USER_CFLAGS) $< -o $@ $(USER_LDFLAGS)
 	@echo "Userspace program compiled: $@"

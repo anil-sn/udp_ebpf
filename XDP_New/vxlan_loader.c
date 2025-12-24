@@ -56,6 +56,8 @@
 #include <bpf/bpf.h>
 #include <linux/if_link.h>
 
+#include "vxlan_pipeline.h"
+
 /* Statistics indices - must match eBPF program */
 enum stats_index {
     STAT_TOTAL_PACKETS = 0,
@@ -75,7 +77,12 @@ struct nat_entry {
     __u32 target_ip;
     __u16 target_port;
     __u16 flags;
-};
+} __attribute__((packed, aligned(4)));
+
+/* NAT Key Structure - Source port based */
+struct nat_key {
+    __u16 src_port;
+} __attribute__((packed));
 
 /* Global variables for cleanup */
 static struct bpf_object *bpf_obj = NULL;
@@ -98,12 +105,12 @@ struct config {
 };
 
 static struct config cfg = {
-    .interface = "ens5",
-    .target_interface = "ens6", 
-    .nat_target_ip = "127.0.0.1",
-    .nat_target_port = 8080,
-    .nat_source_port = 31765,
-    .stats_interval = 5,
+    .interface = DEFAULT_INGRESS_INTERFACE,
+    .target_interface = DEFAULT_EGRESS_INTERFACE, 
+    .nat_target_ip = DEFAULT_NAT_TARGET_IP,
+    .nat_target_port = DEFAULT_NAT_TARGET_PORT,
+    .nat_source_port = DEFAULT_NAT_SOURCE_PORT,
+    .stats_interval = DEFAULT_STATS_INTERVAL,
     .verbose = 0,
 };
 
@@ -133,7 +140,7 @@ static void cleanup()
 /* Get aggregated statistics from per-CPU map */
 static __u64 get_stat_value(int map_fd, __u32 key)
 {
-    __u64 values[128]; /* Support up to 128 CPUs */
+    __u64 values[MAX_CPU_CORES]; /* Support up to MAX_CPU_CORES CPUs */
     __u64 total = 0;
     
     if (bpf_map_lookup_elem(map_fd, &key, values) != 0) {
@@ -141,36 +148,39 @@ static __u64 get_stat_value(int map_fd, __u32 key)
     }
     
     /* Sum across all CPUs */
-    for (int i = 0; i < 128; i++) {
+    for (int i = 0; i < MAX_CPU_CORES; i++) {
         total += values[i];
     }
     
     return total;
 }
 
-/* Configure NAT rules in eBPF map */
+/* Configure NAT rules in eBPF map - Source Port Based */
 static int configure_nat_rules()
 {
     struct nat_entry entry = {0};
-    __u16 source_port = cfg.nat_source_port;
+    struct nat_key key = {
+        .src_port = bpf_htons(cfg.nat_source_port)  /* Convert to network byte order */
+    };
     
-    /* Parse target IP */
+    /* Parse target IP address */
     if (inet_pton(AF_INET, cfg.nat_target_ip, &entry.target_ip) != 1) {
         fprintf(stderr, "Invalid target IP address: %s\n", cfg.nat_target_ip);
         return -1;
     }
     
-    entry.target_port = cfg.nat_target_port;
+    entry.target_port = cfg.nat_target_port;  /* Store in host byte order, will be converted in eBPF */
     entry.flags = 0;
     
-    /* Add NAT rule to map */
-    if (bpf_map_update_elem(nat_map_fd, &source_port, &entry, BPF_ANY) != 0) {
+    /* Add NAT rule using source port as key (user's design) */
+    if (bpf_map_update_elem(nat_map_fd, &key, &entry, BPF_ANY) != 0) {
         fprintf(stderr, "Failed to add NAT rule: %s\n", strerror(errno));
         return -1;
     }
     
-    printf("NAT rule configured: port %d -> %s:%d\n", 
-           source_port, cfg.nat_target_ip, cfg.nat_target_port);
+    printf("✅ NAT rule configured: src_port %d -> %s:%d\n", 
+           cfg.nat_source_port, cfg.nat_target_ip, cfg.nat_target_port);
+    printf("   (Based on user analysis: 42844 -> 10.2.41.17:8081 pattern)\n");
     
     return 0;
 }
@@ -202,7 +212,7 @@ static int configure_redirect_interface()
     return 0;
 }
 
-/* Display real-time statistics */
+/* Display real-time statistics with 85K+ PPS performance tracking */
 static void display_stats()
 {
     static __u64 prev_stats[STAT_MAX_ENTRIES] = {0};
@@ -222,24 +232,46 @@ static void display_stats()
     /* Calculate rates */
     __u64 packets_delta = current_stats[STAT_TOTAL_PACKETS] - prev_stats[STAT_TOTAL_PACKETS];
     __u64 bytes_delta = current_stats[STAT_BYTES_PROCESSED] - prev_stats[STAT_BYTES_PROCESSED];
+    __u64 vxlan_delta = current_stats[STAT_VXLAN_PACKETS] - prev_stats[STAT_VXLAN_PACKETS];
+    __u64 nat_delta = current_stats[STAT_NAT_APPLIED] - prev_stats[STAT_NAT_APPLIED];
     
     double pps = packets_delta / interval;
+    double vxlan_pps = vxlan_delta / interval;
     double mbps = (bytes_delta * 8.0) / (interval * 1024 * 1024);
     
+    /* Performance status indicators */
+    const char* perf_status = "🔴";
+    if (pps >= 85000) perf_status = "🟢";
+    else if (pps >= 60000) perf_status = "🟡";
+    
     /* Display comprehensive statistics */
-    printf("\n=== VXLAN Pipeline Statistics [%ds interval] ===\n", cfg.stats_interval);
-    printf("Total Packets:    %10lu (%8.0f pps)\n", current_stats[STAT_TOTAL_PACKETS], pps);
-    printf("VXLAN Packets:    %10lu (%6.1f%%)\n", 
-           current_stats[STAT_VXLAN_PACKETS],
+    printf("\n%s === VXLAN Pipeline Statistics [%ds interval] ===\n", perf_status, cfg.stats_interval);
+    printf("📦 Total Packets:    %10lu (%8.0f pps)\n", current_stats[STAT_TOTAL_PACKETS], pps);
+    printf("🌐 VXLAN Packets:    %10lu (%8.0f pps, %5.1f%%)\n", 
+           current_stats[STAT_VXLAN_PACKETS], vxlan_pps,
            current_stats[STAT_TOTAL_PACKETS] > 0 ? 
            (current_stats[STAT_VXLAN_PACKETS] * 100.0) / current_stats[STAT_TOTAL_PACKETS] : 0);
-    printf("Inner Packets:    %10lu\n", current_stats[STAT_INNER_PACKETS]);
-    printf("NAT Applied:      %10lu\n", current_stats[STAT_NAT_APPLIED]);
-    printf("DF Bits Cleared:  %10lu\n", current_stats[STAT_DF_CLEARED]);
-    printf("Forwarded:        %10lu\n", current_stats[STAT_FORWARDED]);
-    printf("Redirected:       %10lu (XDP_REDIRECT)\n", current_stats[STAT_REDIRECTED]);
-    printf("Errors:           %10lu\n", current_stats[STAT_ERRORS]);
-    printf("Throughput:       %10.2f Mbps\n", mbps);
+    printf("📋 Inner Packets:    %10lu\n", current_stats[STAT_INNER_PACKETS]);
+    printf("🔄 NAT Applied:      %10lu (%8.0f/s)\n", current_stats[STAT_NAT_APPLIED], nat_delta / interval);
+    printf("🚫 DF Bits Cleared:  %10lu (for >1400B pkts)\n", current_stats[STAT_DF_CLEARED]);
+    printf("📤 Forwarded:        %10lu\n", current_stats[STAT_FORWARDED]);
+    printf("⚡ Redirected:       %10lu (XDP_REDIRECT)\n", current_stats[STAT_REDIRECTED]);
+    printf("❌ Errors:           %10lu\n", current_stats[STAT_ERRORS]);
+    printf("🚀 Throughput:       %10.2f Mbps\n", mbps);
+    
+    /* Performance analysis */
+    if (pps >= 85000) {
+        printf("🎉 PERFORMANCE TARGET ACHIEVED! (%0.f PPS)\n", pps);
+    } else if (current_stats[STAT_TOTAL_PACKETS] > 1000) {
+        printf("📈 Performance: %.0f PPS (target: 85K+)\n", pps);
+    }
+    
+    /* NAT efficiency analysis */
+    if (current_stats[STAT_VXLAN_PACKETS] > 0) {
+        double nat_ratio = (current_stats[STAT_NAT_APPLIED] * 100.0) / current_stats[STAT_VXLAN_PACKETS];
+        printf("🎯 NAT Efficiency:   %.1f%% (src_port matching)\n", nat_ratio);
+    }
+    
     printf("========================================\n");
     
     /* Update previous stats */
