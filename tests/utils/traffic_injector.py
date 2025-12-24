@@ -82,20 +82,27 @@ class VXLANTrafficInjector:
             
             while self.running and (time.time() - start_time < duration):
                 try:
-                    # Create VXLAN payload (without Ethernet header for UDP socket)
+                    # Create proper VXLAN packet with inner Ethernet frame
                     # Inner packet (the one that will be processed after VXLAN decap)
+                    inner_eth = Ether(dst="aa:bb:cc:dd:ee:11", src="aa:bb:cc:dd:ee:22")
                     inner_ip = IP(src="192.168.1.100", dst="192.168.1.200")
                     inner_udp = UDP(sport=42844, dport=8081)  # Matches NAT rule
                     inner_payload = Raw(b"VXLAN test payload " + b"A" * 100)
-                    inner_packet = inner_ip / inner_udp / inner_payload
+                    inner_packet = inner_eth / inner_ip / inner_udp / inner_payload
                     
-                    # VXLAN header
-                    vxlan = VXLAN(vni=1, flags=0x08)
+                    # VXLAN header - ensure proper format
+                    vxlan = VXLAN(vni=1, flags=0x08)  # Standard VXLAN flags
                     
-                    # Complete VXLAN payload (IP+UDP+VXLAN+Inner)
+                    # Variation for testing different scenarios
+                    if sent_count % 10 == 0:
+                        # Large packet to test DF bit clearing
+                        inner_payload_large = Raw(b"LARGE" + b"X" * 1400)
+                        inner_packet = inner_eth / inner_ip / inner_udp / inner_payload_large
+                    
+                    # Complete VXLAN payload (VXLAN header + Inner Ethernet frame)
                     vxlan_payload = bytes(vxlan / inner_packet)
                     
-                    # Send via UDP socket - this will create proper IP/UDP headers
+                    # Send via UDP socket
                     sock.sendto(vxlan_payload, (self.target_ip, self.target_port))
                     sent_count += 1
                     
@@ -145,11 +152,12 @@ class VXLANTrafficInjector:
         """Start multi-threaded traffic injection"""
         print(f"🚀 Starting VXLAN traffic injection (UDP Method)")
         print(f"   Target: {self.target_ip}:{self.target_port}")
-        print(f"   Interface: {self.interface}")
+        print(f"   Interface: {self.interface}")  
         print(f"   Threads: {self.threads}")
         print(f"   Target PPS: {self.pps}")
         print(f"   Duration: {duration}s")
         print(f"   Method: UDP socket (VM-optimized)")
+        print(f"   VXLAN VNI: 1, Inner ports: 42844->8081 (NAT rule)")
         print()
         
         self.running = True
