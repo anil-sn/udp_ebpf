@@ -21,8 +21,8 @@ sudo apt-get install -y build-essential clang libbpf-dev linux-headers-$(uname -
 
 ### Build & Deploy
 ```bash
-# Build the XDP program
-make clean && make all
+# Build the XDP program (from src directory)
+cd src && make clean && make all && cd ..
 
 # Simple control - choose one:
 ./xdp.sh start    # Start XDP pipeline
@@ -144,14 +144,20 @@ sudo sysctl -w net.core.netdev_max_backlog=5000 # Queue size
 ## 📁 Project Structure
 
 ```
-XDP_New/
-├── xdp.sh              # 🎯 Simple control script
-├── vxlan_pipeline.bpf.c       # XDP program (kernel space)
-├── vxlan_loader.c             # Control plane (userspace)
-├── vxlan_pipeline.h           # Configuration constants
-├── Makefile                   # Build system
-├── optimize_system.sh         # Performance tuning
-└── monitor_performance.bt     # Advanced monitoring (BPFtrace)
+ebpf/
+├── src/                       # Core source code
+│   ├── vxlan_pipeline.bpf.c   # XDP program (kernel space)
+│   ├── vxlan_loader.c         # Control plane (userspace) 
+│   ├── vxlan_pipeline.h       # Configuration constants
+│   └── Makefile               # Build system
+├── tests/                     # Test framework
+│   ├── test_framework.sh      # Test orchestrator
+│   ├── traffic_simulator.sh   # Traffic generation
+│   ├── pps_monitor.py         # PPS monitoring
+│   └── monitor_performance.bt # BPFtrace monitoring
+├── xdp.sh                     # control script
+├── xdp_pipeline.sh            # Advanced control script
+└── optimize_system.sh         # Performance tuning
 ```
 
 ## 🎯 Performance Targets
@@ -370,10 +376,10 @@ sudo sysctl -p
 ```bash
 # Clone repository
 git clone <repository-url>
-cd XDP_New
+cd ebpf
 
 # Run unified setup and deployment
-sudo ./vxlan_pipeline_ctl.sh deploy
+sudo ./xdp_pipeline.sh deploy
 ```
 
 ### Manual Installation
@@ -417,7 +423,7 @@ echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governo
 
 #### 4. **Configuration**
 
-Edit `vxlan_pipeline.h` for environment-specific settings:
+Edit `src/vxlan_pipeline.h` for environment-specific settings:
 
 ```c
 // Network interfaces (adjust for your environment)
@@ -439,10 +445,10 @@ Edit `vxlan_pipeline.h` for environment-specific settings:
 
 ```bash
 # Test compilation
-sudo ./vxlan_pipeline_ctl.sh build
+sudo ./xdp_pipeline.sh build
 
 # Run system readiness check
-sudo ./vxlan_pipeline_ctl.sh check
+sudo ./xdp_pipeline.sh check
 
 # Expected output:
 # ✓ Kernel version: 5.4.0 (compatible)
@@ -600,7 +606,7 @@ sudo apt-get install -y \
 
 ```bash
 # 1. Clone and navigate to project
-cd /path/to/ebpf/XDP_New
+cd /path/to/ebpf
 
 # 2. Check system readiness
 chmod +x check_readiness.sh
@@ -674,7 +680,7 @@ The unified control script provides comprehensive real-time monitoring:
 
 ```bash
 # Start monitoring (included in deploy command)
-sudo ./vxlan_pipeline_ctl.sh monitor
+sudo ./xdp_pipeline.sh monitor
 
 # Output example:
 TIME     PPS        VXLAN_PPS  NAT_HIT% REDIRECTED ERRORS  STATUS
@@ -936,7 +942,7 @@ sudo ethtool -L ens4 combined $NUM_QUEUES
 
 #### 1. **eBPF Program Tuning**
 
-Edit `vxlan_pipeline.h` for performance tuning:
+Edit `src/vxlan_pipeline.h` for performance tuning:
 
 ```c
 // Increase map sizes for higher throughput
@@ -954,7 +960,7 @@ Edit `vxlan_pipeline.h` for performance tuning:
 
 #### 2. **Compiler Optimizations**
 
-Update Makefile for maximum performance:
+Update `src/Makefile` for maximum performance:
 
 ```makefile
 # Enhanced BPF compilation flags
@@ -985,7 +991,7 @@ echo "=============================="
 
 # Test 1: Sustained packet rate
 echo "Test 1: Measuring sustained packet rate..."
-sudo ./vxlan_pipeline_ctl.sh deploy --duration 60 &
+sudo ./xdp_pipeline.sh deploy --duration 60 &
 TEST_PID=$!
 
 sleep 10  # Allow warmup
@@ -1662,7 +1668,7 @@ yum install -y git gcc clang make kernel-devel-$(uname -r)
 # Clone and build VXLAN pipeline
 cd /opt
 git clone https://github.com/your-org/vxlan-pipeline.git
-cd vxlan-pipeline/XDP_New
+cd vxlan-pipeline/ebpf
 
 # Build and configure
 make all
@@ -1820,7 +1826,7 @@ Outputs:
 ### Project Structure
 
 ```
-XDP_New/
+ebpf/
 ├── vxlan_pipeline.bpf.c      # Main XDP program (kernel space)
 ├── vxlan_loader.c            # Control plane (user space)  
 ├── Makefile                  # Build system with dependency checking
@@ -1837,7 +1843,7 @@ XDP_New/
 ```bash
 # Set up development environment
 git clone <repository>
-cd XDP_New
+cd ebpf
 
 # Check system compatibility  
 sudo ./check_readiness.sh

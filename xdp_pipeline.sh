@@ -247,7 +247,7 @@ build_program() {
     log "XDP program compiled successfully"
     
     # Verify binary exists
-    if [[ ! -f "./vxlan_loader" ]]; then
+    if [[ ! -f "./src/vxlan_loader" ]]; then
         error "vxlan_loader binary not found after build"
         return 1
     fi

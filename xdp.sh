@@ -66,7 +66,7 @@ start() {
     
     # Start background process with comprehensive redirection
     echo -e "${BLUE}Launching vxlan_loader...${NC}"
-    nohup sudo ./vxlan_loader -i $INTERFACE -t $TARGET_INTERFACE \
+    nohup sudo ./src/vxlan_loader -i $INTERFACE -t $TARGET_INTERFACE \
         -a $NAT_IP -p $NAT_PORT -s $SOURCE_PORT -I $STATS_INTERVAL \
         </dev/null >"$LOG_FILE" 2>&1 &
     

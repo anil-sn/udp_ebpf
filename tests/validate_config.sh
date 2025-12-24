@@ -71,11 +71,11 @@ for binary in clang gcc make; do
     fi
 done
 
-# Check if vxlan_loader exists
-if [ -f "vxlan_loader" ]; then
+# Check if vxlan_loader exists in src directory
+if [ -f "../src/vxlan_loader" ]; then
     echo -e "  vxlan_loader: ${GREEN}✓ Found${NC}"
 else
-    echo -e "  vxlan_loader: ${YELLOW}! Not built (run 'make')${NC}"
+    echo -e "  vxlan_loader: ${YELLOW}! Not built (run 'make' in src directory)${NC}"
 fi
 
 echo ""
