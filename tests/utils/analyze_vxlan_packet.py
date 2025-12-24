@@ -33,7 +33,7 @@ def analyze_packet(packet):
         vxlan_layer = packet[VXLAN]
         print(f"✅ VXLAN Header Found:")
         print(f"   VNI: {vxlan_layer.vni}")
-        print(f"   Flags: 0x{vxlan_layer.flags:02x}")
+        print(f"   Flags: {vxlan_layer.flags} (raw: {int(vxlan_layer.flags)})")
         
         # Check inner packet
         if Ether in vxlan_layer.payload:
