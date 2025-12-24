@@ -141,12 +141,21 @@ detect_scapy() {
         return 0
     fi
     
-    # Method 3: Try to add common pip paths dynamically
+    # Method 3: Try to add common pip paths dynamically (including user paths)
     if python3 -c "
 import sys
 import site
+import os
+# Add standard site packages
 sys.path.extend(site.getsitepackages())
+# Add common system-wide locations
 sys.path.extend(['/usr/local/lib/python3.10/dist-packages', '/usr/lib/python3/dist-packages'])
+# Add user site packages for current user (when running as root, check original user)
+if 'SUDO_USER' in os.environ:
+    user_home = '/home/' + os.environ['SUDO_USER']
+    user_site = user_home + '/.local/lib/python3.10/site-packages'
+    if os.path.exists(user_site):
+        sys.path.insert(0, user_site)
 try:
     import scapy
     exit(0)
@@ -327,8 +336,18 @@ generate_test_packets() {
         return 0
     fi
     
+    # Set up Python path to include user packages when running as root
+    local python_env=""
+    if [ "$(id -u)" -eq 0 ] && [ -n "$SUDO_USER" ]; then
+        local user_home="/home/$SUDO_USER"
+        local user_site="$user_home/.local/lib/python3.10/site-packages"
+        if [ -d "$user_site" ]; then
+            python_env="PYTHONPATH=${user_site}:${PYTHONPATH:-}"
+        fi
+    fi
+    
     # Run external packet generation script with configuration
-    if "$TEST_DIR/generate_packets.py" \
+    if env $python_env "$TEST_DIR/generate_packets.py" \
         --output "$TEST_DATA_DIR" \
         --nat-source-port "${SOURCE_PORT:-42844}" \
         --nat-target-ip "${NAT_IP:-10.2.41.17}" \
