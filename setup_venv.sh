@@ -48,11 +48,11 @@ source "$VENV_PATH/bin/activate"
 
 # Install dependencies
 echo -e "${BLUE}Installing Python dependencies...${NC}"
-uv pip install -e "."
+uv pip install scapy
 
 # Install optional test dependencies
 echo -e "${BLUE}Installing test dependencies...${NC}"
-uv pip install -e ".[test]"
+uv pip install pytest pytest-cov
 
 echo ""
 echo -e "${GREEN}✓ Virtual environment setup complete!${NC}"
