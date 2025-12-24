@@ -351,7 +351,7 @@ run_program_with_monitoring() {
     fi
     
     args="$args -a $NAT_TARGET_IP -p $NAT_TARGET_PORT -s $NAT_SOURCE_PORT"
-    args="$args --stats-interval $STATS_INTERVAL -v"
+    args="$args -I $STATS_INTERVAL -v"
     
     info "Command: ./vxlan_loader $args"
     log "Starting VXLAN pipeline..."
