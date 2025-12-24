@@ -50,15 +50,18 @@ case $OS in
         sudo apt-get install -y iproute2 net-tools tcpdump
         
         echo "Installing optional testing tools..."
-        sudo apt-get install -y hping3
+        sudo apt-get install -y hping3 libpcap-dev
         
         echo "Installing Python scapy..."
-        pip3 install scapy || {
-            echo -e "${YELLOW}Warning: pip3 install scapy failed, trying system package...${NC}"
-            sudo apt-get install -y python3-scapy || {
+        # Try system package first (recommended for root usage)
+        if sudo apt-get install -y python3-scapy; then
+            echo "✓ Scapy installed via system package"
+        else
+            echo "System package not available, installing via pip..."
+            sudo pip3 install scapy || {
                 echo -e "${YELLOW}Warning: Could not install scapy. Install manually if needed.${NC}"
             }
-        }
+        fi
         ;;
         
     "rhel"|"centos"|"fedora")

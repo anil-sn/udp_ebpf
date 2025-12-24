@@ -18,18 +18,24 @@ sudo yum install -y clang gcc make iproute tcpdump python3
 
 **Optional tools** (for advanced features):
 ```bash
-# Ubuntu/Debian
+# System dependencies for Scapy (required first)
+sudo apt-get install -y tcpdump libpcap-dev python3-pip
+
+# Option 1: System package (recommended for root usage)
+sudo apt-get install -y python3-scapy
+
+# Option 2: Pip installation (system-wide for root access)
+sudo pip3 install scapy
+
+# Traffic generation tools
 sudo apt-get install -y hping3
-pip3 install scapy
 
-# RHEL/CentOS/Fedora
-sudo yum install -y hping3
-pip3 install scapy
-
-# Alternative: try system package (may not be available)
-sudo apt-get install -y python3-scapy  # Ubuntu/Debian
-sudo yum install -y python3-scapy      # RHEL/CentOS
+# For RHEL/CentOS/Fedora
+sudo yum install -y tcpdump libpcap-devel python3-pip hping3
+sudo pip3 install scapy
 ```
+
+**Note**: Scapy requires root privileges for network operations, which is why system-wide installation is recommended for this project.
 
 ### Dependency Validation
 Run this to check your environment:

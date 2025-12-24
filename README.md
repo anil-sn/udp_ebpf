@@ -21,12 +21,11 @@ sudo apt-get install -y build-essential clang gcc make libbpf-dev linux-headers-
 # Install network tools  
 sudo apt-get install -y iproute2 net-tools tcpdump
 
-# Install optional testing tools
-sudo apt-get install -y hping3
-pip3 install scapy
+# Install optional testing tools with system dependencies
+sudo apt-get install -y hping3 libpcap-dev
+sudo apt-get install -y python3-scapy || sudo pip3 install scapy
 
-# Alternative: try system package (may not be available on all systems)
-# sudo apt-get install -y python3-scapy
+# Note: Scapy requires root privileges for network operations
 ```
 
 ### Build & Deploy
