@@ -69,7 +69,7 @@ check-deps:
 	@echo "Checking build dependencies..."
 	@which $(CLANG) > /dev/null || (echo "ERROR: clang not found. Install: apt-get install clang" && exit 1)
 	@which $(CC) > /dev/null || (echo "ERROR: gcc not found. Install: apt-get install gcc" && exit 1)
-	@test -f $(LIBBPF_DIR)/lib/libbpf.a || (echo "ERROR: libbpf not found. Install: apt-get install libbpf-dev" && exit 1)
+	@test -f $(LIBBPF_DIR)/libbpf.a -o -f /usr/lib/x86_64-linux-gnu/libbpf.a -o -f /usr/lib/libbpf.a || (echo "ERROR: libbpf not found. Install: apt-get install libbpf-dev" && exit 1)
 	@test -d $(KERNEL_SRC) || (echo "ERROR: kernel headers not found. Install: apt-get install linux-headers-$(KERNEL_REL)" && exit 1)
 	@echo "All dependencies satisfied ✓"
 
