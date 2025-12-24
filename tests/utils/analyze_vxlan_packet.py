@@ -72,6 +72,25 @@ def analyze_packet(packet):
     print("🔢 Raw packet (first 64 bytes):")
     raw_bytes = bytes(packet)
     print(" ".join(f"{b:02x}" for b in raw_bytes[:64]))
+    
+    # Analyze VXLAN header bytes specifically
+    if len(raw_bytes) >= 8:
+        print(f"\n🔍 VXLAN Header Analysis:")
+        vxlan_bytes = raw_bytes[:8]
+        print(f"   Byte 0 (flags): 0x{vxlan_bytes[0]:02x} = {vxlan_bytes[0]}")
+        print(f"   Bytes 1-3 (reserved): {vxlan_bytes[1]:02x} {vxlan_bytes[2]:02x} {vxlan_bytes[3]:02x}")
+        print(f"   Bytes 4-6 (VNI): {vxlan_bytes[4]:02x} {vxlan_bytes[5]:02x} {vxlan_bytes[6]:02x}")
+        print(f"   Byte 7 (reserved): 0x{vxlan_bytes[7]:02x}")
+        print(f"   VNI as integer: {(vxlan_bytes[4] << 16) | (vxlan_bytes[5] << 8) | vxlan_bytes[6]}")
+        
+        # Check XDP parsing logic
+        flags_check = vxlan_bytes[0] & 0x08
+        vni_check = (vxlan_bytes[4] == 0 and vxlan_bytes[5] == 0 and vxlan_bytes[6] == 1)
+        print(f"   XDP Flags Check (& 0x08): {'✅ PASS' if flags_check else '❌ FAIL'}")
+        print(f"   XDP VNI Check (0,0,1): {'✅ PASS' if vni_check else '❌ FAIL'}")
+        
+        if not vni_check:
+            print(f"   🐛 VNI Issue: Expected (0,0,1), got ({vxlan_bytes[4]},{vxlan_bytes[5]},{vxlan_bytes[6]})")
 
 if __name__ == "__main__":
     print("🧪 VXLAN Packet Structure Test")
