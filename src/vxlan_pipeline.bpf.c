@@ -679,9 +679,9 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     __u32 *target_ifindex = bpf_map_lookup_elem(&redirect_map, &key);
     
     if (target_ifindex && *target_ifindex > 0) {
-        /* In generic mode, use XDP_PASS with MAC modification for reliable forwarding */
+        /* For now, use XDP_TX to bounce back via same interface for testing */
         update_stat(STAT_REDIRECTED, 1);
-        return XDP_PASS;  /* Let kernel route with corrected MAC address */
+        return XDP_TX;  /* Bounce packet back out ens5 - should be visible */
     }
     
     /* No specific target - let kernel routing handle it */
