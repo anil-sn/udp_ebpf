@@ -193,7 +193,7 @@ test_configuration() {
         log_test "Config File Exists" "PASS" ".env file found"
         
         # Test configuration validation script
-        if [ -x "./validate_config.sh" ] && ./validate_config.sh >/dev/null 2>&1; then
+        if [ -x "../config/validate_config.sh" ] && ../config/validate_config.sh >/dev/null 2>&1; then
             log_test "Config Validation" "PASS" "Configuration validation passed"
         else
             log_test "Config Validation" "FAIL" "Configuration validation failed"
@@ -292,8 +292,8 @@ generate_test_packets() {
     
     echo "Generating test packets using external script..."
     
-    # Check if generate_packets.py exists
-    if [ ! -f "$TEST_DIR/generate_packets.py" ]; then
+    # Check if generate_packets.py exists in utils directory
+    if [ ! -f "$TEST_DIR/../utils/generate_packets.py" ]; then
         echo -e "${YELLOW}Warning: generate_packets.py not found, skipping packet generation${NC}"
         return 0
     fi
@@ -307,7 +307,7 @@ generate_test_packets() {
     fi
     
     # Run external packet generation script with configuration
-    if "$PYTHON_CMD" "$TEST_DIR/generate_packets.py" \
+    if "$PYTHON_CMD" "$TEST_DIR/../utils/generate_packets.py" \
         --output "$TEST_DATA_DIR" \
         --nat-source-port "${SOURCE_PORT:-42844}" \
         --nat-target-ip "${NAT_IP:-10.2.41.17}" \
