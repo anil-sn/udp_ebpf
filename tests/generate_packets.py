@@ -529,7 +529,7 @@ def create_validation_report(output_dir, packets, validation_reports, config):
                 
                 f.write(f"  VXLAN Details:\n")
                 f.write(f"    VNI: {vxlan_layer.vni}\n")
-                f.write(f"    Flags: 0x{vxlan_layer.flags:02x}\n")
+                f.write(f"    Flags: 0x{int(vxlan_layer.flags):02x}\n")
                 
                 if outer_ip and outer_udp:
                     f.write(f"    Outer: {outer_ip.src}:{outer_udp.sport} → {outer_ip.dst}:{outer_udp.dport}\n")
