@@ -204,12 +204,12 @@ static void init_stats()
     }
 }
 
-/* Configure NAT rules in eBPF map - Source Port Based */
+/* Configure NAT rules in eBPF map - Destination Port Based (Fixed) */
 static int configure_nat_rules()
 {
     struct nat_entry entry = {0};
     struct nat_key key = {
-        .src_port = htons(cfg.nat_source_port)  /* Convert to network byte order */
+        .src_port = htons(cfg.nat_source_port)  /* NOTE: Despite name, this matches destination port in packets */
     };
     
     /* Parse target IP address */
@@ -227,9 +227,9 @@ static int configure_nat_rules()
         return -1;
     }
     
-    printf("[OK] NAT rule configured: src_port %d -> %s:%d\n", 
+    printf("[OK] NAT rule configured: dest_port %d -> %s:%d\n", 
            cfg.nat_source_port, cfg.nat_target_ip, cfg.nat_target_port);
-    printf("     (Based on user analysis: 42844 -> 10.2.41.17:8081 pattern)\n");
+    printf("     (Matches packets TO destination port %d)\n", cfg.nat_source_port);
     
     return 0;
 }
