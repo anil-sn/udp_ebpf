@@ -17,31 +17,15 @@ from scapy.layers.vxlan import VXLAN
 
 class VXLANTrafficInjector:
     def __init__(self, target_ip=None, target_port=4789, 
-                 interface="eth0", threads=4, pps=1000):
+                 interface=None, threads=8, pps=1000):
+        if not target_ip or not interface:
+            raise ValueError("target_ip and interface must be specified")
+        self.target_ip = target_ip
+        self.target_port = target_port 
         self.interface = interface
         self.threads = threads
         self.pps = pps
         self.running = False
-        
-        # Auto-detect target IP that routes through the interface
-        if target_ip is None:
-            try:
-                # Get a routable IP that will use this interface
-                import subprocess
-                # Use Google DNS as target - this will route through the interface
-                self.target_ip = "8.8.8.8"
-                
-                # Verify the route goes through our interface
-                result = subprocess.run(['ip', 'route', 'get', self.target_ip], 
-                                      capture_output=True, text=True)
-                if interface not in result.stdout:
-                    print(f"⚠️  Warning: Traffic to {self.target_ip} may not route via {interface}")
-            except:
-                self.target_ip = "8.8.8.8"
-        else:
-            self.target_ip = target_ip
-            
-        self.target_port = target_port
         self.stats = {
             'sent': 0,
             'errors': 0,
@@ -75,14 +59,15 @@ class VXLANTrafficInjector:
         """Worker thread that sends packets at specified rate"""
         sock = None
         try:
-            # Create raw socket for sending
+            # Use raw socket for direct packet injection
+            # This ensures packets go to the correct interface
             sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
             sock.bind((self.interface, 0))
             
             packets_per_thread = self.pps // self.threads
             interval = 1.0 / packets_per_thread if packets_per_thread > 0 else 1.0
             
-            print(f"Worker {worker_id}: Sending {packets_per_thread} PPS (interval: {interval:.4f}s)")
+            print(f"Worker {worker_id}: Sending {packets_per_thread} PPS to {self.target_ip} via {self.interface}")
             
             sent_count = 0
             start_time = time.time()
@@ -97,7 +82,7 @@ class VXLANTrafficInjector:
                     else:
                         packet = self.create_vxlan_packet()
                     
-                    # Send packet
+                    # Send packet directly on interface - this bypasses routing
                     sock.send(bytes(packet))
                     sent_count += 1
                     
@@ -116,6 +101,7 @@ class VXLANTrafficInjector:
                         
         except Exception as e:
             print(f"Worker {worker_id} failed to create socket: {e}")
+            print(f"Note: Sending to {self.target_ip} via {self.interface}")
         finally:
             if sock:
                 sock.close()
@@ -192,10 +178,10 @@ class VXLANTrafficInjector:
 
 def main():
     parser = argparse.ArgumentParser(description="Multi-threaded VXLAN traffic injector")
-    parser.add_argument("--target-ip", default="127.0.0.1", help="Target IP address")
+    parser.add_argument("--target-ip", required=True, help="Target IP address")
     parser.add_argument("--target-port", type=int, default=4789, help="Target port")
-    parser.add_argument("--interface", required=True, help="Network interface (required)")
-    parser.add_argument("--threads", type=int, default=4, help="Number of threads")
+    parser.add_argument("--interface", required=True, help="Network interface")
+    parser.add_argument("--threads", type=int, default=8, help="Number of threads")
     parser.add_argument("--pps", type=int, default=1000, help="Packets per second")
     parser.add_argument("--duration", type=int, default=30, help="Test duration in seconds")
     

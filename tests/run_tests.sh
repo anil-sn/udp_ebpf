@@ -16,16 +16,6 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$TEST_DIR")"
 VENV_PATH="$PROJECT_ROOT/.venv"
 
-# Load configuration from .env file
-if [ -f "$PROJECT_ROOT/.env" ]; then
-    source "$PROJECT_ROOT/.env"
-    echo -e "${GREEN}✓${NC} Configuration loaded from .env"
-else
-    echo -e "${YELLOW}⚠${NC} No .env file found - using defaults"
-    INTERFACE="eth0"
-    TARGET_INTERFACE="eth1"
-fi
-
 # Simple banner
 echo -e "${BLUE}XDP VXLAN Pipeline Test Suite${NC}"
 echo "=============================="
