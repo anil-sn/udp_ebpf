@@ -14,9 +14,19 @@ This project implements VXLAN packet processing using eBPF/XDP for AWS Traffic M
 
 ### Prerequisites
 ```bash
-# Install dependencies
+# Install core dependencies
 sudo apt-get update
-sudo apt-get install -y build-essential clang libbpf-dev linux-headers-$(uname -r)
+sudo apt-get install -y build-essential clang gcc make libbpf-dev linux-headers-$(uname -r)
+
+# Install network tools  
+sudo apt-get install -y iproute2 net-tools tcpdump
+
+# Install optional testing tools
+sudo apt-get install -y hping3
+pip3 install scapy
+
+# Alternative: try system package (may not be available on all systems)
+# sudo apt-get install -y python3-scapy
 ```
 
 ### Build & Deploy
@@ -45,8 +55,8 @@ cp .env.example .env
 # Edit configuration
 nano .env
 
-# Validate configuration  
-./validate_config.sh
+# Validate configuration
+cd tests && ./validate_config.sh && cd ..
 ```
 
 #### Sample `.env` Configuration:
@@ -149,15 +159,25 @@ ebpf/
 │   ├── vxlan_pipeline.bpf.c   # XDP program (kernel space)
 │   ├── vxlan_loader.c         # Control plane (userspace) 
 │   ├── vxlan_pipeline.h       # Configuration constants
-│   └── Makefile               # Build system
+│   ├── Makefile               # Build system
+│   └── README.md              # Source code documentation
 ├── tests/                     # Test framework
 │   ├── test_framework.sh      # Test orchestrator
 │   ├── traffic_simulator.sh   # Traffic generation
 │   ├── pps_monitor.py         # PPS monitoring
-│   └── monitor_performance.bt # BPFtrace monitoring
-├── xdp.sh                     # control script
+│   ├── monitor_performance.bt # BPFtrace monitoring
+│   ├── analyze_packets.py     # Packet analysis tools
+│   ├── generate_packets.py    # Packet generation
+│   ├── validate_config.sh     # Configuration validation
+│   ├── README.md              # Test documentation
+│   └── TESTING.md             # Testing procedures
+├── .env.example               # Configuration template
+├── .env                       # Environment configuration
+├── xdp.sh                     # Simple control script
 ├── xdp_pipeline.sh            # Advanced control script
-└── optimize_system.sh         # Performance tuning
+├── optimize_system.sh         # Performance tuning
+├── DEPLOYMENT.md              # Deployment documentation
+└── README.md                  # Project documentation
 ```
 
 ## 🎯 Performance Targets
