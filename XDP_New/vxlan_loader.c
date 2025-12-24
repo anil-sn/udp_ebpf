@@ -95,8 +95,8 @@ static volatile sig_atomic_t running = 1;
 
 /* Configuration */
 struct config {
-    char interface[IFNAMSIZ];
-    char target_interface[IFNAMSIZ];
+    char interface[IF_NAMESIZE];
+    char target_interface[IF_NAMESIZE];
     char nat_target_ip[INET_ADDRSTRLEN];
     int nat_target_port;
     int nat_source_port;
@@ -160,7 +160,7 @@ static int configure_nat_rules()
 {
     struct nat_entry entry = {0};
     struct nat_key key = {
-        .src_port = bpf_htons(cfg.nat_source_port)  /* Convert to network byte order */
+        .src_port = htons(cfg.nat_source_port)  /* Convert to network byte order */
     };
     
     /* Parse target IP address */
@@ -246,17 +246,17 @@ static void display_stats()
     
     /* Display comprehensive statistics */
     printf("\n%s === VXLAN Pipeline Statistics [%ds interval] ===\n", perf_status, cfg.stats_interval);
-    printf("📦 Total Packets:    %10lu (%8.0f pps)\n", current_stats[STAT_TOTAL_PACKETS], pps);
-    printf("🌐 VXLAN Packets:    %10lu (%8.0f pps, %5.1f%%)\n", 
+    printf("📦 Total Packets:    %10llu (%8.0f pps)\n", current_stats[STAT_TOTAL_PACKETS], pps);
+    printf("🌐 VXLAN Packets:    %10llu (%8.0f pps, %5.1f%%)\n",
            current_stats[STAT_VXLAN_PACKETS], vxlan_pps,
            current_stats[STAT_TOTAL_PACKETS] > 0 ? 
-           (current_stats[STAT_VXLAN_PACKETS] * 100.0) / current_stats[STAT_TOTAL_PACKETS] : 0);
-    printf("📋 Inner Packets:    %10lu\n", current_stats[STAT_INNER_PACKETS]);
-    printf("🔄 NAT Applied:      %10lu (%8.0f/s)\n", current_stats[STAT_NAT_APPLIED], nat_delta / interval);
-    printf("🚫 DF Bits Cleared:  %10lu (for >1400B pkts)\n", current_stats[STAT_DF_CLEARED]);
-    printf("📤 Forwarded:        %10lu\n", current_stats[STAT_FORWARDED]);
-    printf("⚡ Redirected:       %10lu (XDP_REDIRECT)\n", current_stats[STAT_REDIRECTED]);
-    printf("❌ Errors:           %10lu\n", current_stats[STAT_ERRORS]);
+               (double)current_stats[STAT_VXLAN_PACKETS] * 100.0 / current_stats[STAT_TOTAL_PACKETS] : 0.0);
+    printf("📋 Inner Packets:    %10llu\n", current_stats[STAT_INNER_PACKETS]);
+    printf("🔄 NAT Applied:      %10llu (%8.0f/s)\n", current_stats[STAT_NAT_APPLIED], nat_delta / interval);
+    printf("🚫 DF Bits Cleared:  %10llu (for >1400B pkts)\n", current_stats[STAT_DF_CLEARED]);
+    printf("📤 Forwarded:        %10llu\n", current_stats[STAT_FORWARDED]);
+    printf("⚡ Redirected:       %10llu (XDP_REDIRECT)\n", current_stats[STAT_REDIRECTED]);
+    printf("❌ Errors:           %10llu\n", current_stats[STAT_ERRORS]);
     printf("🚀 Throughput:       %10.2f Mbps\n", mbps);
     
     /* Performance analysis */
@@ -399,10 +399,10 @@ static int parse_args(int argc, char **argv)
     while ((c = getopt_long(argc, argv, "i:t:a:p:s:I:vh", long_options, NULL)) != -1) {
         switch (c) {
         case 'i':
-            strncpy(cfg.interface, optarg, IFNAMSIZ - 1);
+            strncpy(cfg.interface, optarg, IF_NAMESIZE - 1);
             break;
         case 't':
-            strncpy(cfg.target_interface, optarg, IFNAMSIZ - 1);
+            strncpy(cfg.target_interface, optarg, IF_NAMESIZE - 1);
             break;
         case 'a':
             strncpy(cfg.nat_target_ip, optarg, INET_ADDRSTRLEN - 1);
