@@ -39,13 +39,43 @@
  * - Drops: Zero packet drops under sustained load
  */
 
-#include <linux/if_ether.h>
-#include <linux/ip.h>
-#include <linux/udp.h>
-#include <linux/in.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
+#include <linux/types.h>
 #include "vxlan_pipeline.h"
+
+// Network protocol definitions
+#define ETH_P_IP    0x0800
+#define IPPROTO_UDP 17
+#define ETH_HLEN    14
+
+// Network structure definitions
+struct ethhdr {
+    unsigned char h_dest[6];
+    unsigned char h_source[6]; 
+    __be16 h_proto;
+} __attribute__((packed));
+
+struct iphdr {
+    __u8 ihl:4,
+         version:4;
+    __u8 tos;
+    __be16 tot_len;
+    __be16 id;
+    __be16 frag_off;
+    __u8 ttl;
+    __u8 protocol;
+    __sum16 check;
+    __be32 saddr;
+    __be32 daddr;
+} __attribute__((packed));
+
+struct udphdr {
+    __be16 source;
+    __be16 dest;
+    __be16 len;
+    __be16 check;
+} __attribute__((packed));
 
 /*
  * VXLAN Header Structure (RFC 7348)
