@@ -357,8 +357,10 @@ run_program_with_monitoring() {
     log "Starting VXLAN pipeline..."
     
     # Change to src directory and start the program in background for monitoring
-    (cd src && ./vxlan_loader $args) &
+    cd src
+    ./vxlan_loader $args &
     PROGRAM_PID=$!
+    cd ..
     XDP_ATTACHED=1
     
     sleep 2  # Give program time to start
