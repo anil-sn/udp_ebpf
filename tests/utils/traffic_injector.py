@@ -85,26 +85,26 @@ class VXLANTrafficInjector:
                     # Create proper VXLAN packet with inner Ethernet frame
                     # Inner packet (the one that will be processed after VXLAN decap)
                     inner_eth = Ether(dst="aa:bb:cc:dd:ee:11", src="aa:bb:cc:dd:ee:22")
-                    inner_ip = IP(src="192.168.1.100", dst="192.168.1.200")
-                    inner_udp = UDP(sport=42844, dport=8081)  # Matches NAT rule
-                    inner_payload = Raw(b"VXLAN test payload " + b"A" * 200)  # Larger payload
-                    inner_packet = inner_eth / inner_ip / inner_udp / inner_payload
+                    
+                    # Variation for testing different scenarios
+                    if sent_count % 5 == 0:
+                        # Large packet to test DF bit clearing (every 5th packet = 20%)
+                        inner_ip = IP(src="192.168.1.100", dst="192.168.1.200", flags="DF")  # Set DF bit
+                        inner_udp = UDP(sport=42844, dport=8081)  # Matches NAT rule
+                        inner_payload_large = Raw(b"LARGE_PACKET_" + b"X" * 1450)  # >1400 bytes payload
+                        inner_packet = inner_eth / inner_ip / inner_udp / inner_payload_large
+                    else:
+                        # Normal packet
+                        inner_ip = IP(src="192.168.1.100", dst="192.168.1.200")
+                        inner_udp = UDP(sport=42844, dport=8081)  # Matches NAT rule  
+                        inner_payload = Raw(b"VXLAN test payload " + b"A" * 200)  # Normal size
+                        inner_packet = inner_eth / inner_ip / inner_udp / inner_payload
                     
                     # VXLAN header - ensure proper format
                     vxlan = VXLAN(vni=1, flags=0x08)  # Standard VXLAN flags
                     
-                    # Variation for testing different scenarios
-                    if sent_count % 10 == 0:
-                        # Large packet to test DF bit clearing
-                        inner_payload_large = Raw(b"LARGE" + b"X" * 1500)
-                        inner_packet = inner_eth / inner_ip / inner_udp / inner_payload_large
-                    
                     # Complete VXLAN payload (VXLAN header + Inner Ethernet frame)
                     vxlan_payload = bytes(vxlan / inner_packet)
-                    
-                    # Ensure minimum packet size for XDP processing
-                    if len(vxlan_payload) < 100:
-                        vxlan_payload += b'\x00' * (100 - len(vxlan_payload))
                     
                     # Send via UDP socket
                     sock.sendto(vxlan_payload, (self.target_ip, self.target_port))
@@ -162,6 +162,7 @@ class VXLANTrafficInjector:
         print(f"   Duration: {duration}s")
         print(f"   Method: UDP socket (VM-optimized)")
         print(f"   VXLAN VNI: 1, Inner ports: 42844->8081 (NAT rule)")
+        print(f"   Large packets: 20% with DF bit set (>1400B for DF clearing)")
         print()
         
         self.running = True
