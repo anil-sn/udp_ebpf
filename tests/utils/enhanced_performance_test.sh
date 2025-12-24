@@ -15,7 +15,15 @@ NC='\033[0m'
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$(dirname "$TEST_DIR")")"
 VENV_PATH="$PROJECT_ROOT/.venv"
-INTERFACE="${1:-lo}"
+
+# Load configuration from .env file
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    source "$PROJECT_ROOT/.env"
+    INTERFACE="${INTERFACE:-ens4}"  # Use real interface from config
+else
+    INTERFACE="${1:-ens4}"  # Default to ens4, not lo
+fi
+
 DURATION="${2:-20}"
 PPS="${3:-5000}"
 THREADS="${4:-4}"
@@ -90,16 +98,16 @@ trap cleanup EXIT INT TERM
 echo -e "\n${BLUE}📋 Step 2: Starting Multi-threaded Traffic Generation${NC}"
 
 # Start traffic injector in background
-python3 "$TEST_DIR/utils/traffic_injector.py" \
+python3 "$TEST_DIR/traffic_injector.py" \
     --interface "$INTERFACE" \
     --threads "$THREADS" \
-    --pps "$PPS" \
+    --pps "$TARGET_PPS" \
     --duration "$DURATION" > "$RESULTS_DIR/traffic_stats.log" 2>&1 &
 
 TRAFFIC_PID=$!
 
 echo "✅ Traffic injector started (PID: $TRAFFIC_PID)"
-echo -e "${YELLOW}⏳ Generating $PPS PPS traffic for ${DURATION}s...${NC}"
+echo -e "${YELLOW}⏳ Generating $TARGET_PPS PPS traffic for ${DURATION}s...${NC}"
 
 # Monitor both processes
 echo -e "\n${BLUE}📊 Real-time Monitoring${NC}"
