@@ -85,12 +85,19 @@ struct nat_key {
     __u16 src_port;
 } __attribute__((packed));
 
+/* Interface Configuration Structure - must match eBPF program */
+struct interface_config {
+    __u8 mac_addr[6];       /* Target interface MAC address */
+    __u32 ifindex;          /* Interface index for validation */
+} __attribute__((packed));
+
 /* Global variables for cleanup */
 static struct bpf_object *bpf_obj = NULL;
 static int prog_fd = -1;
 static int stats_map_fd = -1;
 static int nat_map_fd = -1;
 static int redirect_map_fd = -1;
+static int interface_map_fd = -1;  /* New: interface configuration map */
 static int ifindex = -1;
 static volatile sig_atomic_t running = 1;
 
@@ -247,6 +254,7 @@ static int configure_redirect_interface()
         return -1;
     }
     
+    /* Configure redirect map */
     __u32 key = 0;
     __u32 value = target_ifindex;
     
@@ -255,8 +263,46 @@ static int configure_redirect_interface()
         return -1;
     }
     
+    /* Get and configure interface MAC address */
+    char mac_file[256];
+    snprintf(mac_file, sizeof(mac_file), "/sys/class/net/%s/address", cfg.target_interface);
+    
+    FILE *f = fopen(mac_file, "r");
+    if (!f) {
+        fprintf(stderr, "Failed to read MAC address for %s\n", cfg.target_interface);
+        return -1;
+    }
+    
+    char mac_str[18];
+    if (fgets(mac_str, sizeof(mac_str), f) == NULL) {
+        fclose(f);
+        fprintf(stderr, "Failed to read MAC address\n");
+        return -1;
+    }
+    fclose(f);
+    
+    /* Parse MAC address */
+    struct interface_config if_config = {0};
+    if (sscanf(mac_str, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+               &if_config.mac_addr[0], &if_config.mac_addr[1], &if_config.mac_addr[2],
+               &if_config.mac_addr[3], &if_config.mac_addr[4], &if_config.mac_addr[5]) != 6) {
+        fprintf(stderr, "Failed to parse MAC address: %s\n", mac_str);
+        return -1;
+    }
+    
+    if_config.ifindex = target_ifindex;
+    
+    /* Update interface map */
+    if (bpf_map_update_elem(interface_map_fd, &key, &if_config, BPF_ANY) != 0) {
+        fprintf(stderr, "Failed to configure interface map: %s\n", strerror(errno));
+        return -1;
+    }
+    
     printf("Redirect interface configured: %s (ifindex %d)\n", 
            cfg.target_interface, target_ifindex);
+    printf("Target MAC address: %02x:%02x:%02x:%02x:%02x:%02x\n",
+           if_config.mac_addr[0], if_config.mac_addr[1], if_config.mac_addr[2],
+           if_config.mac_addr[3], if_config.mac_addr[4], if_config.mac_addr[5]);
     
     return 0;
 }
@@ -375,8 +421,9 @@ static int load_bpf_program()
     stats_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "stats_map");
     nat_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "nat_map");
     redirect_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "redirect_map");
+    interface_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "interface_map");
     
-    if (stats_map_fd < 0 || nat_map_fd < 0 || redirect_map_fd < 0) {
+    if (stats_map_fd < 0 || nat_map_fd < 0 || redirect_map_fd < 0 || interface_map_fd < 0) {
         fprintf(stderr, "Failed to find required maps\n");
         bpf_object__close(bpf_obj);
         return -1;
