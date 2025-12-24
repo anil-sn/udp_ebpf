@@ -12,7 +12,7 @@ from datetime import datetime
 # Import scapy modules - now using virtual environment
 try:
     from scapy.all import *
-    from scapy.contrib.vxlan import VXLAN
+    from scapy.layers.vxlan import VXLAN
     from scapy.layers.inet import IP, UDP, TCP, ICMP
     from scapy.layers.l2 import Ether, ARP
     import scapy.utils
