@@ -106,12 +106,12 @@ struct config {
 };
 
 static struct config cfg = {
-    .interface = DEFAULT_INGRESS_INTERFACE,
-    .target_interface = DEFAULT_EGRESS_INTERFACE, 
-    .nat_target_ip = DEFAULT_NAT_TARGET_IP,
-    .nat_target_port = DEFAULT_NAT_TARGET_PORT,
-    .nat_source_port = DEFAULT_NAT_SOURCE_PORT,
-    .stats_interval = DEFAULT_STATS_INTERVAL,
+    .interface = "ens4",
+    .target_interface = "ens5", 
+    .nat_target_ip = "10.2.41.17",
+    .nat_target_port = 8081,
+    .nat_source_port = 42844,
+    .stats_interval = 5,
     .verbose = 0,
 };
 
@@ -318,9 +318,13 @@ static int load_bpf_program()
     /* Find main program */
     prog = bpf_object__find_program_by_name(bpf_obj, "vxlan_pipeline_main");
     if (!prog) {
-        fprintf(stderr, "Failed to find XDP program\n");
-        bpf_object__close(bpf_obj);
-        return -1;
+        /* Try alternative section name */
+        prog = bpf_program__next(NULL, bpf_obj);
+        if (!prog) {
+            fprintf(stderr, "Failed to find XDP program\n");
+            bpf_object__close(bpf_obj);
+            return -1;
+        }
     }
     
     prog_fd = bpf_program__fd(prog);

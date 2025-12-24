@@ -427,7 +427,7 @@ static __always_inline int apply_nat(struct iphdr *iph, struct udphdr *udph)
 {
     /* Use source port for NAT lookup (as per user's analysis) */
     struct nat_key key = {
-        .src_port = udph->source  /* Already in network byte order */
+        .src_port = udph->source  /* Keep network byte order for map lookup */
     };
     
     /* O(1) hash map lookup */
