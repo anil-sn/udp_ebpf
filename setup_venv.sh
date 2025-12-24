@@ -43,13 +43,16 @@ else
     echo -e "${GREEN}✓ Virtual environment already exists${NC}"
 fi
 
+# Activate the virtual environment and install dependencies
+source "$VENV_PATH/bin/activate"
+
 # Install dependencies
 echo -e "${BLUE}Installing Python dependencies...${NC}"
-uv pip install -e "." --target-dir "$VENV_PATH"
+uv pip install -e "."
 
 # Install optional test dependencies
 echo -e "${BLUE}Installing test dependencies...${NC}"
-uv pip install -e ".[test]" --target-dir "$VENV_PATH"
+uv pip install -e ".[test]"
 
 echo ""
 echo -e "${GREEN}✓ Virtual environment setup complete!${NC}"
