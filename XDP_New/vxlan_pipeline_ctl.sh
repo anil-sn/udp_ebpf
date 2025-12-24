@@ -301,11 +301,9 @@ monitor_performance() {
     echo
     
     # Header
-    printf "%-8s %-10s %-10s %-8s %-12s %-10s %-8s
-" \
+    printf "%-8s %-10s %-10s %-8s %-12s %-10s %-8s\n" \
            "TIME" "PPS" "VXLAN_PPS" "NAT_HIT%" "REDIRECTED" "ERRORS" "STATUS"
-    printf "%-8s %-10s %-10s %-8s %-12s %-10s %-8s
-" \
+    printf "%-8s %-10s %-10s %-8s %-12s %-10s %-8s\n" \
            "--------" "----------" "----------" "--------" "------------" "----------" "--------"
     
     while true; do
@@ -327,8 +325,7 @@ monitor_performance() {
             status="🟡"
         fi
         
-        printf "%-8s %-10d %-10s %-8s %-12s %-10s %-8s
-" \
+        printf "%-8s %-10d %-10s %-8s %-12s %-10s %-8s\n" \
                "$current_time" "$pps" "N/A" "N/A" "N/A" "N/A" "$status"
         
         ((iteration++))
