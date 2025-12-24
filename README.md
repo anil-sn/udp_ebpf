@@ -31,8 +31,12 @@ pip3 install scapy
 
 ### Build & Deploy
 ```bash
-# Build the XDP program (from src directory)
+# Build the XDP program (must be done from src directory)
 cd src && make clean && make all && cd ..
+
+# Copy and edit configuration
+cp .env.example .env
+nano .env
 
 # Simple control - choose one:
 ./xdp.sh start    # Start XDP pipeline

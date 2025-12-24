@@ -231,7 +231,7 @@ test_ebpf_loading() {
     local temp_log=$(mktemp)
     
     # Start vxlan_loader in test mode (short duration)
-    timeout 5s ./vxlan_loader -i lo -I 1 >"$temp_log" 2>&1 &
+    (cd "$TEST_DIR/../src" && timeout 5s ./vxlan_loader -i lo -I 1 >"$temp_log" 2>&1) &
     local loader_pid=$!
     
     sleep 2
@@ -311,7 +311,7 @@ test_performance() {
     echo "Starting performance test (${test_duration}s duration)..."
     
     # Start the pipeline
-    timeout ${test_duration}s ./vxlan_loader -i lo -I 1 >"$TEST_RESULTS_DIR/perf_test.log" 2>&1 &
+    (cd "$TEST_DIR/../src" && timeout ${test_duration}s ./vxlan_loader -i lo -I 1 >"$TEST_RESULTS_DIR/perf_test.log" 2>&1) &
     local loader_pid=$!
     
     sleep 2
@@ -354,7 +354,7 @@ test_resources() {
     local initial_mem=$(free -m | awk '/^Mem:/{print $3}')
     
     for i in {1..5}; do
-        timeout 3s ./vxlan_loader -i lo -I 1 >/dev/null 2>&1 &
+        (cd "$TEST_DIR/../src" && timeout 3s ./vxlan_loader -i lo -I 1 >/dev/null 2>&1) &
         local pid=$!
         sleep 1
         kill "$pid" 2>/dev/null || true
@@ -379,21 +379,21 @@ test_error_handling() {
     echo "============================"
     
     # Test with invalid interface
-    if timeout 3s ./vxlan_loader -i invalid_interface -I 1 2>/dev/null; then
+    if (cd "$TEST_DIR/../src" && timeout 3s ./vxlan_loader -i invalid_interface -I 1 2>/dev/null); then
         log_test "Invalid Interface Handling" "FAIL" "Should reject invalid interface"
     else
         log_test "Invalid Interface Handling" "PASS" "Correctly rejected invalid interface"
     fi
     
     # Test with invalid parameters
-    if timeout 3s ./vxlan_loader -p 999999 -I 1 2>/dev/null; then
+    if (cd "$TEST_DIR/../src" && timeout 3s ./vxlan_loader -p 999999 -I 1 2>/dev/null); then
         log_test "Invalid Port Handling" "FAIL" "Should reject invalid port"
     else
         log_test "Invalid Port Handling" "PASS" "Correctly rejected invalid port"
     fi
     
     # Test graceful shutdown
-    ./vxlan_loader -i lo -I 1 >/dev/null 2>&1 &
+    (cd "$TEST_DIR/../src" && ./vxlan_loader -i lo -I 1 >/dev/null 2>&1) &
     local pid=$!
     sleep 2
     
