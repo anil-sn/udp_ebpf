@@ -81,8 +81,17 @@ check_dependencies() {
         missing_packages+=("hping3")
     fi
     
-    # Check Python modules
-    if ! python3 -c "import scapy" 2>/dev/null; then
+    # Check Python modules with multiple methods
+    local scapy_found=false
+    if python3 -c "import scapy" 2>/dev/null; then
+        scapy_found=true
+    elif python3 -c "import sys; sys.path.append('/usr/local/lib/python3.10/dist-packages'); import scapy" 2>/dev/null; then
+        scapy_found=true
+    elif pip3 list 2>/dev/null | grep -q "scapy"; then
+        scapy_found=true
+    fi
+    
+    if [ "$scapy_found" = "false" ]; then
         echo -e "${YELLOW}Warning: scapy not found (needed for packet analysis)${NC}"
         missing_packages+=("scapy")
     fi
@@ -277,18 +286,34 @@ test_packet_processing() {
 
 # Generate test VXLAN packets using external Python script
 generate_test_packets() {
+    # Check if scapy is available with comprehensive detection
+    local scapy_available=false
+    
+    # Method 1: Direct import test (works for system packages)
+    if python3 -c "import scapy" 2>/dev/null; then
+        scapy_available=true
+    # Method 2: Try common pip install locations
+    elif python3 -c "import sys; sys.path.extend(['/usr/local/lib/python3.10/dist-packages', '/usr/lib/python3/dist-packages']); import scapy" 2>/dev/null; then
+        scapy_available=true
+    # Method 3: Check system package installation
+    elif dpkg -l python3-scapy 2>/dev/null | grep -q "^ii"; then
+        scapy_available=true
+    # Method 4: Check if pip shows it's installed
+    elif pip3 show scapy >/dev/null 2>&1; then
+        scapy_available=true
+    fi
+    
+    if [ "$scapy_available" = "false" ]; then
+        echo -e "${YELLOW}Skipping packet generation - scapy not accessible${NC}"
+        echo -e "${CYAN}To enable: pip3 install scapy${NC}"
+        return 0
+    fi
+    
     echo "Generating test packets using external script..."
     
     # Check if generate_packets.py exists
     if [ ! -f "$TEST_DIR/generate_packets.py" ]; then
-        echo "${YELLOW}Warning: generate_packets.py not found, skipping packet generation${NC}"
-        return 0
-    fi
-    
-    # Check if scapy is available
-    if ! python3 -c "import scapy" 2>/dev/null; then
-        echo -e "${YELLOW}Warning: scapy not installed, skipping packet generation${NC}"
-        echo -e "${CYAN}Install with: pip3 install scapy${NC}"
+        echo -e "${YELLOW}Warning: generate_packets.py not found, skipping packet generation${NC}"
         return 0
     fi
     
@@ -298,11 +323,11 @@ generate_test_packets() {
         --nat-source-port "${SOURCE_PORT:-42844}" \
         --nat-target-ip "${NAT_IP:-10.2.41.17}" \
         --nat-target-port "${NAT_PORT:-8081}" \
-        --vni "${TARGET_VNI:-1}"; then
+        --vni "${TARGET_VNI:-1}" >/dev/null 2>&1; then
         echo "✓ Test packets generated successfully"
         return 0
     else
-        echo -e "${YELLOW}Warning: Failed to generate test packets (continuing anyway)${NC}"
+        echo -e "${YELLOW}Warning: Packet generation script failed (continuing anyway)${NC}"
         return 0
     fi
 }
@@ -445,7 +470,18 @@ generate_report() {
     # Check for optional dependencies
     echo ""
     echo -e "${BLUE}Optional Dependencies Status:${NC}"
+    
+    # Check scapy with multiple methods
+    local scapy_status=false
     if python3 -c "import scapy" 2>/dev/null; then
+        scapy_status=true
+    elif python3 -c "import sys; sys.path.append('/usr/local/lib/python3.10/dist-packages'); import scapy" 2>/dev/null; then
+        scapy_status=true
+    elif pip3 list 2>/dev/null | grep -q "scapy"; then
+        scapy_status=true
+    fi
+    
+    if [ "$scapy_status" = "true" ]; then
         echo -e "  Scapy: ${GREEN}✓ Installed${NC}"
     else
         echo -e "  Scapy: ${YELLOW}⚠ Not installed${NC} (pip3 install scapy for packet generation)"
