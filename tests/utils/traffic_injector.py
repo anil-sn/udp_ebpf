@@ -16,14 +16,32 @@ from scapy.all import *
 from scapy.layers.vxlan import VXLAN
 
 class VXLANTrafficInjector:
-    def __init__(self, target_ip="127.0.0.1", target_port=4789, 
-                 interface="lo", threads=4, pps=1000):
-        self.target_ip = target_ip
-        self.target_port = target_port 
+    def __init__(self, target_ip=None, target_port=4789, 
+                 interface="eth0", threads=4, pps=1000):
         self.interface = interface
         self.threads = threads
         self.pps = pps
         self.running = False
+        
+        # Auto-detect target IP that routes through the interface
+        if target_ip is None:
+            try:
+                # Get a routable IP that will use this interface
+                import subprocess
+                # Use Google DNS as target - this will route through the interface
+                self.target_ip = "8.8.8.8"
+                
+                # Verify the route goes through our interface
+                result = subprocess.run(['ip', 'route', 'get', self.target_ip], 
+                                      capture_output=True, text=True)
+                if interface not in result.stdout:
+                    print(f"⚠️  Warning: Traffic to {self.target_ip} may not route via {interface}")
+            except:
+                self.target_ip = "8.8.8.8"
+        else:
+            self.target_ip = target_ip
+            
+        self.target_port = target_port
         self.stats = {
             'sent': 0,
             'errors': 0,
@@ -176,7 +194,7 @@ def main():
     parser = argparse.ArgumentParser(description="Multi-threaded VXLAN traffic injector")
     parser.add_argument("--target-ip", default="127.0.0.1", help="Target IP address")
     parser.add_argument("--target-port", type=int, default=4789, help="Target port")
-    parser.add_argument("--interface", default="lo", help="Network interface")
+    parser.add_argument("--interface", required=True, help="Network interface (required)")
     parser.add_argument("--threads", type=int, default=4, help="Number of threads")
     parser.add_argument("--pps", type=int, default=1000, help="Packets per second")
     parser.add_argument("--duration", type=int, default=30, help="Test duration in seconds")

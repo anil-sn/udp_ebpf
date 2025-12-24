@@ -19,9 +19,10 @@ VENV_PATH="$PROJECT_ROOT/.venv"
 # Load configuration from .env file
 if [ -f "$PROJECT_ROOT/.env" ]; then
     source "$PROJECT_ROOT/.env"
-    INTERFACE="${INTERFACE:-ens4}"  # Use real interface from config
+    INTERFACE="${1:-$INTERFACE}"  # Command line overrides .env
 else
-    INTERFACE="${1:-ens4}"  # Default to ens4, not lo
+    echo "❌ .env file not found. Please create it first."
+    exit 1
 fi
 
 DURATION="${2:-20}"

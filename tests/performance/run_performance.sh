@@ -12,10 +12,18 @@ NC='\033[0m'
 
 # Configuration
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$TEST_DIR")"
+PROJECT_ROOT="$(dirname "$(dirname "$TEST_DIR")")"
 VENV_PATH="$PROJECT_ROOT/.venv"
-INTERFACE="${1:-lo}"
-SCENARIO="${2:-baseline}"
+
+# Load configuration from .env file
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    source "$PROJECT_ROOT/.env"
+    INTERFACE="${1:-$INTERFACE}"  # Command line overrides .env
+    SCENARIO="${2:-baseline}"
+else
+    echo "❌ .env file not found. Please create it first."
+    exit 1
+fi
 
 echo -e "${BLUE}XDP Performance Test${NC}"
 echo "==================="
