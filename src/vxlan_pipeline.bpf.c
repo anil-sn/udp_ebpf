@@ -658,6 +658,14 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         return XDP_DROP;
     }
     
+    /* Force egress via ens6 by setting proper MAC addresses */
+    struct ethhdr *eth = (struct ethhdr *)data;
+    if ((void *)(eth + 1) <= data_end) {
+        /* Set destination MAC to ens6's MAC or gateway MAC */
+        /* TODO: Get ens6 MAC address and set here */
+        /* eth->h_dest[0] = 0x...; // ens6 MAC */
+    }
+    
     update_stat(STAT_FORWARDED, 1);
     
     /* Check if we should redirect to a specific interface */
@@ -665,10 +673,9 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     __u32 *target_ifindex = bpf_map_lookup_elem(&redirect_map, &key);
     
     if (target_ifindex && *target_ifindex > 0) {
-        /* In generic mode, XDP_REDIRECT doesn't work reliably - use XDP_PASS */
+        /* Force redirect to target interface */
         update_stat(STAT_REDIRECTED, 1);
-        /* TODO: Switch back to bpf_redirect() when using native driver mode */
-        return XDP_PASS;  /* Let kernel stack route to target interface */
+        return bpf_redirect(*target_ifindex, 0);
     }
     
     /* No specific target - let kernel routing handle it */
