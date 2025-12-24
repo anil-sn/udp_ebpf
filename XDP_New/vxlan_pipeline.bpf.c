@@ -39,9 +39,9 @@
  * - Drops: Zero packet drops under sustained load
  */
 
+#include <linux/types.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
-#include <linux/types.h>
 #include "vxlan_pipeline.h"
 
 // Network protocol definitions
