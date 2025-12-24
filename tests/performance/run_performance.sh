@@ -47,7 +47,7 @@ sleep 3
 
 # Run performance test
 echo -e "${BLUE}Running performance test...${NC}"
-python3 "$TEST_DIR/performance/scale_performance_test.py" \
+python3 "$TEST_DIR/scale_performance_test.py" \
     "$SCENARIO" \
     --interface "$INTERFACE" \
     --workers $(nproc) \
@@ -63,7 +63,7 @@ sleep 2
 
 # Generate simple report
 echo -e "${BLUE}Generating report...${NC}"
-python3 "$TEST_DIR/performance/performance_report.py" \
+python3 "$TEST_DIR/performance_report.py" \
     --results-dir "$RESULTS_DIR" \
     --output-dir "$RESULTS_DIR" || {
     echo "⚠️  Report generation failed (results still available)"
