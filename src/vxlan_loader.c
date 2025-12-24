@@ -154,17 +154,54 @@ static __u64 get_stat_value(int map_fd, __u32 key)
 {
     __u64 values[MAX_CPU_CORES]; /* Support up to MAX_CPU_CORES CPUs */
     __u64 total = 0;
+    int num_cpus;
+    
+    /* Initialize array to avoid reading garbage values */
+    memset(values, 0, sizeof(values));
     
     if (bpf_map_lookup_elem(map_fd, &key, values) != 0) {
         return 0;
     }
     
-    /* Sum across all CPUs */
-    for (int i = 0; i < MAX_CPU_CORES; i++) {
+    /* Get actual CPU count to avoid reading uninitialized memory */
+    num_cpus = libbpf_num_possible_cpus();
+    if (num_cpus < 0 || num_cpus > MAX_CPU_CORES) {
+        num_cpus = MAX_CPU_CORES;
+    }
+    
+    /* Sum across actual CPUs only */
+    for (int i = 0; i < num_cpus; i++) {
         total += values[i];
     }
     
     return total;
+}
+
+/* Initialize statistics to zero for clean startup */
+static void init_stats()
+{
+    __u64 zero_values[MAX_CPU_CORES];
+    int num_cpus;
+    
+    /* Get actual CPU count */
+    num_cpus = libbpf_num_possible_cpus();
+    if (num_cpus < 0 || num_cpus > MAX_CPU_CORES) {
+        num_cpus = MAX_CPU_CORES;
+    }
+    
+    /* Initialize array to zeros */
+    memset(zero_values, 0, sizeof(zero_values));
+    
+    /* Initialize all statistics counters to zero */
+    for (int stat = 0; stat < STAT_MAX_ENTRIES; stat++) {
+        __u32 key = stat;
+        /* Note: For per-CPU maps, we initialize with zero array */
+        bpf_map_update_elem(stats_map_fd, &key, zero_values, BPF_ANY);
+    }
+    
+    if (cfg.verbose) {
+        printf("Statistics counters initialized (%d CPUs)\n", num_cpus);
+    }
 }
 
 /* Configure NAT rules in eBPF map - Source Port Based */
@@ -491,6 +528,9 @@ int main(int argc, char **argv)
     if (attach_xdp_program() != 0) {
         return 1;
     }
+    
+    /* Initialize statistics counters for clean startup */
+    init_stats();
     
     printf("VXLAN pipeline is active. Press Ctrl+C to stop.\n");
     
