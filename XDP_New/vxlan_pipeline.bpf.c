@@ -39,7 +39,6 @@
  * - Drops: Zero packet drops under sustained load
  */
 
-#include <linux/bpf.h>
 #include <linux/if_ether.h>
 #include <linux/ip.h>
 #include <linux/udp.h>
