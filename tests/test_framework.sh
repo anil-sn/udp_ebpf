@@ -131,46 +131,8 @@ log_test() {
 
 # Centralized scapy detection function
 detect_scapy() {
-    # Method 1: Direct import test (works for system packages)
-    if python3 -c "import scapy" 2>/dev/null; then
-        return 0
-    fi
-    
-    # Method 2: Check if pip shows it's installed (most reliable)
-    if pip3 show scapy >/dev/null 2>&1; then
-        return 0
-    fi
-    
-    # Method 3: Try to add common pip paths dynamically (including user paths)
-    if python3 -c "
-import sys
-import site
-import os
-# Add standard site packages
-sys.path.extend(site.getsitepackages())
-# Add common system-wide locations
-sys.path.extend(['/usr/local/lib/python3.10/dist-packages', '/usr/lib/python3/dist-packages'])
-# Add user site packages for current user (when running as root, check original user)
-if 'SUDO_USER' in os.environ:
-    user_home = '/home/' + os.environ['SUDO_USER']
-    user_site = user_home + '/.local/lib/python3.10/site-packages'
-    if os.path.exists(user_site):
-        sys.path.insert(0, user_site)
-try:
-    import scapy
-    exit(0)
-except ImportError:
-    exit(1)
-" 2>/dev/null; then
-        return 0
-    fi
-    
-    # Method 4: Check system package installation
-    if dpkg -l python3-scapy 2>/dev/null | grep -q "^ii"; then
-        return 0
-    fi
-    
-    return 1
+    # Try basic import first
+    python3 -c "import scapy" 2>/dev/null
 }
 
 # Build test - ensure project compiles
@@ -324,7 +286,7 @@ generate_test_packets() {
     # Check if scapy is available
     if ! detect_scapy; then
         echo -e "${YELLOW}Skipping packet generation - scapy not accessible${NC}"
-        echo -e "${CYAN}To enable: pip3 install scapy${NC}"
+        echo -e "${CYAN}To enable: sudo apt install python3-scapy${NC}"
         return 0
     fi
     
@@ -336,18 +298,8 @@ generate_test_packets() {
         return 0
     fi
     
-    # Set up Python path to include user packages when running as root
-    local python_env=""
-    if [ "$(id -u)" -eq 0 ] && [ -n "$SUDO_USER" ]; then
-        local user_home="/home/$SUDO_USER"
-        local user_site="$user_home/.local/lib/python3.10/site-packages"
-        if [ -d "$user_site" ]; then
-            python_env="PYTHONPATH=${user_site}:${PYTHONPATH:-}"
-        fi
-    fi
-    
     # Run external packet generation script with configuration
-    if env $python_env "$TEST_DIR/generate_packets.py" \
+    if "$TEST_DIR/generate_packets.py" \
         --output "$TEST_DATA_DIR" \
         --nat-source-port "${SOURCE_PORT:-42844}" \
         --nat-target-ip "${NAT_IP:-10.2.41.17}" \
