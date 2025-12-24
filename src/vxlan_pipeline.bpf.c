@@ -665,9 +665,10 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     __u32 *target_ifindex = bpf_map_lookup_elem(&redirect_map, &key);
     
     if (target_ifindex && *target_ifindex > 0) {
-        /* Direct redirect to target interface for maximum performance */
+        /* In generic mode, XDP_REDIRECT doesn't work reliably - use XDP_PASS */
         update_stat(STAT_REDIRECTED, 1);
-        return bpf_redirect(*target_ifindex, 0);
+        /* TODO: Switch back to bpf_redirect() when using native driver mode */
+        return XDP_PASS;  /* Let kernel stack route to target interface */
     }
     
     /* No specific target - let kernel routing handle it */
