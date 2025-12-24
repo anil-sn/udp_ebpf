@@ -43,6 +43,9 @@ Run this to check your environment:
 # Quick install test dependencies
 ./install_test_deps.sh
 
+# Debug scapy installation issues
+sudo python3 debug_scapy.py
+
 # Check configuration and dependencies
 ./validate_config.sh    # Check .env configuration
 sudo ./test_framework.sh  # Will show missing dependencies

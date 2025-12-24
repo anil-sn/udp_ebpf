@@ -9,6 +9,26 @@ import os
 import json
 from datetime import datetime
 
+# Add common pip installation paths for scapy
+def add_scapy_paths():
+    """Add common scapy installation paths to sys.path"""
+    import site
+    # Add standard site packages
+    sys.path.extend(site.getsitepackages())
+    
+    # Add common pip installation locations
+    common_paths = [
+        '/usr/local/lib/python3.10/dist-packages',
+        '/usr/local/lib/python3.11/dist-packages', 
+        '/usr/local/lib/python3.9/dist-packages',
+        '/usr/lib/python3/dist-packages'
+    ]
+    
+    for path in common_paths:
+        if os.path.exists(path) and path not in sys.path:
+            sys.path.insert(0, path)
+
+# Try to import scapy with path adjustments
 try:
     from scapy.all import *
     from scapy.contrib.vxlan import VXLAN
@@ -16,8 +36,17 @@ try:
     from scapy.layers.l2 import Ether, ARP
     import scapy.utils
 except ImportError:
-    print("ERROR: scapy not installed. Install with: pip3 install scapy")
-    sys.exit(1)
+    # Try with additional paths
+    add_scapy_paths()
+    try:
+        from scapy.all import *
+        from scapy.contrib.vxlan import VXLAN
+        from scapy.layers.inet import IP, UDP, TCP, ICMP
+        from scapy.layers.l2 import Ether, ARP
+        import scapy.utils
+    except ImportError:
+        print("ERROR: scapy not installed. Install with: pip3 install scapy")
+        sys.exit(1)
 
 class VXLANPacketConstructor:
     """Advanced VXLAN packet construction with validation"""
