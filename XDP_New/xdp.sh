@@ -1,20 +1,41 @@
 #!/bin/bash
 # Simple XDP VXLAN Pipeline Control
 
-# --- CONFIGURATION ---
-INTERFACE="ens4"
-TARGET_INTERFACE="ens5"
-NAT_IP="10.2.41.17"
-NAT_PORT="8081"
-SOURCE_PORT="42844"
+# --- LOAD ENVIRONMENT CONFIGURATION ---
+# Check if .env file exists and source it
+if [ -f "$(dirname "$0")/.env" ]; then
+    source "$(dirname "$0")/.env"
+    echo "Configuration loaded from .env file"
+else
+    echo "Warning: .env file not found, using defaults"
+    # Fallback defaults if .env is missing
+    INTERFACE="ens4"
+    TARGET_INTERFACE="ens5"
+    NAT_IP="10.2.41.17"
+    NAT_PORT="8081"
+    SOURCE_PORT="42844"
+    STATS_INTERVAL="5"
+    LOG_FILE="/tmp/vxlan_loader.log"
+    ENABLE_COLORS="true"
+fi
 
 # --- VISUALS ---
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+# Only set colors if enabled in config
+if [ "$ENABLE_COLORS" = "true" ]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    NC='\033[0m' # No Color
+else
+    RED=''
+    GREEN=''
+    YELLOW=''
+    BLUE=''
+    CYAN=''
+    NC=''
+fi
 
 # Helper to force TTY fix
 fix_terminal() {
@@ -46,8 +67,8 @@ start() {
     # Start background process with comprehensive redirection
     echo -e "${BLUE}Launching vxlan_loader...${NC}"
     nohup sudo ./vxlan_loader -i $INTERFACE -t $TARGET_INTERFACE \
-        -a $NAT_IP -p $NAT_PORT -s $SOURCE_PORT -I 5 \
-        </dev/null >/tmp/vxlan_loader.log 2>&1 &
+        -a $NAT_IP -p $NAT_PORT -s $SOURCE_PORT -I $STATS_INTERVAL \
+        </dev/null >"$LOG_FILE" 2>&1 &
     
     # Give more time for startup
     sleep 3
@@ -56,12 +77,12 @@ start() {
     NEW_PID=$(pgrep -f "vxlan_loader.*-i.*$INTERFACE" | head -1)
     if [ -n "$NEW_PID" ]; then
         echo -e "${GREEN}SUCCESS: Pipeline started (PID: $NEW_PID)${NC}"
-        echo -e "${GREEN}Log file: /tmp/vxlan_loader.log${NC}"
+        echo -e "${GREEN}Log file: $LOG_FILE${NC}"
         sleep 1
         fix_terminal
     else
         echo -e "${RED}ERROR: Failed to start pipeline${NC}"
-        echo -e "${YELLOW}Check log: cat /tmp/vxlan_loader.log${NC}"
+        echo -e "${YELLOW}Check log: cat $LOG_FILE${NC}"
         fix_terminal
         exit 1
     fi
@@ -173,8 +194,11 @@ monitor() {
         PPS=$(( (RX2 - RX1) / 2 ))
         TIME=$(date +%H:%M:%S)
         
-        if [ $PPS -ge 1000 ]; then
-            COLOR=$GREEN; STAT="ACTIVE"
+        # Use performance threshold from config
+        if [ $PPS -ge ${TARGET_PPS:-85000} ]; then
+            COLOR=$GREEN; STAT="OPTIMAL"
+        elif [ $PPS -ge ${PERFORMANCE_THRESHOLD:-60000} ]; then
+            COLOR=$YELLOW; STAT="GOOD"
         elif [ $PPS -gt 0 ]; then
             COLOR=$YELLOW; STAT="LOW"
         else

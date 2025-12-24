@@ -34,7 +34,46 @@ make clean && make all
 
 ## ⚙️ Configuration
 
-Edit `xdp.sh` to modify network settings:
+### Environment-Based Configuration (Recommended)
+
+The pipeline uses a `.env` file for configuration management:
+
+```bash
+# Copy example configuration
+cp .env.example .env
+
+# Edit configuration
+nano .env
+
+# Validate configuration  
+./validate_config.sh
+```
+
+#### Sample `.env` Configuration:
+```bash
+# Network Interface Configuration
+INTERFACE="ens4"                # Primary interface for XDP attachment
+TARGET_INTERFACE="ens5"         # Target interface for packet forwarding
+
+# NAT Configuration  
+NAT_IP="10.2.41.17"            # Target IP for NAT translation
+NAT_PORT="8081"                # Target port for NAT translation
+SOURCE_PORT="42844"            # Source port to match for NAT
+
+# Performance Configuration
+STATS_INTERVAL="5"             # Statistics display interval
+TARGET_PPS="85000"             # Target packet processing rate
+PERFORMANCE_THRESHOLD="60000"  # Performance warning threshold
+
+# System Configuration
+LOG_FILE="/tmp/vxlan_loader.log"  # Log file location
+ENABLE_COLORS="true"              # Enable colored output
+DEBUG_LEVEL="0"                   # Debug verbosity (0-3)
+```
+
+### Legacy Configuration
+
+You can also modify settings directly in `xdp.sh`:
 ```bash
 INTERFACE="ens4"           # Input interface
 TARGET_INTERFACE="ens5"    # Output interface  
