@@ -109,11 +109,8 @@ install: all $(SETUP_SCRIPT)
 # Uninstall from system  
 uninstall:
 	@echo "Uninstalling VXLAN Pipeline..."
-	systemctl stop vxlan-pipeline || true
-	systemctl disable vxlan-pipeline || true
-	rm -f /etc/systemd/system/vxlan-pipeline.service
-	rm -rf /opt/vxlan-pipeline
-	systemctl daemon-reload
+	@echo "Removing program binaries..."
+	rm -f $(USER_BIN) $(BPF_OBJ)
 	@echo "Uninstallation complete."
 
 # Test program compilation and basic functionality
