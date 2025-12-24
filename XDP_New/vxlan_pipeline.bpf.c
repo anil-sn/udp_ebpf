@@ -46,6 +46,7 @@
 #include <linux/in.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
+#include "vxlan_pipeline.h"
 
 /*
  * VXLAN Header Structure (RFC 7348)
@@ -64,32 +65,11 @@
  * AWS Traffic Mirror always uses VNI = 1
  */
 struct vxlanhdr {
-    __u8 flags;         /* VXLAN flags byte (0x08 = VNI flag set) */
+    __u8 flags;         /* VXLAN flags byte (VXLAN_VNI_FLAG = VNI flag set) */
     __u8 reserved1[3];  /* Reserved fields, must be zero */
     __u8 vni[3];        /* 24-bit VXLAN Network Identifier */
     __u8 reserved2;     /* Reserved field, must be zero */
 };
-
-/*
- * Configuration Constants
- * 
- * These constants define the behavior of the VXLAN pipeline.
- * Modify these values to adapt the program for different environments.
- */
-#define VXLAN_PORT 4789                    /* Standard VXLAN UDP port (RFC 7348) */
-#define TARGET_VNI 1                       /* AWS Traffic Mirror VNI (always 1) */
-#define DEFAULT_NAT_SOURCE_PORT 31765      /* Default port to match for NAT (configurable via maps) */
-#define MIN_FRAGMENT_SIZE 1400             /* Only clear DF bit on packets larger than this */
-#define MAX_PACKET_SIZE 9000               /* Reject packets larger than jumbo frame size */
-
-/*
- * IP Header Flags
- * 
- * IP_DF (Don't Fragment) bit in the IP header flags field.
- * When set, this bit prevents packet fragmentation in transit.
- * We clear this bit on large packets to avoid MTU issues in tunnels.
- */
-#define IP_DF 0x4000                       /* Don't Fragment flag in network byte order */
 
 /*
  * Statistics Map - Per-CPU Array for High-Performance Monitoring
@@ -116,7 +96,7 @@ struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
     __type(key, __u32);                    /* Statistics index (see enum below) */
     __type(value, __u64);                  /* 64-bit counter value */
-    __uint(max_entries, 9);                /* Total number of statistics tracked */
+    __uint(max_entries, STATS_MAP_MAX_ENTRIES);  /* Total number of statistics tracked */
 } stats_map SEC(".maps");
 
 /*
@@ -161,12 +141,17 @@ enum stats_index {
  * - Checksum recalculation: Necessary for correct packet processing
  */
 
-/* NAT Translation Entry Structure */
+/* NAT Translation Entry Structure - Optimized for 85K+ PPS */
 struct nat_entry {
     __u32 target_ip;        /* Destination IP address in network byte order */
     __u16 target_port;      /* Destination port in network byte order */
     __u16 flags;            /* Reserved for future use (e.g., protocol flags) */
-};
+} __attribute__((packed, aligned(4)));  /* 4-byte alignment for optimal memory access */
+
+/* NAT Key Structure - Source port based lookup as per user analysis */
+struct nat_key {
+    __u16 src_port;         /* Source port to match (e.g., 42844 from hex dump) */
+} __attribute__((packed));
 
 /* 
  * NAT Translation Map
@@ -180,9 +165,10 @@ struct nat_entry {
  */
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, __u16);                    /* Destination port to match */
+    __type(key, struct nat_key);           /* Source port key for O(1) lookup */
     __type(value, struct nat_entry);       /* NAT translation target */
-    __uint(max_entries, 1024);            /* Maximum number of NAT rules */
+    __uint(max_entries, NAT_MAP_MAX_ENTRIES);  /* Maximum number of NAT rules */
+    __uint(map_flags, BPF_F_NO_PREALLOC); /* Dynamic allocation for better memory usage */
 } nat_map SEC(".maps");
 
 /*
@@ -210,7 +196,7 @@ struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __type(key, __u32);                    /* Always use key=0 for single interface */
     __type(value, __u32);                  /* Target interface index (from if_nametoindex) */
-    __uint(max_entries, 1);               /* Single redirect target */
+    __uint(max_entries, REDIRECT_MAP_MAX_ENTRIES);  /* Single redirect target */
 } redirect_map SEC(".maps");
 
 /*
@@ -355,8 +341,8 @@ static __always_inline void *parse_vxlan(void *data, void *data_end,
      * - Well-formed headers
      */
     
-    /* Validate VXLAN flags - must have VNI flag (0x08) */
-    if ((vxlanh->flags & 0x08) == 0) {
+    /* Validate VXLAN flags - must have VNI flag (VXLAN_VNI_FLAG) */
+    if ((vxlanh->flags & VXLAN_VNI_FLAG) == 0) {
         return NULL;
     }
     
@@ -364,7 +350,7 @@ static __always_inline void *parse_vxlan(void *data, void *data_end,
      * Fast VNI check for VNI 1 (AWS Traffic Mirror default)
      * VNI is stored in network byte order in 3 bytes
      */
-    if (vxlanh->vni[0] != 0 || vxlanh->vni[1] != 0 || vxlanh->vni[2] != 1) {
+    if (vxlanh->vni[0] != 0 || vxlanh->vni[1] != 0 || vxlanh->vni[2] != TARGET_VNI) {
         return NULL;
     }
     
@@ -380,31 +366,44 @@ static __always_inline void *parse_vxlan(void *data, void *data_end,
 }
 
 /*
- * Apply NAT Translation
- * Modifies packet in-place for DNAT
+ * Apply NAT Translation - Source Port Based (User's Design)
+ * Transforms: 10.2.41.20:42844 → 10.2.41.17:8081 (from hex dump analysis)
  */
 static __always_inline int apply_nat(struct iphdr *iph, struct udphdr *udph)
 {
-    __u16 dest_port = bpf_ntohs(udph->dest);
+    /* Use source port for NAT lookup (as per user's analysis) */
+    struct nat_key key = {
+        .src_port = udph->source  /* Already in network byte order */
+    };
     
-    /* Look up NAT entry */
-    struct nat_entry *nat = bpf_map_lookup_elem(&nat_map, &dest_port);
+    /* O(1) hash map lookup */
+    struct nat_entry *nat = bpf_map_lookup_elem(&nat_map, &key);
     if (!nat) {
-        return 0;  /* No NAT rule for this port */
+        return 0;  /* No NAT rule for this source port */
     }
     
-    /* Store old values for checksum calculation */
+    /* Store old values for incremental checksum (performance critical) */
     __u32 old_ip = iph->daddr;
     __u16 old_port = udph->dest;
     
-    /* Apply DNAT */
-    iph->daddr = nat->target_ip;
-    udph->dest = bpf_htons(nat->target_port);
+    /* Apply DNAT transformation */
+    iph->daddr = nat->target_ip;           /* e.g., 10.2.41.17 from analysis */
+    udph->dest = bpf_htons(nat->target_port);  /* e.g., 8081 from analysis */
     
-    /* Update IP checksum */
-    iph->check = ip_checksum(iph);
+    /* Incremental IP checksum update (much faster than full recalculation) */
+    __u32 sum = (~bpf_ntohs(iph->check)) & 0xFFFF;
     
-    /* Zero UDP checksum for performance (acceptable for many use cases) */
+    /* Subtract old IP contribution */
+    sum -= (old_ip >> 16) + (old_ip & 0xFFFF);
+    /* Add new IP contribution */
+    sum += (nat->target_ip >> 16) + (nat->target_ip & 0xFFFF);
+    
+    /* Handle carries */
+    sum = (sum & 0xFFFF) + (sum >> 16);
+    sum = (sum & 0xFFFF) + (sum >> 16);
+    iph->check = bpf_htons(~sum);
+    
+    /* For 85K+ PPS performance, zero UDP checksum (user's approach) */
     udph->check = 0;
     
     update_stat(STAT_NAT_APPLIED, 1);
@@ -412,25 +411,33 @@ static __always_inline int apply_nat(struct iphdr *iph, struct udphdr *udph)
 }
 
 /*
- * Clear DF Bit if Packet is Large
- * Prevents fragmentation issues in tunnel endpoints
+ * Clear DF Bit for Large Packets (User's 1400B Rule)
+ * Prevents AWS VPC MTU drops on jumbo frames (like 2852B packets from analysis)
  */
 static __always_inline int clear_df_bit(struct iphdr *iph)
 {
     __u16 total_len = bpf_ntohs(iph->tot_len);
     
-    /* Only clear DF for large packets */
+    /* Apply user's rule: only clear DF for packets > 1400 bytes */
     if (total_len <= MIN_FRAGMENT_SIZE) {
         return 0;
     }
     
-    /* Check if DF bit is set */
+    /* Check if DF bit is set (0x4000 in network byte order) */
     if (iph->frag_off & bpf_htons(IP_DF)) {
-        /* Clear DF bit */
+        /* Store old frag_off for incremental checksum update */
+        __u16 old_frag_off = iph->frag_off;
+        
+        /* Clear DF bit (critical for 2852B → 1500B MTU transition) */
         iph->frag_off &= ~bpf_htons(IP_DF);
         
-        /* Recalculate IP checksum */
-        iph->check = ip_checksum(iph);
+        /* Incremental checksum update (faster than full recalculation) */
+        __u32 sum = (~bpf_ntohs(iph->check)) & 0xFFFF;
+        sum -= bpf_ntohs(old_frag_off);
+        sum += bpf_ntohs(iph->frag_off);
+        sum = (sum & 0xFFFF) + (sum >> 16);
+        sum = (sum & 0xFFFF) + (sum >> 16);
+        iph->check = bpf_htons(~sum);
         
         update_stat(STAT_DF_CLEARED, 1);
         return 1;
@@ -480,7 +487,7 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     
     /* Validate IP header length */
     int ip_hdr_len = outer_iph->ihl * 4;
-    if (ip_hdr_len < (int)sizeof(struct iphdr) || ip_hdr_len > 60) {
+    if (ip_hdr_len < IP_HEADER_MIN_SIZE || ip_hdr_len > IP_HEADER_MAX_SIZE) {
         return XDP_DROP;
     }
     
@@ -533,7 +540,7 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     
     /* Validate inner IP header */
     int inner_ip_hdr_len = inner_iph->ihl * 4;
-    if (inner_ip_hdr_len < (int)sizeof(struct iphdr) || inner_ip_hdr_len > 60) {
+    if (inner_ip_hdr_len < IP_HEADER_MIN_SIZE || inner_ip_hdr_len > IP_HEADER_MAX_SIZE) {
         return XDP_DROP;
     }
     
@@ -566,7 +573,7 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     int inner_packet_size = (char *)data_end - (char *)inner_start;
     
     /* Validate calculations to prevent integer overflow/underflow */
-    if (outer_headers_size <= 0 || outer_headers_size > 200 || /* Reasonable VXLAN overhead limit */
+    if (outer_headers_size <= 0 || outer_headers_size > MAX_OUTER_HEADERS_SIZE || /* Reasonable VXLAN overhead limit */
         inner_packet_size <= 0 || inner_packet_size > MAX_PACKET_SIZE ||
         total_packet_size <= outer_headers_size) {
         update_stat(STAT_ERRORS, 1);

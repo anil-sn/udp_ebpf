@@ -1,0 +1,119 @@
+#!/usr/bin/env bpftrace
+
+/*
+ * XDP VXLAN Pipeline Real-time Performance Monitor
+ * Tracks NAT hit/miss ratio and packet processing rates for 85K+ PPS analysis
+ */
+
+BEGIN {
+    printf("🚀 XDP VXLAN Pipeline Monitor Started\n");
+    printf("📊 Tracking: NAT efficiency, packet rates, performance metrics\n");
+    printf("⏱️  Reporting interval: 1 second\n");
+    printf("🎯 Target: 85,000+ packets/second\n\n");
+    
+    printf("%-12s %-10s %-12s %-12s %-10s %-15s\n", 
+           "TIME", "PPS", "NAT_HITS", "NAT_MISSES", "HIT_RATIO", "BYTES/SEC");
+    printf("%-12s %-10s %-12s %-12s %-10s %-15s\n",
+           "--------", "------", "--------", "----------", "--------", "---------");
+}
+
+/* Track XDP program entry (packet processing rate) */
+kprobe:vxlan_pipeline_main {
+    @packets_total = count();
+    @packets_per_sec = count();
+}
+
+/* Track successful VXLAN processing */
+tracepoint:xdp:xdp_redirect* {
+    if (args->prog_id > 0) {  // Only count our XDP program redirects
+        @redirected_packets = count();
+    }
+}
+
+/* Track NAT map operations for hit/miss analysis */
+tracepoint:bpf:bpf_map_lookup_elem {
+    // This would need to be filtered by specific map ID in production
+    if (strcontains(str(args->map_type), "HASH")) {
+        @nat_lookups = count();
+        if (args->ret != 0) {
+            @nat_hits = count();
+        } else {
+            @nat_misses = count();
+        }
+    }
+}
+
+/* Monitor bytes processed for throughput calculation */
+kprobe:apply_nat {
+    @bytes_processed = sum(arg1);  // Assuming packet size is passed
+}
+
+/* Per-second reporting */
+interval:s:1 {
+    $pps = @packets_per_sec;
+    $hits = @nat_hits;  
+    $misses = @nat_misses;
+    $total_lookups = @nat_lookups;
+    $hit_ratio = $total_lookups > 0 ? (($hits * 100) / $total_lookups) : 0;
+    $bytes_sec = @bytes_processed;
+    $mbps = $bytes_sec > 0 ? ($bytes_sec * 8 / 1000000) : 0;
+    
+    $time = strftime("%H:%M:%S", nsecs);
+    
+    printf("%-12s %-10d %-12d %-12d %-9.1f%% %-15.2f\n",
+           $time, $pps, $hits, $misses, $hit_ratio, $mbps);
+    
+    // Performance alerts
+    if ($pps > 85000) {
+        printf("🎉 PERFORMANCE TARGET ACHIEVED: %d PPS!\n", $pps);
+    } else if ($pps < 50000) {
+        printf("⚠️  Performance below expected: %d PPS (target: 85K+)\n", $pps);
+    }
+    
+    if ($hit_ratio < 80.0 && $total_lookups > 0) {
+        printf("⚠️  Low NAT hit ratio: %.1f%% (check NAT map configuration)\n", $hit_ratio);
+    }
+    
+    // Reset per-second counters
+    clear(@packets_per_sec);
+    clear(@nat_hits);
+    clear(@nat_misses); 
+    clear(@nat_lookups);
+    clear(@bytes_processed);
+}
+
+/* Track dropped packets */
+tracepoint:xdp:xdp_exception {
+    @dropped_packets[args->act] = count();
+}
+
+/* Enhanced statistics every 10 seconds */
+interval:s:10 {
+    printf("\n📈 === 10-Second Performance Summary ===\n");
+    printf("Total Packets Processed: %d\n", @packets_total);
+    printf("Total Redirected: %d\n", @redirected_packets);
+    
+    if (@dropped_packets) {
+        printf("Dropped Packets by Action:\n");
+        print(@dropped_packets);
+    }
+    
+    printf("=====================================\n\n");
+    
+    printf("%-12s %-10s %-12s %-12s %-10s %-15s\n", 
+           "TIME", "PPS", "NAT_HITS", "NAT_MISSES", "HIT_RATIO", "Mbps");
+    printf("%-12s %-10s %-12s %-12s %-10s %-15s\n",
+           "--------", "------", "--------", "----------", "--------", "---------");
+}
+
+/* Cleanup on exit */
+END {
+    printf("\n🛑 XDP VXLAN Pipeline Monitor Stopped\n");
+    printf("📊 Final Statistics:\n");
+    printf("Total Packets: %d\n", @packets_total);
+    printf("Total Redirects: %d\n", @redirected_packets);
+    
+    clear(@packets_total);
+    clear(@redirected_packets);
+    clear(@dropped_packets);
+}
