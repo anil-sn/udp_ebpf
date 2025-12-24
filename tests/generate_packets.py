@@ -33,6 +33,9 @@ def add_scapy_paths():
         if os.path.exists(path) and path not in sys.path:
             sys.path.insert(0, path)
 
+# Add scapy paths before trying to import
+add_scapy_paths()
+
 # Try to import scapy with path adjustments
 try:
     from scapy.all import *
@@ -41,17 +44,8 @@ try:
     from scapy.layers.l2 import Ether, ARP
     import scapy.utils
 except ImportError:
-    # Try with additional paths
-    add_scapy_paths()
-    try:
-        from scapy.all import *
-        from scapy.contrib.vxlan import VXLAN
-        from scapy.layers.inet import IP, UDP, TCP, ICMP
-        from scapy.layers.l2 import Ether, ARP
-        import scapy.utils
-    except ImportError:
-        print("ERROR: scapy not installed. Install with: pip3 install scapy")
-        sys.exit(1)
+    print("ERROR: scapy not installed. Install with: pip3 install scapy")
+    sys.exit(1)
 
 class VXLANPacketConstructor:
     """Advanced VXLAN packet construction with validation"""
