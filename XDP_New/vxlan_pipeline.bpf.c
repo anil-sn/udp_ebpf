@@ -44,6 +44,31 @@
 #include <bpf/bpf_endian.h>
 #include "vxlan_pipeline.h"
 
+// BPF map types
+#define BPF_MAP_TYPE_ARRAY              2
+#define BPF_MAP_TYPE_HASH               1
+#define BPF_MAP_TYPE_PERCPU_ARRAY       6
+
+// BPF map flags
+#define BPF_F_NO_PREALLOC       0x01UL
+
+// XDP action codes
+#define XDP_ABORTED 0
+#define XDP_DROP    1
+#define XDP_PASS    2
+#define XDP_TX      3
+#define XDP_REDIRECT 4
+
+// XDP metadata structure
+struct xdp_md {
+    __u32 data;
+    __u32 data_end;
+    __u32 data_meta;
+    __u32 ingress_ifindex;
+    __u32 rx_queue_index;
+    __u32 egress_ifindex;
+};
+
 // Network protocol definitions
 #define ETH_P_IP    0x0800
 #define IPPROTO_UDP 17
