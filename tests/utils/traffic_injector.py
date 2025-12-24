@@ -45,8 +45,16 @@ class VXLANTrafficInjector:
         # VXLAN encapsulation
         vxlan = VXLAN(vni=1, flags=0x08)  # VNI=1, flags=0x08 for valid VXLAN
         
-        # Outer packet (VXLAN tunnel)
-        outer_eth = Ether(dst="ff:ff:ff:ff:ff:ff", src="aa:bb:cc:dd:ee:ff")
+        # Outer packet (VXLAN tunnel) - Use actual MAC addresses
+        # Get interface MAC address for proper L2 forwarding
+        try:
+            import netifaces
+            mac_addr = netifaces.ifaddresses(self.interface)[netifaces.AF_LINK][0]['addr']
+            outer_eth = Ether(dst=mac_addr, src=mac_addr)
+        except:
+            # Fallback to broadcast if we can't get MAC
+            outer_eth = Ether(dst="ff:ff:ff:ff:ff:ff", src="aa:bb:cc:dd:ee:ff")
+            
         outer_ip = IP(src="10.0.0.1", dst=self.target_ip)
         outer_udp = UDP(sport=12345, dport=self.target_port)  # Port 4789 for VXLAN
         
@@ -59,31 +67,36 @@ class VXLANTrafficInjector:
         """Worker thread that sends packets at specified rate"""
         sock = None
         try:
-            # Use raw socket for direct packet injection
-            # This ensures packets go to the correct interface
-            sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
-            sock.bind((self.interface, 0))
+            # Use UDP socket for better VM compatibility
+            # This ensures packets actually reach the interface where XDP is attached
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             
             packets_per_thread = self.pps // self.threads
             interval = 1.0 / packets_per_thread if packets_per_thread > 0 else 1.0
             
-            print(f"Worker {worker_id}: Sending {packets_per_thread} PPS to {self.target_ip} via {self.interface}")
+            print(f"Worker {worker_id}: Sending {packets_per_thread} PPS to {self.target_ip} via UDP")
             
             sent_count = 0
             start_time = time.time()
             
             while self.running and (time.time() - start_time < duration):
                 try:
-                    # Create different packet variations
-                    if sent_count % 10 == 0:
-                        # Occasional large packet to test DF clearing
-                        packet = self.create_vxlan_packet()
-                        packet = packet / Raw(b"X" * 1400)  # Make it large
-                    else:
-                        packet = self.create_vxlan_packet()
+                    # Create VXLAN payload (without Ethernet header for UDP socket)
+                    # Inner packet (the one that will be processed after VXLAN decap)
+                    inner_ip = IP(src="192.168.1.100", dst="192.168.1.200")
+                    inner_udp = UDP(sport=42844, dport=8081)  # Matches NAT rule
+                    inner_payload = Raw(b"VXLAN test payload " + b"A" * 100)
+                    inner_packet = inner_ip / inner_udp / inner_payload
                     
-                    # Send packet directly on interface - this bypasses routing
-                    sock.send(bytes(packet))
+                    # VXLAN header
+                    vxlan = VXLAN(vni=1, flags=0x08)
+                    
+                    # Complete VXLAN payload (IP+UDP+VXLAN+Inner)
+                    vxlan_payload = bytes(vxlan / inner_packet)
+                    
+                    # Send via UDP socket - this will create proper IP/UDP headers
+                    sock.sendto(vxlan_payload, (self.target_ip, self.target_port))
                     sent_count += 1
                     
                     # Update stats
@@ -96,12 +109,12 @@ class VXLANTrafficInjector:
                 except Exception as e:
                     with self.stats_lock:
                         self.stats['errors'] += 1
-                    if "Network is unreachable" not in str(e):  # Ignore common network errors
+                    if "Network is unreachable" not in str(e):
                         print(f"Worker {worker_id} error: {e}")
                         
         except Exception as e:
             print(f"Worker {worker_id} failed to create socket: {e}")
-            print(f"Note: Sending to {self.target_ip} via {self.interface}")
+            print(f"Note: Sending to {self.target_ip}:{self.target_port}")
         finally:
             if sock:
                 sock.close()
@@ -130,12 +143,13 @@ class VXLANTrafficInjector:
 
     def inject_traffic(self, duration=30):
         """Start multi-threaded traffic injection"""
-        print(f"🚀 Starting VXLAN traffic injection")
+        print(f"🚀 Starting VXLAN traffic injection (UDP Method)")
         print(f"   Target: {self.target_ip}:{self.target_port}")
         print(f"   Interface: {self.interface}")
         print(f"   Threads: {self.threads}")
         print(f"   Target PPS: {self.pps}")
         print(f"   Duration: {duration}s")
+        print(f"   Method: UDP socket (VM-optimized)")
         print()
         
         self.running = True
