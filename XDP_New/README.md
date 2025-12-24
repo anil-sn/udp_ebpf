@@ -1,103 +1,197 @@
-# VXLAN Pipeline - High-Performance XDP Packet Processing
+# XDP VXLAN Pipeline - High-Performance Packet Processing
 
-A production-ready, high-performance XDP (eXpress Data Path) based pipeline for processing AWS Traffic Mirror VXLAN packets at sustained rates exceeding 85,000 packets per second with sub-microsecond latency.
-
-## 📋 Table of Contents
-
-- [Overview](#overview)
-- [Technical Architecture](#technical-architecture)
-- [Performance Characteristics](#performance-characteristics)
-- [Quick Start](#quick-start)
-- [System Requirements](#system-requirements)
-- [Installation & Setup](#installation--setup)
-- [Configuration](#configuration)
-- [Usage Examples](#usage-examples)
-- [Monitoring & Statistics](#monitoring--statistics)
-- [Performance Tuning](#performance-tuning)
-- [Troubleshooting](#troubleshooting)
-- [AWS Integration](#aws-integration)
-- [Development](#development)
+A production-ready XDP (eXpress Data Path) pipeline for processing VXLAN packets at 85,000+ packets per second with sub-microsecond latency.
 
 ## 🎯 Overview
 
-This project implements a complete VXLAN packet processing pipeline using eBPF/XDP technology to achieve maximum performance for network traffic analysis and forwarding. The system is specifically optimized for AWS Traffic Mirror scenarios where high-volume network traffic needs to be processed with minimal latency and maximum throughput.
+This project implements VXLAN packet processing using eBPF/XDP for AWS Traffic Mirror scenarios:
+- **VXLAN Decapsulation**: Processes UDP port 4789 traffic with VNI 1
+- **NAT Processing**: Port-based destination NAT (10.2.41.20:42844 → 10.2.41.17:8081)
+- **Jumbo Frame Handling**: 2852-byte frames → 1500-byte with DF bit clearing
+- **High Performance**: 85K+ PPS sustained throughput
 
-### Key Capabilities
+## 🚀 Quick Start
 
-- **VXLAN Termination**: Decapsulates VXLAN packets from AWS Traffic Mirror (UDP port 4789, VNI 1)
-- **NAT Processing**: Applies configurable source port-based destination NAT (DNAT) transformations  
-- **DF Bit Management**: Intelligently clears Don't Fragment bits on jumbo frames (>1400B) to prevent MTU issues
-- **High-Performance Forwarding**: Direct packet forwarding via XDP_REDIRECT or kernel stack fallback
-- **Real-time Monitoring**: Comprehensive statistics and performance metrics with per-CPU counters
-- **Zero-Copy Processing**: Packets processed entirely at network driver level for maximum efficiency
-
-### Real-World Performance Example
-
-Based on packet analysis from production environment:
-- **Input**: 2852-byte jumbo frames (10.2.41.20:42844 → 10.2.35.247:7777) with DF bit set
-- **Processing**: VXLAN decapsulation, NAT to 10.2.41.17:8081, DF bit clearing
-- **Output**: Standard 1500-byte packets ready for AWS VPC forwarding
-- **Performance**: 85K+ PPS sustained with <1μs per-packet latency
-
-### Use Cases
-
-- **Network Traffic Analysis**: Process mirrored traffic for security monitoring and DPI
-- **Traffic Engineering**: Intelligent packet forwarding and load balancing in cloud environments
-- **Protocol Translation**: VXLAN to native packet transformation for hybrid cloud architectures
-- **Performance Monitoring**: High-resolution network performance analysis and troubleshooting
-- **Compliance**: Network traffic inspection and audit trail generation for regulatory requirements
-
-## 🏗️ Technical Architecture
-
-### Pipeline Flow Diagram
-
-```
-AWS Traffic Mirror → NLB (UDP:4789) → EC2 Instance (XDP Program)
-
-┌─────────────────────────────────────────────────────────────────┐
-│                    XDP PROCESSING PIPELINE                      │
-│                  (85K+ PPS, Sub-microsecond)                   │
-│                                                                 │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
-│  │   VXLAN     │─▶│    NAT      │─▶│  DF Bit     │             │
-│  │ Termination │  │ Processing  │  │ Management  │             │
-│  │  (VNI=1)    │  │(Src Port→IP)│  │ (>1400B)    │             │
-│  └─────────────┘  └─────────────┘  └─────────────┘             │
-│                                            │                    │
-│  ┌─────────────────────────────────────────▼──────────────────┐ │
-│  │              PACKET FORWARDING                            │ │
-│  │  ┌─────────────────┐      ┌─────────────────────────────┐ │ │
-│  │  │  XDP_REDIRECT   │      │     Kernel Stack          │ │ │
-│  │  │ (High Perf.)    │      │   (Fallback Mode)         │ │ │
-│  │  │   ~10x faster   │      │    Compatible Mode        │ │ │
-│  │  └─────────────────┘      └─────────────────────────────┘ │ │
-│  └───────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-                                   │
-                                   ▼
-        ┌─────────────────────────────────────────────┐
-        │        Target Interface (ens5)              │
-        │      Analysis/Monitoring Systems            │
-        │    (Processed packets, NAT applied)         │
-        └─────────────────────────────────────────────┘
+### Prerequisites
+```bash
+# Install dependencies
+sudo apt-get update
+sudo apt-get install -y build-essential clang libbpf-dev linux-headers-$(uname -r)
 ```
 
-### Core Components
+### Build & Deploy
+```bash
+# Build the XDP program
+make clean && make all
 
-#### 1. **XDP Program (vxlan_pipeline.bpf.c)**
-- **Execution Context**: Network driver interrupt context (kernel space)
-- **Processing Mode**: Zero-copy packet manipulation using `bpf_xdp_adjust_head()`
-- **Performance**: Sub-microsecond per-packet processing, 85K+ PPS sustained
-- **Memory Model**: Direct memory access with comprehensive bounds checking
-- **Key Features**:
-  - VXLAN header parsing and validation (RFC 7348 compliant)
-  - Source port-based NAT lookup using eBPF hash maps (O(1) complexity)
-  - Incremental IP checksum updates for performance
-  - DF bit clearing on jumbo frames (>1400 bytes)
-  - Per-CPU statistics for lock-free monitoring
+# Simple control - choose one:
+./xdp.sh start    # Start XDP pipeline
+./xdp.sh status   # Check status
+./xdp.sh monitor  # Live monitoring
+./xdp.sh stop     # Stop pipeline
+./xdp.sh clean    # Force cleanup
+```
 
-#### 2. **Control Plane (vxlan_loader.c)**
-- **Functions**: Configuration management, real-time monitoring, lifecycle control
+## ⚙️ Configuration
+
+Edit `xdp.sh` to modify network settings:
+```bash
+INTERFACE="ens4"           # Input interface
+TARGET_INTERFACE="ens5"    # Output interface  
+NAT_IP="10.2.41.17"       # NAT destination IP
+NAT_PORT="8081"           # NAT destination port
+SOURCE_PORT="42844"       # Source port to match
+```
+
+## 📊 Monitoring
+
+### Simple Status Check
+```bash
+./xdp.sh status
+```
+Output:
+```
+📊 XDP VXLAN Pipeline Status
+==========================
+Status: 🟢 RUNNING (PID: 1234)
+XDP Program: ✅ Attached to ens4
+📈 Quick Stats:
+   Packet Rate: 87245 pps
+   Performance: 🟢 Active traffic
+```
+
+### Live Monitoring
+```bash
+./xdp.sh monitor
+```
+Output:
+```
+Time     | PPS    | Status
+---------|--------|--------
+14:23:15 | 87234  | 🟢 EXCELLENT
+14:23:17 | 89456  | 🟢 EXCELLENT
+```
+
+## 🛠️ Manual Usage
+
+Direct program usage:
+```bash
+# Start with custom settings
+sudo ./vxlan_loader -i ens4 -t ens5 -a 10.2.41.17 -p 8081 -s 42844 -I 5 -v
+
+# Options:
+#   -i, --interface     Input interface (default: ens5)
+#   -t, --target        Target interface (default: ens6)  
+#   -a, --nat-target    NAT IP address (default: 127.0.0.1)
+#   -p, --nat-port      NAT port (default: 8080)
+#   -s, --source-port   Source port to match (default: 31765)
+#   -I, --interval      Stats interval (default: 5)
+#   -v, --verbose       Verbose output
+```
+
+## 🔧 System Optimization
+
+For maximum performance:
+```bash
+# Optimize network settings
+sudo ./optimize_system.sh
+
+# Manual optimizations
+sudo ethtool -K ens4 gro off                    # Critical for jumbo frames
+sudo sysctl -w net.core.rmem_max=134217728      # Increase buffers
+sudo sysctl -w net.core.netdev_max_backlog=5000 # Queue size
+```
+
+## 📁 Project Structure
+
+```
+XDP_New/
+├── xdp.sh              # 🎯 Simple control script
+├── vxlan_pipeline.bpf.c       # XDP program (kernel space)
+├── vxlan_loader.c             # Control plane (userspace)
+├── vxlan_pipeline.h           # Configuration constants
+├── Makefile                   # Build system
+├── optimize_system.sh         # Performance tuning
+└── monitor_performance.bt     # Advanced monitoring (BPFtrace)
+```
+
+## 🎯 Performance Targets
+
+- **Throughput**: 85,000+ packets/second sustained
+- **Latency**: Sub-microsecond per-packet processing
+- **Packet Size**: Handles 2852-byte jumbo frames
+- **CPU Usage**: <50% on single modern core
+- **Memory**: <100MB total footprint
+
+## 🔍 Troubleshooting
+
+### Common Issues
+
+**XDP attachment failed:**
+```bash
+# Check interface supports XDP
+ethtool -i ens4
+# Ensure no conflicting XDP programs
+sudo ip link set ens4 xdp off
+```
+
+**No traffic processing:**
+```bash
+# Verify VXLAN traffic on port 4789
+sudo tcpdump -i ens4 udp port 4789
+# Check NAT configuration matches your traffic
+```
+
+**Performance issues:**
+```bash
+# Run system optimization
+sudo ./optimize_system.sh
+# Check CPU governor
+cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+```
+
+### Debug Commands
+```bash
+# Check XDP program status
+ip link show ens4 | grep xdp
+
+# View BPF programs
+sudo bpftool prog list
+
+# Process status
+pgrep -f vxlan_loader
+
+# Interface statistics
+cat /sys/class/net/ens4/statistics/rx_packets
+```
+
+## 🏗️ Architecture
+
+### Processing Pipeline
+```
+VXLAN Packet (2852B) → XDP Program → NAT Processing → DF Bit Clear → Forward (1500B)
+     ↓                     ↓              ↓              ↓             ↓
+AWS Traffic Mirror    Decapsulation   Port 42844    Clear DF bit    ens5 output
+   UDP:4789             VNI=1        → 10.2.41.17   (jumbo→std)   (forwarded)
+                                       :8081
+```
+
+### Key Components
+- **XDP Program**: Zero-copy packet processing at driver level
+- **Control Plane**: Configuration and monitoring interface  
+- **BPF Maps**: High-speed NAT lookup and statistics
+- **Userspace Loader**: Program lifecycle management
+
+## 🤝 Contributing
+
+1. Ensure changes maintain 85K+ PPS performance
+2. Test with actual VXLAN traffic
+3. Update documentation for any config changes
+4. Verify graceful start/stop operations
+
+## 📄 License
+
+Production-ready for AWS Traffic Mirror processing environments.
 - **Communication**: eBPF maps for bidirectional data exchange with kernel
 - **Interface**: Command-line with real-time statistics dashboard
 - **Configuration**: Dynamic NAT rule updates, interface mapping, performance tuning
