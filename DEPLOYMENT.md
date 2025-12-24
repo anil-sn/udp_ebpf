@@ -10,7 +10,7 @@
 - **Usage Examples**: 6 real-world scenarios including AWS Traffic Mirror
 - **Monitoring Dashboard**: Real-time performance tracking with status indicators
 
-### 2. **🛠️ Unified Control Script** (`vxlan_pipeline_ctl.sh`)
+### 2. **🛠️ Unified Control Script** (`xdp_pipeline.sh`)
 
 **Combined Features:**
 - ✅ System readiness validation (from `check_readiness.sh`)
@@ -23,18 +23,18 @@
 **Command Interface:**
 ```bash
 # Full deployment pipeline
-sudo ./vxlan_pipeline_ctl.sh deploy
+sudo ./xdp_pipeline.sh deploy
 
 # System validation only  
-sudo ./vxlan_pipeline_ctl.sh check
+sudo ./xdp_pipeline.sh check
 
 # Custom configuration (matching your packet analysis)
-sudo ./vxlan_pipeline_ctl.sh deploy \
+sudo ./xdp_pipeline.sh deploy \
     -i ens4 -t ens5 \
     -a 10.2.41.17 -p 8081 -s 42844
 
 # Performance monitoring
-sudo ./vxlan_pipeline_ctl.sh monitor -d 300
+sudo ./xdp_pipeline.sh monitor -d 300
 ```
 
 ### 3. **📊 Real-time Performance Dashboard**
@@ -75,15 +75,16 @@ TIME     PPS        VXLAN_PPS  NAT_HIT% REDIRECTED ERRORS  STATUS
 ### 5. **📁 File Structure Summary**
 
 ```
-XDP_New/
-├── vxlan_pipeline_ctl.sh      # 🆕 Unified deployment & monitoring
+ebpf/
+├── xdp_pipeline.sh            # 🆕 Unified deployment & monitoring
 ├── vxlan_pipeline.h           # 🔄 Centralized configuration constants  
 ├── vxlan_pipeline.bpf.c       # 🔄 Updated XDP program (uses header)
 ├── vxlan_loader.c             # 🔄 Updated userspace loader
 ├── README.md                  # 🔄 Comprehensive technical documentation
 ├── Makefile                   # 🔄 Updated dependencies
 ├── optimize_system.sh         # 🔄 System optimization script
-├── monitor_performance.bt     # 🔄 BPFtrace monitoring script
+├── tests/
+│   └── monitor_performance.bt # 🔄 BPFtrace monitoring script
 └── REFACTORING_SUMMARY.md     # 📋 Magic numbers refactoring details
 ```
 
@@ -92,7 +93,7 @@ XDP_New/
 ### **Immediate Usage:**
 ```bash
 # One-command deployment matching your environment
-sudo ./vxlan_pipeline_ctl.sh deploy \
+sudo ./xdp_pipeline.sh deploy \
     --input ens4 \
     --target ens5 \
     --nat-ip 10.2.41.17 \
@@ -111,8 +112,8 @@ sudo ./vxlan_pipeline_ctl.sh deploy \
 
 ### **Next Steps:**
 
-1. **Test Deployment**: `sudo ./vxlan_pipeline_ctl.sh check`
-2. **Run Pipeline**: `sudo ./vxlan_pipeline_ctl.sh deploy`  
+1. **Test Deployment**: `sudo ./xdp_pipeline.sh check`
+2. **Run Pipeline**: `sudo ./xdp_pipeline.sh deploy`  
 3. **Monitor Performance**: Watch for 🟢 status (85K+ PPS achieved)
 4. **Production Setup**: Add to systemd for persistent operation
 

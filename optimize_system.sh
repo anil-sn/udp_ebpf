@@ -68,4 +68,4 @@ sudo ethtool -k ${EGRESS_IF} | grep -E "(generic-receive-offload|tcp-segmentatio
 
 echo ""
 echo "🎯 Ready for 85K+ PPS XDP processing!"
-echo "💡 To verify: sudo ./vxlan_loader -i ${INGRESS_IF} -t ${EGRESS_IF} -v"
+echo "💡 To verify: sudo ./src/vxlan_loader -i ${INGRESS_IF} -t ${EGRESS_IF} -v"
