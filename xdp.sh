@@ -66,10 +66,12 @@ start() {
     
     # Start background process with comprehensive redirection
     echo -e "${BLUE}Launching vxlan_loader...${NC}"
-    # Change to src directory where .bpf.o file is located
-    (cd src && nohup sudo ./vxlan_loader -i $INTERFACE -t $TARGET_INTERFACE \
+    # Change to src directory where .bpf.o file is located and fix log path
+    cd src
+    nohup sudo ./vxlan_loader -i $INTERFACE -t $TARGET_INTERFACE \
         -a $NAT_IP -p $NAT_PORT -s $SOURCE_PORT -I $STATS_INTERVAL \
-        </dev/null >"../$LOG_FILE" 2>&1 &)
+        </dev/null >"$LOG_FILE" 2>&1 &
+    cd ..
     
     # Give more time for startup
     sleep 3

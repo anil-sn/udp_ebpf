@@ -31,6 +31,10 @@ pip3 install scapy
 
 ### Build & Deploy
 ```bash
+# Quick setup and verification (recommended)
+./verify_setup.sh
+
+# OR manual steps:
 # Build the XDP program (must be done from src directory)
 cd src && make clean && make all && cd ..
 
