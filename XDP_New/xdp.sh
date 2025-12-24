@@ -8,179 +8,193 @@ NAT_IP="10.2.41.17"
 NAT_PORT="8081"
 SOURCE_PORT="42844"
 
+# Visual Configuration
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
 start() {
-    echo "Starting XDP VXLAN Pipeline..."
+    echo -e "${BLUE}Starting XDP VXLAN Pipeline...${NC}"
     
     # Check if already running
     PID=$(pgrep -f vxlan_loader | head -1)
     if [ -n "$PID" ]; then
-        echo "ERROR: Pipeline already running (PID: $PID)"
+        echo -e "${RED}✗ ERROR: Pipeline already running (PID: $PID)${NC}"
         echo "Run './xdp.sh stop' first"
         exit 1
     fi
     
     # Clean up any orphaned XDP programs first
     if ip link show $INTERFACE 2>/dev/null | grep -q xdp; then
-        echo "Cleaning up orphaned XDP program..."
+        echo -e "${YELLOW}Warning: Cleaning up orphaned XDP program...${NC}"
         sudo ip link set $INTERFACE xdp off 2>/dev/null || true
         sleep 1
     fi
     
-    # Start in background with proper terminal handling
+    # Start in background
     nohup sudo ./vxlan_loader -i $INTERFACE -t $TARGET_INTERFACE \
         -a $NAT_IP -p $NAT_PORT -s $SOURCE_PORT -I 5 \
         </dev/null >/dev/null 2>&1 &
     
-    sleep 3
+    sleep 2
     
     PID=$(pgrep -f vxlan_loader | head -1)
     if [ -n "$PID" ]; then
-        echo "SUCCESS: Pipeline started (PID: $PID)"
-        echo "Interface: $INTERFACE -> $TARGET_INTERFACE"
-        echo "NAT Rule: port $SOURCE_PORT -> $NAT_IP:$NAT_PORT"
-        echo ""
+        echo -e "${GREEN}✓ SUCCESS: Pipeline started (PID: $PID)${NC}"
+        status  # Call status to show the dashboard immediately
     else
-        echo "ERROR: Failed to start pipeline"
-        echo "Try: sudo ./vxlan_loader -i $INTERFACE -t $TARGET_INTERFACE -a $NAT_IP -p $NAT_PORT -s $SOURCE_PORT -v"
+        echo -e "${RED}✗ ERROR: Failed to start pipeline${NC}"
+        echo "Try running manually to debug:"
+        echo "sudo ./vxlan_loader -i $INTERFACE -t $TARGET_INTERFACE -a $NAT_IP -p $NAT_PORT -s $SOURCE_PORT -v"
         exit 1
     fi
 }
 
 stop() {
-    echo "Stopping XDP VXLAN Pipeline..."
+    echo -e "${BLUE}Stopping XDP VXLAN Pipeline...${NC}"
     
     PID=$(pgrep -f vxlan_loader | head -1)
     if [ -z "$PID" ]; then
-        echo "Pipeline not running"
-        
-        # Clean up any orphaned XDP programs
+        # Check for orphans even if process is dead
         if ip link show $INTERFACE 2>/dev/null | grep -q xdp; then
-            echo "Cleaning up orphaned XDP program..."
+            echo -e "${YELLOW}Cleaning up orphaned XDP hook...${NC}"
             sudo ip link set $INTERFACE xdp off 2>/dev/null || true
+            echo -e "${GREEN}✓ Cleanup complete${NC}"
+        else
+            echo "Pipeline is not running."
         fi
         return 0
     fi
     
-    # Send SIGTERM for graceful shutdown
+    # Graceful kill
     sudo kill -TERM $PID 2>/dev/null
     
-    # Wait up to 5 seconds for graceful shutdown
+    # Wait loop
     for i in {1..5}; do
         if ! pgrep -f vxlan_loader > /dev/null; then
-            echo "Pipeline stopped successfully"
+            echo -e "${GREEN}✓ Pipeline stopped successfully${NC}"
             return 0
         fi
         sleep 1
     done
     
-    # Force kill if still running
-    echo "Forcing shutdown..."
+    # Force kill
+    echo -e "${RED}Forcing shutdown...${NC}"
     sudo pkill -KILL -f vxlan_loader 2>/dev/null || true
     sudo ip link set $INTERFACE xdp off 2>/dev/null || true
-    echo "Pipeline stopped"
+    echo -e "${GREEN}✓ Pipeline stopped${NC}"
 }
 
 status() {
-    echo "XDP VXLAN Pipeline Status"
-    echo "========================="
+    # CLEAR SCREEN for clean output
+    clear
+    
+    echo -e "${CYAN}=======================================${NC}"
+    echo -e "${CYAN}      XDP VXLAN PIPELINE STATUS        ${NC}"
+    echo -e "${CYAN}=======================================${NC}"
     
     PID=$(pgrep -f vxlan_loader | head -1)
+    
     if [ -n "$PID" ]; then
-        echo "Status: RUNNING (PID: $PID)"
+        echo -e "Service:  ${GREEN}● RUNNING${NC} (PID: $PID)"
         
         # Check XDP attachment
         if ip link show $INTERFACE 2>/dev/null | grep -q xdp; then
-            echo "XDP Program: Attached to $INTERFACE"
+            echo -e "XDP Hook: ${GREEN}✓ ATTACHED${NC} ($INTERFACE)"
         else
-            echo "XDP Program: Not attached"
+            echo -e "XDP Hook: ${RED}✗ DETACHED${NC} (Warning)"
         fi
         
-        # Show basic stats
         echo ""
-        echo "Quick Stats:"
+        echo -e "${BLUE}Configuration:${NC}"
+        echo "---------------------------------------"
+        printf "Inbound:  %-10s (Port %s)\n" "$INTERFACE" "$SOURCE_PORT"
+        printf "Outbound: %-10s -> %s:%s\n" "$TARGET_INTERFACE" "$NAT_IP" "$NAT_PORT"
+        echo "---------------------------------------"
+        
+        # Calculate Stats
+        echo ""
+        echo -e "${BLUE}Current Traffic Load:${NC}"
         RX_BEFORE=$(cat /sys/class/net/$INTERFACE/statistics/rx_packets 2>/dev/null || echo "0")
         sleep 1
         RX_AFTER=$(cat /sys/class/net/$INTERFACE/statistics/rx_packets 2>/dev/null || echo "0")
         PPS=$((RX_AFTER - RX_BEFORE))
-        echo "   Packet Rate: $PPS pps"
         
         if [ $PPS -ge 1000 ]; then
-            echo "   Performance: Active traffic"
+             echo -e "Rate:     ${GREEN}$PPS pps${NC} (Active)"
         elif [ $PPS -gt 0 ]; then
-            echo "   Performance: Low traffic"
+             echo -e "Rate:     ${YELLOW}$PPS pps${NC} (Low)"
         else
-            echo "   Performance: No traffic"
+             echo -e "Rate:     ${RED}0 pps${NC} (Idle)"
         fi
         
     else
-        echo "Status: STOPPED"
-        
+        echo -e "Service:  ${RED}● STOPPED${NC}"
         if ip link show $INTERFACE 2>/dev/null | grep -q xdp; then
-            echo "XDP Program: Orphaned (needs cleanup)"
+            echo -e "XDP Hook: ${YELLOW}⚠ ORPHANED${NC} (Run './xdp.sh clean')"
         else
-            echo "XDP Program: Clean"
+            echo -e "XDP Hook: ${GREEN}✓ CLEAN${NC}"
         fi
     fi
-    
     echo ""
-    echo "Configuration:"
-    echo "  Interface: $INTERFACE → $TARGET_INTERFACE"  
-    echo "  NAT Rule: port $SOURCE_PORT → $NAT_IP:$NAT_PORT"
 }
 
 monitor() {
-    echo "Simple Monitoring (Press Ctrl+C to stop)"
-    echo "======================================="
-    
+    # Check if running first
     if ! pgrep -f vxlan_loader > /dev/null; then
-        echo "ERROR: Pipeline not running. Start it first: ./xdp.sh start"
+        echo -e "${RED}ERROR: Pipeline is not running.${NC}"
         exit 1
     fi
-    
-    echo "Time     | PPS    | Status"
-    echo "---------|--------|--------"
+
+    clear
+    echo -e "${BLUE}Starting Live Monitor (Ctrl+C to stop)${NC}"
+    echo -e "Time      |    PPS | Status"
+    echo "--------------------------------"
     
     while true; do
         RX_BEFORE=$(cat /sys/class/net/$INTERFACE/statistics/rx_packets 2>/dev/null || echo "0")
         sleep 2
         RX_AFTER=$(cat /sys/class/net/$INTERFACE/statistics/rx_packets 2>/dev/null || echo "0")
+        
+        # Calculate approximate PPS over 2 seconds
         PPS=$(( (RX_AFTER - RX_BEFORE) / 2 ))
         
         TIME=$(date +%H:%M:%S)
         
         if [ $PPS -ge 85000 ]; then
-            STATUS="EXCELLENT"
-        elif [ $PPS -ge 50000 ]; then
+            COLOR=$GREEN
+            STATUS="HIGH"
+        elif [ $PPS -ge 1000 ]; then
+            COLOR=$CYAN
             STATUS="GOOD"
         elif [ $PPS -gt 0 ]; then
-            STATUS="LOW"
+            COLOR=$YELLOW
+            STATUS="LOW "
         else
+            COLOR=$RED
             STATUS="IDLE"
         fi
         
-        printf "%s | %-6d | %s\n" "$TIME" "$PPS" "$STATUS"
+        # Print formatted row
+        printf "%s | ${COLOR}%6d${NC} | ${COLOR}%s${NC}\n" "$TIME" "$PPS" "$STATUS"
     done
 }
 
 clean() {
-    echo "Cleaning up XDP VXLAN Pipeline..."
+    echo -e "${BLUE}Resetting XDP Environment...${NC}"
     
-    # Stop any running processes
-    PID=$(pgrep -f vxlan_loader | head -1)
-    if [ -n "$PID" ]; then
-        echo "Stopping pipeline process..."
-        sudo pkill -TERM -f vxlan_loader 2>/dev/null
-        sleep 2
-        sudo pkill -KILL -f vxlan_loader 2>/dev/null || true
-    fi
+    # Stop processes
+    sudo pkill -TERM -f vxlan_loader 2>/dev/null
+    sudo pkill -KILL -f vxlan_loader 2>/dev/null || true
     
-    # Remove XDP programs
-    if ip link show $INTERFACE 2>/dev/null | grep -q xdp; then
-        echo "Detaching XDP program from $INTERFACE..."
-        sudo ip link set $INTERFACE xdp off 2>/dev/null || true
-    fi
+    # Remove XDP links
+    sudo ip link set $INTERFACE xdp off 2>/dev/null || true
     
-    echo "✅ Cleanup complete"
+    sleep 1
+    echo -e "${GREEN}✓ System Cleaned & Reset${NC}"
 }
 
 # Main command handling
@@ -197,7 +211,7 @@ case "${1:-status}" in
     "monitor")
         monitor
         ;;
-    "clean")
+    "clean"|"reset")
         clean
         ;;
     "restart")
@@ -207,14 +221,6 @@ case "${1:-status}" in
         ;;
     *)
         echo "Usage: $0 [start|stop|status|monitor|clean|restart]"
-        echo ""
-        echo "Commands:"
-        echo "  start    - Start XDP pipeline"
-        echo "  stop     - Stop XDP pipeline"  
-        echo "  status   - Show current status (default)"
-        echo "  monitor  - Live monitoring"
-        echo "  clean    - Force cleanup"
-        echo "  restart  - Stop and start"
         exit 1
         ;;
 esac
