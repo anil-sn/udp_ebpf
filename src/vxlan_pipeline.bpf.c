@@ -202,20 +202,20 @@ struct nat_entry {
     __u16 flags;            /* Reserved for future use (e.g., protocol flags) */
 } __attribute__((packed, aligned(4)));  /* 4-byte alignment for optimal memory access */
 
-/* NAT Key Structure - Source port based lookup as per user analysis */
+/* NAT Key Structure - Destination port based lookup */
 struct nat_key {
-    __u16 src_port;         /* Source port to match (e.g., 42844 from hex dump) */
+    __u16 src_port;         /* Port to match (despite name, used for dest port matching) */
 } __attribute__((packed));
 
 /* 
  * NAT Translation Map
  * 
- * Key: Source port number to match in incoming packets
+ * Key: Destination port number to match in incoming packets  
  * Value: Target IP address and port for DNAT translation
  * 
  * EXAMPLE USAGE:
- * Key=31765, Value={target_ip=192.168.1.100, target_port=8080}
- * Result: Packets to port 31765 get redirected to 192.168.1.100:8080
+ * Key=31765, Value={target_ip=172.30.82.95, target_port=8081}
+ * Result: Packets TO port 31765 get redirected to 172.30.82.95:8081
  */
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
@@ -420,14 +420,15 @@ static __always_inline void *parse_vxlan(void *data, void *data_end,
 }
 
 /*
- * Apply NAT Translation - Source Port Based (User's Design)
- * Transforms: 10.2.41.20:42844 → 10.2.41.17:8081 (from hex dump analysis)
+ * Apply NAT Translation - Destination Port Based (Fixed Logic)
+ * Matches packets by destination port and applies DNAT transformation
+ * Config: SOURCE_PORT="31765" means "match packets going TO port 31765"
  */
 static __always_inline int apply_nat(struct iphdr *iph, struct udphdr *udph)
 {
-    /* Use source port for NAT lookup (as per user's analysis) */
+    /* Use destination port for NAT lookup (corrected logic) */
     struct nat_key key = {
-        .src_port = udph->source  /* Keep network byte order for map lookup */
+        .src_port = udph->dest  /* Match on destination port, keep network byte order */
     };
     
     /* O(1) hash map lookup */
