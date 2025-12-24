@@ -166,7 +166,7 @@ trap cleanup EXIT INT TERM
 echo -e "\n${BLUE}📋 Step 2: Starting Multi-threaded Traffic Generation${NC}"
 
 # Start traffic injector in background
-python3 "$TEST_DIR/utils/traffic_injector.py" \
+python3 "$TEST_DIR/traffic_injector.py" \
     --target-ip "$INTERFACE_IP" \
     --interface "$INTERFACE" \
     --threads "$THREADS" \
