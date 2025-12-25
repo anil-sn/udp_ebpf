@@ -203,21 +203,23 @@ stop() {
     # COMPREHENSIVE BPF CLEANUP: Remove orphaned programs and maps
     echo -e "${YELLOW}Cleaning up BPF programs and maps...${NC}"
     
-    # Find and unload all vxlan_pipeline_main programs
-    sudo bpftool prog show | grep "vxlan_pipeline_main" | awk '{print $1}' | sed 's/:$//' | while read prog_id; do
-        if [ -n "$prog_id" ]; then
-            echo "Unloading BPF program ID: $prog_id"
-            sudo bpftool prog unload id "$prog_id" 2>/dev/null || true
-        fi
-    done
+    # First, detach any remaining XDP programs from interfaces
+    sudo ip link set $INTERFACE xdp off 2>/dev/null || true
+    sudo ip link set $TARGET_INTERFACE xdp off 2>/dev/null || true
     
-    # Clean up orphaned maps (they should auto-cleanup when programs are unloaded, but be explicit)
-    sudo bpftool map show | grep -E "(nat_map|stats_map|ip_allowlist|packet_ringbuf)" | awk '{print $1}' | sed 's/:$//' | while read map_id; do
-        if [ -n "$map_id" ]; then
-            echo "Cleaning map ID: $map_id"
-            # Maps will auto-cleanup when no programs reference them
-        fi
-    done
+    # Remove any pinned BPF objects (maps/programs) that might keep references
+    if [ -d "/sys/fs/bpf" ]; then
+        sudo find /sys/fs/bpf -name "*vxlan*" -delete 2>/dev/null || true
+        sudo find /sys/fs/bpf -name "*nat_map*" -delete 2>/dev/null || true
+        sudo find /sys/fs/bpf -name "*stats_map*" -delete 2>/dev/null || true
+    fi
+    
+    # Force cleanup of any remaining file descriptors by restarting systemd-resolved
+    # (this helps clean up any lingering BPF references)
+    sudo systemctl restart systemd-resolved 2>/dev/null || true
+    
+    # Wait a moment for kernel garbage collection
+    sleep 2
     
     fix_terminal  # Final terminal fix
     echo -e "${GREEN}Stopped and Detached.${NC}"
@@ -237,13 +239,32 @@ clean() {
     # COMPLETE BPF CLEANUP: Remove all orphaned programs and maps
     echo -e "${YELLOW}Performing complete BPF cleanup...${NC}"
     
-    # Unload ALL vxlan_pipeline_main programs
-    sudo bpftool prog show 2>/dev/null | grep "vxlan_pipeline_main" | awk '{print $1}' | sed 's/:$//' | while read prog_id; do
-        if [ -n "$prog_id" ]; then
-            echo "Force unloading BPF program ID: $prog_id"
-            sudo bpftool prog unload id "$prog_id" 2>/dev/null || true
+    # Force detach from all interfaces
+    sudo ip link set $INTERFACE xdp off 2>/dev/null || true
+    sudo ip link set $TARGET_INTERFACE xdp off 2>/dev/null || true
+    
+    # Remove pinned BPF objects that might hold references
+    if [ -d "/sys/fs/bpf" ]; then
+        echo "Cleaning pinned BPF objects..."
+        sudo find /sys/fs/bpf -name "*vxlan*" -delete 2>/dev/null || true
+        sudo find /sys/fs/bpf -name "*nat_map*" -delete 2>/dev/null || true
+        sudo find /sys/fs/bpf -name "*stats_map*" -delete 2>/dev/null || true
+        sudo find /sys/fs/bpf -name "*ip_allowlist*" -delete 2>/dev/null || true
+        sudo find /sys/fs/bpf -name "*packet_ringbuf*" -delete 2>/dev/null || true
+    fi
+    
+    # Clear any cgroup BPF programs if attached (comprehensive cleanup)
+    sudo bpftool cgroup list 2>/dev/null | grep -i vxlan | while read line; do
+        cgroup_path=$(echo "$line" | awk '{print $1}')
+        if [ -n "$cgroup_path" ]; then
+            echo "Detaching from cgroup: $cgroup_path"
+            sudo bpftool cgroup detach "$cgroup_path" ingress 2>/dev/null || true
+            sudo bpftool cgroup detach "$cgroup_path" egress 2>/dev/null || true
         fi
-    done
+    done 2>/dev/null || true
+    
+    # Wait for kernel garbage collection
+    sleep 3
     
     # Verify cleanup
     remaining=$(sudo bpftool prog show 2>/dev/null | grep -c "vxlan_pipeline_main" || echo "0")
