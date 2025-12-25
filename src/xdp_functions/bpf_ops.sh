@@ -82,7 +82,7 @@ get_nat_rules() {
         
         if [ "$has_entries" = "true" ]; then
             # Get entries from all maps that have data, format as "src_port -> target_ip:target_port"
-            echo "$nat_data" | jq -r '.[] | select(.elements != null and (.elements | length) > 0) | .elements[] | (.key.src_port // .key) as $src | (.value.target_ip // 0) as $ip | (.value.target_port // .value) as $port | "\($src) -> \($ip):\($port)"' 2>/dev/null
+            echo "$nat_data" | jq -r '.[] | select(.elements != null and (.elements | length) > 0) | .elements[] | "\(.key.src_port) -> \(.value.target_ip):\(.value.target_port)"' 2>/dev/null
             return 0
         fi
     else
@@ -94,12 +94,13 @@ get_nat_rules() {
         if [ -n "$src_ports" ]; then
             paste <(echo "$src_ports") <(echo "$target_ips") <(echo "$target_ports") | while read -r src_port target_ip_int target_port; do
                 if [ -n "$src_port" ] && [ -n "$target_ip_int" ] && [ -n "$target_port" ]; then
-                    local target_ip=$(int_to_ip "$target_ip_int")
-                    echo "$src_port -> $target_ip:$target_port"
+                    echo "$src_port -> $target_ip_int:$target_port"
                 fi
             done
         fi
     fi
+    
+    return 1
 }
 
 # Get IP allowlist count

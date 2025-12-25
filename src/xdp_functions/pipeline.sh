@@ -87,8 +87,15 @@ start_pipeline() {
         # Start packet injector for userspace packet processing
         print_color "blue" "Starting packet injector..."
         if [ -f "vxlan_pipeline.bpf.o" ]; then
-            nohup sudo ./packet_injector vxlan_pipeline.bpf.o "$TARGET_INTERFACE" \
-                </dev/null >"/tmp/packet_injector.log" 2>&1 &
+            # TEMPORARILY DISABLED: packet_injector creates duplicate XDP programs
+            print_color "yellow" "⚠ Skipping packet_injector to prevent duplicate XDP programs"
+            print_color "yellow" "  Architecture needs fix: only vxlan_loader should load XDP program"
+            
+            # TODO: Fix packet_injector to access existing BPF maps instead of loading new program
+            # nohup sudo ./packet_injector vxlan_pipeline.bpf.o "$TARGET_INTERFACE" \
+            #     </dev/null >"/tmp/packet_injector.log" 2>&1 &
+            
+            print_color "green" "✓ Packet injector skipped (preventing duplicates)"
             
             # Wait a moment for packet_injector startup
             sleep 2
