@@ -1,5 +1,12 @@
 # XDP VXLAN Pipeline - High-Performance Packet Processing
 
+VXLAN packet → ens5/XDP → Process → Ring Buffer → XDP_DROP (no ens5 egress)
+                                         ↓
+                                 packet_injector reads from ring buffer
+                                         ↓  
+                                 Raw socket injection → ens6 (guaranteed egress)
+
+                                 
 This directory contains the complete high-performance XDP VXLAN pipeline with guaranteed packet delivery and IP allowlist filtering.
 
 ## Architecture Overview
