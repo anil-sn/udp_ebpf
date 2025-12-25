@@ -53,10 +53,16 @@ SETUP_SCRIPT := setup_environment.sh
 SERVICE_FILE := vxlan-pipeline.service
 CONFIG_FILE := vxlan_config.conf
 
-.PHONY: all clean install uninstall check-deps setup test syntax-check
+.PHONY: all clean install uninstall check-deps setup test syntax-check injector pipeline
 
-# Default target
+# Default target - build everything
 all: check-deps $(BPF_OBJ) $(USER_BIN) $(INJECTOR_BIN)
+
+# Build just the packet injector
+injector: check-deps $(INJECTOR_BIN)
+
+# Build complete pipeline (loader + injector)
+pipeline: check-deps $(USER_BIN) $(INJECTOR_BIN)
 
 # Syntax check targets
 syntax-check: syntax-check-injector syntax-check-loader
@@ -130,7 +136,7 @@ $(SETUP_SCRIPT):
 install: all $(SETUP_SCRIPT)
 	@echo "Installing VXLAN Pipeline to system..."
 	mkdir -p /opt/vxlan-pipeline
-	cp $(BPF_OBJ) $(USER_BIN) /opt/vxlan-pipeline/
+	cp $(BPF_OBJ) $(USER_BIN) $(INJECTOR_BIN) /opt/vxlan-pipeline/
 	cp $(SETUP_SCRIPT) /opt/vxlan-pipeline/
 	@echo "Installation complete. Run '/opt/vxlan-pipeline/$(SETUP_SCRIPT)' to configure system."
 
@@ -138,7 +144,7 @@ install: all $(SETUP_SCRIPT)
 uninstall:
 	@echo "Uninstalling VXLAN Pipeline..."
 	@echo "Removing program binaries..."
-	rm -f $(USER_BIN) $(BPF_OBJ)
+	rm -f $(USER_BIN) $(INJECTOR_BIN) $(BPF_OBJ)
 	@echo "Uninstallation complete."
 
 # Test program compilation and basic functionality
@@ -163,21 +169,26 @@ clean:
 info:
 	@echo "=== VXLAN Pipeline Build Configuration ==="
 	@echo "eBPF Program: $(BPF_PROG) -> $(BPF_OBJ)"
-	@echo "User Program: $(USER_PROG) -> $(USER_BIN)"
+	@echo "User Loader: $(USER_PROG) -> $(USER_BIN)"
+	@echo "Packet Injector: $(INJECTOR_PROG) -> $(INJECTOR_BIN)"
 	@echo "Clang: $(shell which $(CLANG))"
 	@echo "GCC: $(shell which $(CC))"
 	@echo "Kernel: $(KERNEL_REL)"
 	@echo "Kernel Source: $(KERNEL_SRC)"
 	@echo "LibBPF: $(LIBBPF_DIR)"
-	@echo "=========================================="
+	@echo "========================================="
 
 # Help target
 help:
 	@echo "VXLAN Pipeline Makefile - High-Performance Packet Processing"
 	@echo ""
-	@echo "Targets:"
-	@echo "  all        - Build eBPF program and userspace loader (default)"
+	@echo "Build Targets:"
+	@echo "  all        - Build everything: eBPF program, loader, and injector (default)"
+	@echo "  injector   - Build only the packet injector"
+	@echo "  pipeline   - Build userspace components (loader + injector)"
 	@echo "  syntax-check - Check syntax of all C files without linking"
+	@echo ""
+	@echo "System Targets:"
 	@echo "  setup      - Create system setup script"
 	@echo "  install    - Install to /opt/vxlan-pipeline"
 	@echo "  uninstall  - Remove from system"
@@ -187,5 +198,11 @@ help:
 	@echo "  info       - Show build configuration"
 	@echo "  help       - Show this help message"
 	@echo ""
-	@echo "Usage for 85K+ pps workload:"
-	@echo "  make && sudo ./vxlan_loader -i ens5 -t ens6 -v"
+	@echo "Usage Examples:"
+	@echo "  make                    # Build complete pipeline"
+	@echo "  make injector          # Build only packet injector"
+	@echo "  make && ../xdp.sh start # Build and start pipeline"
+	@echo ""
+	@echo "Components:"
+	@echo "  vxlan_loader     - eBPF program loader and control"
+	@echo "  packet_injector  - High-performance userspace packet processor (85K+ PPS)"
