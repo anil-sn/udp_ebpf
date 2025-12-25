@@ -679,28 +679,29 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     __u32 *target_ifindex = bpf_map_lookup_elem(&redirect_map, &key);
     
     if (target_ifindex && *target_ifindex > 0) {
-        /* Try XDP_REDIRECT first, fallback to modified routing */
+        /* Use actual XDP_REDIRECT to force ens6 egress */
         update_stat(STAT_REDIRECTED, 1);
         
-        /* Force packet to specific interface by modifying Ethernet header */
+        /* Set destination MAC for proper L2 forwarding */
         struct ethhdr *eth = (struct ethhdr *)data;
         if ((void *)(eth + 1) <= data_end) {
-            /* Set specific destination MAC to force routing via ens6 */
-            /* This works better in generic mode */
             __u32 if_key = 0;
             struct interface_config *if_config = bpf_map_lookup_elem(&interface_map, &if_key);
-            if (if_config) {
-                /* Copy ens6 MAC as destination to force L2 routing */
+            if (if_config && if_config->ifindex > 0) {
+                /* Copy target interface MAC address */
                 eth->h_dest[0] = if_config->mac_addr[0];
                 eth->h_dest[1] = if_config->mac_addr[1]; 
                 eth->h_dest[2] = if_config->mac_addr[2];
                 eth->h_dest[3] = if_config->mac_addr[3];
                 eth->h_dest[4] = if_config->mac_addr[4];
                 eth->h_dest[5] = if_config->mac_addr[5];
+                
+                /* CRITICAL: Use XDP_REDIRECT to force ens6 egress */
+                return bpf_redirect(if_config->ifindex, 0);
             }
         }
         
-        /* Return XDP_DROP to prevent ens5 egress - userspace will handle ens6 injection */
+        /* Fallback if interface config fails - drop to prevent ens5 egress */
         return XDP_DROP;
     }
 
