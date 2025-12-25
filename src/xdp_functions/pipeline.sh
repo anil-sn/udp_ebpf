@@ -101,25 +101,17 @@ start_pipeline() {
             print_color "red" "✗ Stats map: Missing"
         fi
         
-        # TEMPORARY FIX: Disable packet_injector to test single XDP program
-        print_color "yellow" "TESTING: Temporarily disabling packet_injector to prevent duplicates"
+        # Re-enable packet_injector for userspace packet processing
         print_color "blue" "Starting packet injector..."
-        print_color "yellow" "⚠️  DISABLED FOR TESTING - packet_injector skipped to prevent duplicate XDP programs"
-        print_color "yellow" "This tests if vxlan_loader alone can handle the pipeline"
         
-        # Comment out packet_injector startup for testing
-        if false; then  # Disabled for testing
+        # packet_injector provides essential userspace packet processing
+        # It accesses BPF maps but doesn't load duplicate XDP programs
         if [ -f "vxlan_pipeline.bpf.o" ]; then
-            # CRITICAL: packet_injector is REQUIRED for userspace packet processing
-            # It handles packets forwarded from XDP via ring buffer mechanism
-            # NOTE: packet_injector needs .bpf.o for map access but shouldn't load duplicate XDP
             print_color "blue" "Note: packet_injector provides essential userspace packet processing"
             
-            # Start packet_injector - FIXED: Restore .bpf.o parameter (required by binary)
+            # Start packet_injector - uses .bpf.o for map access only
             nohup sudo ./packet_injector vxlan_pipeline.bpf.o "$TARGET_INTERFACE" \
                 </dev/null >"/tmp/packet_injector.log" 2>&1 &
-            
-            print_color "green" "✓ Packet injector started"
             
             # Wait a moment for packet_injector startup
             sleep 2
@@ -127,7 +119,7 @@ start_pipeline() {
             # Verify packet_injector startup
             if pgrep -f "packet_injector" >/dev/null; then
                 local injector_pid=$(pgrep -f "packet_injector" | head -1)
-                print_color "green" "✓ Packet injector confirmed (PID: $injector_pid)"
+                print_color "green" "✓ Packet injector started (PID: $injector_pid)"
                 print_color "green" "Log file: /tmp/packet_injector.log"
             else
                 print_color "yellow" "Warning: Packet injector failed to start"
@@ -136,7 +128,6 @@ start_pipeline() {
         else
             print_color "yellow" "Warning: vxlan_pipeline.bpf.o not found, skipping packet injector"
         fi
-        fi  # End of disabled section
         
         sleep 1
         fix_terminal
