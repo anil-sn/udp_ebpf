@@ -352,7 +352,7 @@ run_end_to_end_test() {
                 $delta_rx $rate_change $delta_vxlan $delta_nat $inst_pps $efficiency "$status"
             printf "\033[0m"  # Reset color
         else
-            printf "\r[%02d/%02d] Monitoring..." $i $monitoring_duration
+            # Clear entire line before showing monitoring status\n            printf \"\\r\\033[K[%02d/%02d] Monitoring...\" $i $monitoring_duration
         fi
         sleep 1
     done
@@ -428,16 +428,16 @@ run_end_to_end_test() {
     local final_nat_collected="$baseline_nat"
     local final_bytes_collected="$baseline_bytes"
     
-    # Strategy 1: Direct statistics collection
+    # Strategy 1: Direct statistics collection with improved timeout handling
     for attempt in 1 2; do
-        print_color "blue" "Statistics collection attempt $attempt..."
+        print_color "blue" "Statistics collection attempt $attempt (timeout: 10s)..."
         
-        if timeout 8 bash -c "show_statistics > '$test_dir/stats_after_attempt_$attempt.txt' 2>/dev/null"; then
-            # Try to extract individual statistics
-            local temp_rx=$(timeout 5 bash -c "get_statistics 'total'" 2>/dev/null)
-            local temp_vxlan=$(timeout 5 bash -c "get_statistics 'vxlan'" 2>/dev/null)
-            local temp_nat=$(timeout 5 bash -c "get_statistics 'nat'" 2>/dev/null)
-            local temp_bytes=$(timeout 5 bash -c "get_statistics 'bytes'" 2>/dev/null)
+        if timeout 10 bash -c "show_statistics > '$test_dir/stats_after_attempt_$attempt.txt' 2>/dev/null"; then
+            # Try to extract individual statistics with longer timeout
+            local temp_rx=$(timeout 8 bash -c "get_statistics 'total'" 2>/dev/null)
+            local temp_vxlan=$(timeout 8 bash -c "get_statistics 'vxlan'" 2>/dev/null)
+            local temp_nat=$(timeout 8 bash -c "get_statistics 'nat'" 2>/dev/null)
+            local temp_bytes=$(timeout 8 bash -c "get_statistics 'bytes'" 2>/dev/null)
             
             # Validate collected values
             if [[ "$temp_rx" =~ ^[0-9]+$ ]] && [[ "$temp_vxlan" =~ ^[0-9]+$ ]]; then
@@ -450,10 +450,12 @@ run_end_to_end_test() {
                 print_color "green" "✓ Statistics collection successful"
                 break
             else
-                print_color "yellow" "⚠ Invalid statistics format, retrying..."
+                print_color "yellow" "⚠ Invalid statistics format in attempt $attempt (rx=$temp_rx, vxlan=$temp_vxlan)"
+                echo "  This may indicate BPF map access issues or program state problems"
             fi
         else
-            print_color "yellow" "⚠ Attempt $attempt timeout, retrying..."
+            print_color "yellow" "⚠ Statistics collection timeout in attempt $attempt"
+            echo "  This suggests the statistics functions are unresponsive"
         fi
         
         sleep 2
@@ -672,8 +674,10 @@ run_end_to_end_test() {
                         local vxlan_events=$(grep -c "vxlan" "$test_dir/$file" 2>/dev/null || echo "0")
                         local error_events=$(grep -ci "error" "$test_dir/$file" 2>/dev/null || echo "0")
                         
-                        if [ "$xdp_events" -gt 0 ] || [ "$vxlan_events" -gt 0 ]; then
+                        if [ "$xdp_events" -gt 0 ] || [ "$vxlan_events" -gt 0 ] || [ "$error_events" -gt 0 ]; then
                             echo "      └─ Events: XDP:$xdp_events VXLAN:$vxlan_events Errors:$error_events"
+                        else
+                            echo "      └─ No significant events detected"
                         fi
                         
                         # Show recent significant entries
@@ -763,16 +767,22 @@ run_end_to_end_test() {
             ;;
         "WARNING") 
             print_color "yellow" "=== TEST PASSED (WITH WARNINGS) ==="
-            print_color "yellow" "Pipeline processed traffic but some captures failed"
+            print_color "yellow" "Pipeline processed traffic but encountered some issues"
             ;;
         "FAILED")
             print_color "red" "=== TEST FAILED ==="
-            print_color "red" "Pipeline did not process any traffic"
+            print_color "red" "Pipeline did not process any traffic during test period"
             ;;
     esac
     
+    echo ""
     
-    print_color "green" "✓ Test completed successfully!"
+    # Consistent completion message
+    if [ "$test_result" = "FAILED" ]; then
+        print_color "yellow" "Test analysis completed - see diagnostics above"
+    else
+        print_color "green" "✓ Test completed successfully!"
+    fi
     print_color "yellow" "Test outputs saved in: $test_dir"
     echo ""
     
