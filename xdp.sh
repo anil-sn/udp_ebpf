@@ -486,15 +486,21 @@ info() {
         sudo bpftool prog list 2>/dev/null | grep "vxlan_pipeline_main" | while read -r line; do
             PROG_ID=$(echo "$line" | awk '{print $1}' | tr -d ':')
             TAG=$(echo "$line" | grep -o 'tag [a-f0-9]*' | cut -d' ' -f2)
-            SIZE=$(echo "$line" | grep -o 'xlated [0-9]*B' | cut -d' ' -f2)
-            MAP_COUNT=$(echo "$line" | grep -o 'map_ids [0-9,]*' | cut -d' ' -f2 | tr ',' '\n' | wc -l)
+            SIZE=$(echo "$line" | grep -o 'xlated [0-9]*B' | cut -d' ' -f2 || echo "N/A")
             
-            # Get process info
-            PID_INFO=$(sudo bpftool prog list id "$PROG_ID" 2>/dev/null | grep 'pids' | sed 's/.*pids \([^(]*\).*/\1/' | tr -d ' ')
-            [ -z "$PID_INFO" ] && PID_INFO="N/A"
+            # Count maps by parsing map_ids
+            MAP_IDS_RAW=$(echo "$line" | grep -o 'map_ids [0-9,]*' | cut -d' ' -f2)
+            if [ -n "$MAP_IDS_RAW" ]; then
+                MAP_COUNT=$(echo "$MAP_IDS_RAW" | tr ',' '\n' | wc -l)
+            else
+                MAP_COUNT=0
+            fi
+            
+            # Get process info - extract just the process name
+            PID_INFO=$(echo "$line" | sed -n 's/.*pids \([^(]*\).*/\1/p' | tr -d ' ' || echo "N/A")
             
             printf "│ %4s │ %7s │ %14s │ %7d │ %8s │ %-11s │\n" \
-                "$PROG_ID" "${TAG:0:7}" "$SIZE" "$MAP_COUNT" "$PID_INFO" "Active"
+                "$PROG_ID" "${TAG:0:7}" "${SIZE:-N/A}" "$MAP_COUNT" "${PID_INFO:-N/A}" "Active"
         done
         echo -e "└──────┴─────────┴────────────────┴─────────┴──────────┴─────────────┘"
     else
@@ -512,33 +518,41 @@ info() {
     
     # NAT Rules Table
     echo -e "\n${YELLOW}=== NAT CONFIGURATION ===${NC}"
-    NAT_DATA=$(sudo bpftool map dump name nat_map 2>/dev/null)
     
-    if [ -n "$NAT_DATA" ]; then
-        # Extract NAT entries from any map that has elements
-        NAT_ENTRIES=$(echo "$NAT_DATA" | jq -r '.[] | select(.elements != null and (.elements | length) > 0) | .elements[] | "\(.key.src_port),\(.value.target_ip),\(.value.target_port)"' 2>/dev/null)
+    # Try to get NAT data and check if any maps have elements
+    NAT_HAS_DATA=false
+    NAT_ENTRIES_FILE=$(mktemp)
+    
+    sudo bpftool map dump name nat_map 2>/dev/null | jq -r '.[] | select(.elements != null) | select((.elements | length) > 0) | .elements[] | [.key.src_port, .value.target_ip, .value.target_port] | @csv' 2>/dev/null > "$NAT_ENTRIES_FILE"
+    
+    if [ -s "$NAT_ENTRIES_FILE" ]; then
+        NAT_HAS_DATA=true
+        NAT_COUNT=$(wc -l < "$NAT_ENTRIES_FILE")
+        echo "Active NAT Rules: $NAT_COUNT"
+        echo ""
+        echo "┌─────────────┬─────────────────┬──────────────┬────────────────────┐"
+        echo "│ Source Port │   Target IP     │ Target Port  │      Status        │"
+        echo "├─────────────┼─────────────────┼──────────────┼────────────────────┤"
         
-        if [ -n "$NAT_ENTRIES" ]; then
-            NAT_COUNT=$(echo "$NAT_ENTRIES" | wc -l)
-            echo "Active NAT Rules: $NAT_COUNT"
-            echo ""
-            echo "┌─────────────┬─────────────────┬──────────────┬────────────────────┐"
-            echo "│ Source Port │   Target IP     │ Target Port  │      Status        │"
-            echo "├─────────────┼─────────────────┼──────────────┼────────────────────┤"
+        while IFS=',' read -r src_port target_ip_int target_port; do
+            # Remove quotes from CSV output
+            src_port=$(echo "$src_port" | tr -d '"')
+            target_ip_int=$(echo "$target_ip_int" | tr -d '"')
+            target_port=$(echo "$target_port" | tr -d '"')
             
-            echo "$NAT_ENTRIES" | while IFS=',' read -r src_port target_ip_int target_port; do
-                if [ -n "$src_port" ] && [ -n "$target_ip_int" ] && [ -n "$target_port" ]; then
-                    TARGET_IP=$(int_to_ip "$target_ip_int")
-                    printf "│    %5d    │ %15s │    %6d    │       Active       │\n" \
-                        "$src_port" "$TARGET_IP" "$target_port"
-                fi
-            done
-            echo "└─────────────┴─────────────────┴──────────────┴────────────────────┘"
-        else
-            echo "No NAT rules configured"
-        fi
-    else
-        echo "NAT map not accessible"
+            if [ -n "$src_port" ] && [ -n "$target_ip_int" ] && [ -n "$target_port" ]; then
+                TARGET_IP=$(int_to_ip "$target_ip_int")
+                printf "│    %5d    │ %15s │    %6d    │       Active       │\n" \
+                    "$src_port" "$TARGET_IP" "$target_port"
+            fi
+        done < "$NAT_ENTRIES_FILE"
+        echo "└─────────────┴─────────────────┴──────────────┴────────────────────┘"
+    fi
+    
+    rm -f "$NAT_ENTRIES_FILE"
+    
+    if [ "$NAT_HAS_DATA" = false ]; then
+        echo "No NAT rules configured"
     fi
     
     # IP Allowlist Table
@@ -587,8 +601,16 @@ info() {
         MAP_TYPE=$(echo "$line" | awk '{print $2}')
         MAP_NAME=$(echo "$line" | grep -o 'name [^ ]*' | cut -d' ' -f2)
         
-        # Get element count
-        ELEMENTS=$(sudo bpftool map dump id "$MAP_ID" 2>/dev/null | jq '[.[].elements // []] | add | length // 0' 2>/dev/null || echo "0")
+        # Get element count - try different approaches
+        if [ "$MAP_TYPE" = "hash" ]; then
+            # For hash maps, count actual key-value pairs
+            ELEMENTS=$(sudo bpftool map dump id "$MAP_ID" 2>/dev/null | jq -r 'if type == "array" then [.[] | select(.elements != null) | .elements | length] | add // 0 else 0 end' 2>/dev/null || echo "0")
+        elif [ "$MAP_TYPE" = "array" ] || [ "$MAP_TYPE" = "percpu_array" ]; then
+            # For arrays, count non-zero entries
+            ELEMENTS=$(sudo bpftool map dump id "$MAP_ID" 2>/dev/null | jq -r 'if type == "array" then [.[] | select(.elements != null) | .elements | length] | add // 0 else 0 end' 2>/dev/null || echo "0")
+        else
+            ELEMENTS="0"
+        fi
         
         # Set purpose
         case "$MAP_NAME" in
