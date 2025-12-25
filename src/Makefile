@@ -30,7 +30,10 @@ BPF_CFLAGS := -O2 -target bpf -g \
 # Compiler flags for userspace
 USER_CFLAGS := -Wall -Wextra -O2 -g \
                -I$(LIBBPF_DIR)/include \
-               -std=c99
+               -std=c99 \
+               -D_GNU_SOURCE \
+               -Wno-unused-parameter \
+               -Wno-unused-variable
 
 # Linker flags
 USER_LDFLAGS := -L$(LIBBPF_DIR)/lib -lbpf -lelf -lz
@@ -50,10 +53,23 @@ SETUP_SCRIPT := setup_environment.sh
 SERVICE_FILE := vxlan-pipeline.service
 CONFIG_FILE := vxlan_config.conf
 
-.PHONY: all clean install uninstall check-deps setup test
+.PHONY: all clean install uninstall check-deps setup test syntax-check
 
 # Default target
 all: check-deps $(BPF_OBJ) $(USER_BIN) $(INJECTOR_BIN)
+
+# Syntax check targets
+syntax-check: syntax-check-injector syntax-check-loader
+
+syntax-check-injector:
+	@echo "Checking syntax of $(INJECTOR_PROG)..."
+	@$(CC) $(USER_CFLAGS) -pthread -fsyntax-only $(INJECTOR_PROG)
+	@echo "✓ $(INJECTOR_PROG) syntax is correct"
+
+syntax-check-loader:
+	@echo "Checking syntax of $(USER_PROG)..."
+	@$(CC) $(USER_CFLAGS) -fsyntax-only $(USER_PROG)
+	@echo "✓ $(USER_PROG) syntax is correct"
 
 # Compile eBPF program
 $(BPF_OBJ): $(BPF_PROG) $(BPF_HEADER)
@@ -70,6 +86,9 @@ $(USER_BIN): $(USER_PROG) $(BPF_OBJ) $(BPF_HEADER)
 # Compile high-performance multithreaded packet injector
 $(INJECTOR_BIN): $(INJECTOR_PROG)
 	@echo "Compiling high-performance multithreaded packet injector..."
+	@echo "Checking syntax first..."
+	@$(CC) $(USER_CFLAGS) -pthread -fsyntax-only $< || (echo "Syntax error in $<" && exit 1)
+	@echo "Syntax check passed, compiling..."
 	$(CC) $(USER_CFLAGS) -pthread $< -o $@ $(USER_LDFLAGS)
 	@echo "High-performance packet injector compiled: $@"
 
@@ -158,6 +177,7 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  all        - Build eBPF program and userspace loader (default)"
+	@echo "  syntax-check - Check syntax of all C files without linking"
 	@echo "  setup      - Create system setup script"
 	@echo "  install    - Install to /opt/vxlan-pipeline"
 	@echo "  uninstall  - Remove from system"
