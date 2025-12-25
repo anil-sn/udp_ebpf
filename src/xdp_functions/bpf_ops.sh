@@ -81,8 +81,11 @@ get_nat_rules() {
         local has_entries=$(echo "$nat_data" | jq -r 'if (type == "array") then ([.[] | select(.elements != null and (.elements | length) > 0)] | length > 0) else false end' 2>/dev/null)
         
         if [ "$has_entries" = "true" ]; then
-            # Get entries from all maps that have data
-            echo "$nat_data" | jq -r '.[] | select(.elements != null and (.elements | length) > 0) | .elements[] | "\(.key.src_port) -> \(int_to_ip(.value.target_ip)):\(.value.target_port)"' 2>/dev/null
+            # Get entries from all maps that have data, format as "src_port -> target_ip:target_port"
+            echo "$nat_data" | jq -r '.[] | select(.elements != null and (.elements | length) > 0) | .elements[] | (.key.src_port // .key) as $src | (.value.target_ip // 0) as $ip | (.value.target_port // .value) as $port | "\($src) -> \($ip):\($port)"' 2>/dev/null
+            return 0
+        fi
+    else
         fi
     else
         # Fallback to text parsing - extract individual components

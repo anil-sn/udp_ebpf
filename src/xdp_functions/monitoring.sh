@@ -287,13 +287,17 @@ show_detailed_info() {
             echo "├─────────────────┼────────────────────────────────────────────────┤"
             
             # Show first 15 IPs to keep output manageable - handle multiple maps
-            local ip_entries=$(echo "$ip_data" | jq -r 'if (type == "array") then [.[] | select(.elements != null and (.elements | length) > 0) | .elements[].key] else [] end | .[:15] | .[]' 2>/dev/null)
+            local ip_entries=$(echo "$ip_data" | jq -r 'if (type == "array") then [.[] | select(.elements != null and (.elements | length) > 0) | .elements[].key] else [] end | sort | .[:15] | .[]' 2>/dev/null)
             
             if [ -n "$ip_entries" ]; then
+                local displayed_count=0
                 echo "$ip_entries" | while read -r ip_int; do
                     if [ -n "$ip_int" ] && [[ "$ip_int" =~ ^[0-9]+$ ]]; then
                         local ip_addr=$(int_to_ip "$ip_int")
                         printf "│ %15s │                    Allowed                     │\n" "$ip_addr"
+                        ((displayed_count++))
+                        # Break after 15 to avoid too much output
+                        [ $displayed_count -ge 15 ] && break
                     fi
                 done
                 
