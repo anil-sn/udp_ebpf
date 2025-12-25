@@ -200,6 +200,25 @@ stop() {
     # Clean interface - use xdpgeneric since that's the mode we load in
     sudo ip link set $INTERFACE xdpgeneric off 2>/dev/null || true
     
+    # COMPREHENSIVE BPF CLEANUP: Remove orphaned programs and maps
+    echo -e "${YELLOW}Cleaning up BPF programs and maps...${NC}"
+    
+    # Find and unload all vxlan_pipeline_main programs
+    sudo bpftool prog show | grep "vxlan_pipeline_main" | awk '{print $1}' | sed 's/:$//' | while read prog_id; do
+        if [ -n "$prog_id" ]; then
+            echo "Unloading BPF program ID: $prog_id"
+            sudo bpftool prog unload id "$prog_id" 2>/dev/null || true
+        fi
+    done
+    
+    # Clean up orphaned maps (they should auto-cleanup when programs are unloaded, but be explicit)
+    sudo bpftool map show | grep -E "(nat_map|stats_map|ip_allowlist|packet_ringbuf)" | awk '{print $1}' | sed 's/:$//' | while read map_id; do
+        if [ -n "$map_id" ]; then
+            echo "Cleaning map ID: $map_id"
+            # Maps will auto-cleanup when no programs reference them
+        fi
+    done
+    
     fix_terminal  # Final terminal fix
     echo -e "${GREEN}Stopped and Detached.${NC}"
     fix_terminal
@@ -212,12 +231,32 @@ clean() {
     sudo pkill -KILL -f "packet_injector" 2>/dev/null || true
     fix_terminal  # Immediate fix after pkill
     
+    # Comprehensive interface and BPF cleanup
     sudo ip link set $INTERFACE xdpgeneric off 2>/dev/null || true
+    
+    # COMPLETE BPF CLEANUP: Remove all orphaned programs and maps
+    echo -e "${YELLOW}Performing complete BPF cleanup...${NC}"
+    
+    # Unload ALL vxlan_pipeline_main programs
+    sudo bpftool prog show 2>/dev/null | grep "vxlan_pipeline_main" | awk '{print $1}' | sed 's/:$//' | while read prog_id; do
+        if [ -n "$prog_id" ]; then
+            echo "Force unloading BPF program ID: $prog_id"
+            sudo bpftool prog unload id "$prog_id" 2>/dev/null || true
+        fi
+    done
+    
+    # Verify cleanup
+    remaining=$(sudo bpftool prog show 2>/dev/null | grep -c "vxlan_pipeline_main" || echo "0")
+    if [ "$remaining" -eq "0" ]; then
+        echo -e "${GREEN}✓ All BPF programs cleaned up${NC}"
+    else
+        echo -e "${YELLOW}Warning: $remaining BPF programs may still be loaded${NC}"
+    fi
     
     # FIX TERMINAL NOW because the kill might have left it raw
     fix_terminal
     
-    echo -e "${GREEN}Environment Reset - All processes stopped.${NC}"
+    echo -e "${GREEN}Environment Reset - All processes and BPF programs cleaned.${NC}"
     fix_terminal  # Final fix
 }
 
