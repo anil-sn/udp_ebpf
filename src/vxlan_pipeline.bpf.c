@@ -205,7 +205,7 @@ struct nat_entry {
 
 /* NAT Key Structure - Destination port based lookup */
 struct nat_key {
-    __u16 src_port;         /* Port to match (despite name, used for dest port matching) */
+    __u16 src_port;         /* Destination port to match (field name is legacy) */
 } __attribute__((packed));
 
 /* 
@@ -470,13 +470,13 @@ static __always_inline void *parse_vxlan(void *data, void *data_end,
 }
 
 /*
- * Apply NAT Translation - Destination Port Based (Fixed Logic)
+ * Apply NAT Translation - Destination Port Based (DNAT Logic)
  * Matches packets by destination port and applies DNAT transformation
- * Config: SOURCE_PORT="31765" means "match packets going TO port 31765"
+ * Config: SOURCE_PORT="19480" means "match packets going TO port 19480"
  */
 static __always_inline int apply_nat(struct iphdr *iph, struct udphdr *udph)
 {
-    /* Use destination port for NAT lookup (corrected logic) */
+    /* Use destination port for NAT lookup (matches packets TO specific port) */
     struct nat_key key = {
         .src_port = udph->dest  /* Match on destination port, keep network byte order */
     };
