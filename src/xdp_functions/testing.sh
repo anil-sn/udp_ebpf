@@ -348,11 +348,11 @@ run_end_to_end_test() {
             fi
             local rate_change=$((delta_rx - prev_delta))
             
-            printf "Δ: RX:%d(+%d) VXLAN:%d NAT:%d | Rate:%d pps | Eff:%.1f%% | %s" \
+            printf "Δ: RX:%d (+%d) VXLAN:%d NAT:%d | Rate:%d pps | Eff:%.1f%% | %s" \
                 $delta_rx $rate_change $delta_vxlan $delta_nat $inst_pps $efficiency "$status"
             printf "\033[0m"  # Reset color
         else
-            printf "\r[%02d/%02d] Processing..." $i $monitoring_duration
+            printf "\r[%02d/%02d] Monitoring..." $i $monitoring_duration
         fi
         sleep 1
     done
@@ -465,7 +465,9 @@ run_end_to_end_test() {
         
         # Try to access BPF maps directly if available
         if command -v bpftool >/dev/null 2>&1; then
-            local map_stats=$(timeout 5 bpftool map dump name stats_map 2>/dev/null | grep -E '^key|^value' | wc -l 2>/dev/null || echo "0")
+            local map_stats_raw=$(timeout 5 bpftool map dump name stats_map 2>/dev/null | grep -E '^key|^value' | wc -l 2>/dev/null)
+            local map_stats=$(echo "$map_stats_raw" | tr -d '\n\r\t ' | sed 's/[^0-9]//g')
+            map_stats=${map_stats:-0}
             if [ "$map_stats" -gt 0 ]; then
                 echo "BPF map access successful - using baseline + detected traffic" > "$test_dir/stats_after.txt"
                 # Use observed traffic patterns from monitoring loop
@@ -775,7 +777,7 @@ run_end_to_end_test() {
     echo ""
     
     echo "Available files and analysis:"
-    for file_info in "${capture_files[@]}"; do
+    for file_info in "${capture_files_map[@]}"; do
         local file="${file_info%%:*}"
         local desc="${file_info##*:}"
         if [ -f "$test_dir/$file" ]; then
@@ -783,24 +785,24 @@ run_end_to_end_test() {
         fi
     done
     
-    echo "  • bpf_trace.log     - Kernel BPF debug traces (may be empty for production programs)"
-    echo "  • stats_before.txt  - Statistics before test"
-    echo "  • stats_after.txt   - Statistics after test"
+    echo "  • bpf_trace_enhanced.log - Enhanced BPF debug traces and system analysis"
+    echo "  • stats_before.txt      - Statistics before test"
+    echo "  • stats_after.txt       - Statistics after test"
     echo ""
     
     echo "Quick analysis commands:"
     echo "  # View captured packets:"
-    for file_info in "${capture_files[@]}"; do
+    for file_info in "${capture_files_map[@]}"; do
         local file="${file_info%%:*}"
-        if [ -f "$test_dir/$file" ]; then
+        if [ -f "$test_dir/$file" ] && [[ "$file" == *.pcap ]]; then
             echo "  tcpdump -r $test_dir/$file -vvn"
             break
         fi
     done
     echo "  # Compare statistics:"
     echo "  diff $test_dir/stats_before.txt $test_dir/stats_after.txt"
-    echo "  # View traces (note: may be empty if programs don't use debug output):"
-    echo "  cat $test_dir/bpf_trace.log"
+    echo "  # View traces (enhanced BPF analysis):"
+    echo "  cat $test_dir/bpf_trace_enhanced.log"
 }
 
 # Quick health check
