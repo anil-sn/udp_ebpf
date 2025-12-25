@@ -100,6 +100,33 @@ start() {
         fi
         cd ..
         
+        # Validate critical BPF maps
+        echo -e "${BLUE}Validating BPF maps...${NC}"
+        
+        # Check NAT map
+        NAT_ENTRIES=$(sudo bpftool map dump name nat_map 2>/dev/null | grep -c "key")
+        if [ "$NAT_ENTRIES" -gt 0 ]; then
+            echo -e "${GREEN}✓ NAT map: $NAT_ENTRIES rules loaded${NC}"
+            sudo bpftool map dump name nat_map | head -10
+        else
+            echo -e "${RED}✗ NAT map: Empty or missing${NC}"
+        fi
+        
+        # Check IP allowlist
+        IP_ENTRIES=$(sudo bpftool map dump name ip_allowlist 2>/dev/null | grep -c "key")
+        if [ "$IP_ENTRIES" -gt 0 ]; then
+            echo -e "${GREEN}✓ IP allowlist: $IP_ENTRIES IPs loaded${NC}"
+        else
+            echo -e "${RED}✗ IP allowlist: Empty or missing${NC}"
+        fi
+        
+        # Check stats map
+        if sudo bpftool map show name stats_map > /dev/null 2>&1; then
+            echo -e "${GREEN}✓ Stats map: Available${NC}"
+        else
+            echo -e "${RED}✗ Stats map: Missing${NC}"
+        fi
+        
         sleep 1
         fix_terminal
     else
