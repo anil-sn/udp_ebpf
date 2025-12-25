@@ -120,6 +120,35 @@
 #define DEBUG_LEVEL_INFO               2            /* Informational messages */
 #define DEBUG_LEVEL_DEBUG              3            /* Detailed debug output */
 
+/* Global debug level (set at compile time or runtime) */
+extern int current_debug_level;
+
+/* Debug logging macros */
+#define LOG_ERROR(fmt, ...) \
+    do { if (current_debug_level >= DEBUG_LEVEL_ERROR) \
+        printf("[ERROR] " fmt "\n", ##__VA_ARGS__); } while(0)
+
+#define LOG_INFO(fmt, ...) \
+    do { if (current_debug_level >= DEBUG_LEVEL_INFO) \
+        printf("[INFO] " fmt "\n", ##__VA_ARGS__); } while(0)
+
+#define LOG_DEBUG(fmt, ...) \
+    do { if (current_debug_level >= DEBUG_LEVEL_DEBUG) \
+        printf("[DEBUG] " fmt "\n", ##__VA_ARGS__); } while(0)
+
+/* Packet tracing macros */
+#define TRACE_PACKET(fmt, ...) \
+    do { if (current_debug_level >= DEBUG_LEVEL_DEBUG) \
+        printf("[TRACE] " fmt "\n", ##__VA_ARGS__); } while(0)
+
+#define TRACE_VXLAN(fmt, ...) \
+    do { if (current_debug_level >= DEBUG_LEVEL_INFO) \
+        printf("[VXLAN] " fmt "\n", ##__VA_ARGS__); } while(0)
+
+#define TRACE_NAT(fmt, ...) \
+    do { if (current_debug_level >= DEBUG_LEVEL_INFO) \
+        printf("[NAT] " fmt "\n", ##__VA_ARGS__); } while(0)
+
 /* Statistics Intervals */
 #define FAST_STATS_INTERVAL            1            /* Fast statistics (seconds) */
 #define NORMAL_STATS_INTERVAL          5            /* Normal statistics (seconds) */

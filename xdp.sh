@@ -529,6 +529,162 @@ stats() {
     fi
 }
 
+# Test function for end-to-end packet tracing
+test() {
+    echo -e "${GREEN}XDP VXLAN Pipeline End-to-End Testing${NC}"
+    echo "======================================"
+    
+    # Check if pipeline is running
+    XDP_PROGS=$(sudo bpftool prog list 2>/dev/null | grep -c "vxlan_pipeline_main" || echo "0")
+    if [ "$XDP_PROGS" -eq "0" ]; then
+        echo -e "${RED}✗ XDP pipeline not running. Start with: ./xdp.sh start${NC}"
+        return 1
+    fi
+    
+    echo -e "${GREEN}✓ XDP pipeline is running${NC}"
+    
+    # Create test output directory
+    TEST_DIR="/tmp/xdp_test_$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$TEST_DIR"
+    echo -e "${YELLOW}Test outputs will be saved to: $TEST_DIR${NC}"
+    
+    # Get baseline statistics
+    echo -e "\n${YELLOW}Capturing baseline statistics...${NC}"
+    ./xdp.sh stats > "$TEST_DIR/stats_before.txt" 2>/dev/null
+    
+    # Extract baseline counters for comparison
+    BASELINE_RX=$(sudo bpftool map dump name stats_map 2>/dev/null | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 0) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
+    BASELINE_VXLAN=$(sudo bpftool map dump name stats_map 2>/dev/null | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 5) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
+    BASELINE_NAT=$(sudo bpftool map dump name stats_map 2>/dev/null | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 6) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
+    
+    echo "Baseline - RX: $BASELINE_RX, VXLAN: $BASELINE_VXLAN, NAT: $BASELINE_NAT"
+    
+    # Enable debug logging temporarily
+    ORIGINAL_DEBUG=$(grep "DEBUG_LEVEL=" .env | cut -d'=' -f2 | tr -d '"')
+    echo -e "\n${YELLOW}Enabling debug logging (level 3)...${NC}"
+    sed -i 's/DEBUG_LEVEL=".*"/DEBUG_LEVEL="3"/' .env
+    
+    # Start packet captures
+    echo -e "\n${YELLOW}Starting packet captures...${NC}"
+    
+    # Ingress capture (VXLAN traffic on ens5)
+    echo "Capturing ingress VXLAN traffic..."
+    sudo tcpdump -i "$INTERFACE" "port 4789" -w "$TEST_DIR/ingress_vxlan.pcap" -c 50 &
+    INGRESS_PID=$!
+    
+    # Egress capture (processed traffic on ens6)  
+    echo "Capturing egress traffic..."
+    sudo tcpdump -i "$TARGET_INTERFACE" -w "$TEST_DIR/egress.pcap" -c 50 &
+    EGRESS_PID=$!
+    
+    # BPF trace capture
+    echo "Starting BPF trace logging..."
+    sudo cat /sys/kernel/debug/tracing/trace_pipe | grep -E "(vxlan|nat|trace)" > "$TEST_DIR/bpf_trace.log" &
+    TRACE_PID=$!
+    
+    echo -e "\n${GREEN}✓ Monitoring started${NC}"
+    echo "┌─────────────────────────────────────────────────┐"
+    echo "│                 LIVE MONITORING                 │"
+    echo "├─────────────────────────────────────────────────┤"
+    echo "│ Ingress (ens5):    Capturing VXLAN (port 4789) │"
+    echo "│ Egress (ens6):     Capturing processed traffic │"  
+    echo "│ BPF Traces:        Kernel debug logs           │"
+    echo "│ Statistics:        Real-time counters          │"
+    echo "└─────────────────────────────────────────────────┘"
+    
+    # Monitor for specified duration
+    TEST_DURATION=30
+    echo -e "\n${YELLOW}Monitoring for $TEST_DURATION seconds...${NC}"
+    echo "Waiting for real VXLAN packets (you can send traffic now)..."
+    
+    for i in $(seq 1 $TEST_DURATION); do
+        # Show current statistics every 5 seconds
+        if [ $((i % 5)) -eq 0 ]; then
+            CURRENT_RX=$(sudo bpftool map dump name stats_map 2>/dev/null | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 0) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
+            CURRENT_VXLAN=$(sudo bpftool map dump name stats_map 2>/dev/null | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 5) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
+            CURRENT_NAT=$(sudo bpftool map dump name stats_map 2>/dev/null | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 6) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
+            
+            NEW_RX=$((CURRENT_RX - BASELINE_RX))
+            NEW_VXLAN=$((CURRENT_VXLAN - BASELINE_VXLAN))
+            NEW_NAT=$((CURRENT_NAT - BASELINE_NAT))
+            
+            printf "\r[%02d/%02d] New packets - RX: %d, VXLAN: %d, NAT: %d" $i $TEST_DURATION $NEW_RX $NEW_VXLAN $NEW_NAT
+        else
+            printf "\r[%02d/%02d] Monitoring..." $i $TEST_DURATION
+        fi
+        sleep 1
+    done
+    
+    echo -e "\n\n${YELLOW}Stopping captures...${NC}"
+    
+    # Stop all captures gracefully
+    sudo kill -TERM $INGRESS_PID 2>/dev/null || true
+    sudo kill -TERM $EGRESS_PID 2>/dev/null || true  
+    sudo kill -TERM $TRACE_PID 2>/dev/null || true
+    
+    # Wait for captures to finish
+    wait $INGRESS_PID 2>/dev/null || true
+    wait $EGRESS_PID 2>/dev/null || true
+    
+    # Get final statistics
+    echo "Capturing final statistics..."
+    ./xdp.sh stats > "$TEST_DIR/stats_after.txt" 2>/dev/null
+    
+    # Restore original debug level
+    sed -i "s/DEBUG_LEVEL=\".*\"/DEBUG_LEVEL=\"$ORIGINAL_DEBUG\"/" .env
+    
+    # Analysis and results
+    echo -e "\n${GREEN}Test Results Analysis${NC}"
+    echo "===================="
+    
+    # Calculate packet deltas
+    FINAL_RX=$(sudo bpftool map dump name stats_map 2>/dev/null | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 0) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
+    FINAL_VXLAN=$(sudo bpftool map dump name stats_map 2>/dev/null | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 5) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
+    FINAL_NAT=$(sudo bpftool map dump name stats_map 2>/dev/null | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 6) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
+    
+    TOTAL_NEW_RX=$((FINAL_RX - BASELINE_RX))
+    TOTAL_NEW_VXLAN=$((FINAL_VXLAN - BASELINE_VXLAN))
+    TOTAL_NEW_NAT=$((FINAL_NAT - BASELINE_NAT))
+    
+    echo "Packets processed during test:"
+    echo "  Total RX:        $TOTAL_NEW_RX packets"
+    echo "  VXLAN processed: $TOTAL_NEW_VXLAN packets"
+    echo "  NAT applied:     $TOTAL_NEW_NAT packets"
+    
+    # Check capture files
+    echo -e "\nCapture file analysis:"
+    if [ -f "$TEST_DIR/ingress_vxlan.pcap" ]; then
+        INGRESS_COUNT=$(tcpdump -r "$TEST_DIR/ingress_vxlan.pcap" 2>/dev/null | wc -l)
+        echo "  Ingress VXLAN:   $INGRESS_COUNT packets captured"
+    fi
+    
+    if [ -f "$TEST_DIR/egress.pcap" ]; then
+        EGRESS_COUNT=$(tcpdump -r "$TEST_DIR/egress.pcap" 2>/dev/null | wc -l)
+        echo "  Egress packets:  $EGRESS_COUNT packets captured"
+    fi
+    
+    # Show trace log summary
+    if [ -f "$TEST_DIR/bpf_trace.log" ]; then
+        TRACE_LINES=$(wc -l < "$TEST_DIR/bpf_trace.log")
+        echo "  BPF trace logs:  $TRACE_LINES lines captured"
+    fi
+    
+    echo -e "\n${GREEN}✓ Test completed successfully!${NC}"
+    echo -e "${YELLOW}Test outputs saved in: $TEST_DIR${NC}"
+    echo ""
+    echo "Available files:"
+    echo "  • ingress_vxlan.pcap - Raw VXLAN packets from ens5"
+    echo "  • egress.pcap       - Processed packets to ens6"
+    echo "  • bpf_trace.log     - Kernel BPF debug traces"
+    echo "  • stats_before.txt  - Statistics before test"
+    echo "  • stats_after.txt   - Statistics after test"
+    echo ""
+    echo "Analysis commands:"
+    echo "  tcpdump -r $TEST_DIR/ingress_vxlan.pcap -vvn"
+    echo "  tcpdump -r $TEST_DIR/egress.pcap -vvn"
+    echo "  diff $TEST_DIR/stats_before.txt $TEST_DIR/stats_after.txt"
+}
+
 # Ensure terminal is fixed on exit
 trap fix_terminal EXIT
 
@@ -537,8 +693,9 @@ case "${1:-status}" in
     "stop") stop ;;
     "status") status ;;
     "stats") stats ;;
+    "test") test ;;
     "monitor") monitor ;;
     "clean") clean ;;
     "restart") stop; sleep 1; start ;;
-    *) echo "Usage: $0 [start|stop|status|stats|monitor|clean|restart]" ;;
+    *) echo "Usage: $0 [start|stop|status|stats|test|monitor|clean|restart]" ;;
 esac
