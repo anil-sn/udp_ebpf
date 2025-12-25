@@ -138,15 +138,27 @@ run_end_to_end_test() {
             ;;
     esac
     
-    # Enhanced BPF trace capture with intelligent detection
+    # Enhanced BPF trace capture with intelligent detection and error handling
     local trace_available=false
     local trace_method="none"
+    local bpftool_accessible=false
+    
+    # Check bpftool permissions first
+    if command -v bpftool >/dev/null 2>&1; then
+        # Test bpftool access with timeout
+        if timeout 3 bpftool prog show >/dev/null 2>&1; then
+            bpftool_accessible=true
+        elif timeout 3 sudo bpftool prog show >/dev/null 2>&1; then
+            bpftool_accessible=true
+            # Note: will need sudo for actual commands
+        fi
+    fi
     
     # Check multiple trace sources in order of preference
     if [ -r "/sys/kernel/debug/tracing/trace_pipe" ] && [ -w "/sys/kernel/debug/tracing/trace" ]; then
         trace_available=true
         trace_method="ftrace"
-    elif command -v bpftool >/dev/null 2>&1; then
+    elif [ "$bpftool_accessible" = "true" ]; then
         trace_available=true
         trace_method="bpftool"
     elif [ -r "/sys/kernel/debug/tracing/events/bpf/enable" ]; then
@@ -154,47 +166,90 @@ run_end_to_end_test() {
         trace_method="events"
     fi
     
-    # Start appropriate tracing method
+    # Start appropriate tracing method with robust error handling
     local trace_pid=0
     if [ "$trace_available" = "true" ]; then
         timeout $monitoring_duration bash -c "
             case '$trace_method' in
                 'ftrace')
-                    # Enhanced ftrace with XDP-specific filters
-                    echo 1 > /sys/kernel/debug/tracing/events/xdp/enable 2>/dev/null || true
-                    echo 1 > /sys/kernel/debug/tracing/events/net/enable 2>/dev/null || true
-                    cat /sys/kernel/debug/tracing/trace_pipe 2>/dev/null | \
-                        grep -E '(vxlan|xdp|redirect|nat)' > '$test_dir/bpf_trace_enhanced.log' 2>/dev/null
+                    # Enhanced ftrace with XDP-specific filters and error handling
+                    {
+                        echo 1 > /sys/kernel/debug/tracing/events/xdp/enable 2>/dev/null || true
+                        echo 1 > /sys/kernel/debug/tracing/events/net/enable 2>/dev/null || true
+                        timeout $monitoring_duration cat /sys/kernel/debug/tracing/trace_pipe 2>/dev/null | \
+                            grep -E '(vxlan|xdp|redirect|nat)' > '$test_dir/bpf_trace_enhanced.log' 2>/dev/null || \
+                            echo 'Ftrace: No matching events captured' > '$test_dir/bpf_trace_enhanced.log'
+                    } 2>/dev/null
                     ;;
                 'bpftool')
-                    # Use bpftool for program analysis
-                    echo 'BPF Program Analysis:' > '$test_dir/bpf_trace_enhanced.log'
-                    bpftool prog list | grep -E '(xdp|vxlan)' >> '$test_dir/bpf_trace_enhanced.log' 2>/dev/null || true
-                    echo 'BPF Map Contents:' >> '$test_dir/bpf_trace_enhanced.log'
-                    bpftool map show | head -20 >> '$test_dir/bpf_trace_enhanced.log' 2>/dev/null || true
+                    # Use bpftool with proper error handling and permission management
+                    {
+                        echo 'BPF Program Analysis:' > '$test_dir/bpf_trace_enhanced.log'
+                        
+                        # Try without sudo first, then with sudo
+                        if ! timeout 5 bpftool prog list 2>/dev/null | grep -E '(xdp|vxlan)' >> '$test_dir/bpf_trace_enhanced.log' 2>/dev/null; then
+                            if ! timeout 5 sudo bpftool prog list 2>/dev/null | grep -E '(xdp|vxlan)' >> '$test_dir/bpf_trace_enhanced.log' 2>/dev/null; then
+                                echo 'No XDP/VXLAN programs found or permission denied' >> '$test_dir/bpf_trace_enhanced.log'
+                            fi
+                        fi
+                        
+                        echo '' >> '$test_dir/bpf_trace_enhanced.log'
+                        echo 'BPF Map Analysis:' >> '$test_dir/bpf_trace_enhanced.log'
+                        
+                        # Try maps with error handling
+                        if ! timeout 5 bpftool map show 2>/dev/null | head -10 >> '$test_dir/bpf_trace_enhanced.log' 2>/dev/null; then
+                            if ! timeout 5 sudo bpftool map show 2>/dev/null | head -10 >> '$test_dir/bpf_trace_enhanced.log' 2>/dev/null; then
+                                echo 'No maps accessible or permission denied' >> '$test_dir/bpf_trace_enhanced.log'
+                            fi
+                        fi
+                        
+                        # Add system BPF info
+                        echo '' >> '$test_dir/bpf_trace_enhanced.log'
+                        echo 'System BPF Status:' >> '$test_dir/bpf_trace_enhanced.log'
+                        echo \"BPF filesystem: \$([ -d /sys/fs/bpf ] && echo 'Available' || echo 'Not mounted')\" >> '$test_dir/bpf_trace_enhanced.log'
+                        echo \"Pinned objects: \$(ls /sys/fs/bpf/ 2>/dev/null | wc -l || echo '0') items\" >> '$test_dir/bpf_trace_enhanced.log'
+                    } 2>/dev/null
                     sleep $monitoring_duration
                     ;;
                 'events')
-                    # Use tracing events
-                    echo 1 > /sys/kernel/debug/tracing/events/bpf/enable 2>/dev/null || true
-                    cat /sys/kernel/debug/tracing/trace_pipe 2>/dev/null | \
-                        head -100 > '$test_dir/bpf_trace_enhanced.log' 2>/dev/null
+                    # Use tracing events with error handling
+                    {
+                        echo 1 > /sys/kernel/debug/tracing/events/bpf/enable 2>/dev/null || true
+                        timeout $monitoring_duration cat /sys/kernel/debug/tracing/trace_pipe 2>/dev/null | \
+                            head -100 > '$test_dir/bpf_trace_enhanced.log' 2>/dev/null || \
+                            echo 'Tracing events: No data captured' > '$test_dir/bpf_trace_enhanced.log'
+                    } 2>/dev/null
                     ;;
             esac
         " &
         trace_pid=$!
         print_color "green" "✓ Enhanced BPF tracing active (method: $trace_method)"
     else
-        echo "BPF tracing not available - system information collection only" > "$test_dir/bpf_trace_enhanced.log"
+        # Comprehensive fallback when no tracing is available
         {
-            echo "=== System Information ==="
-            echo "Kernel version: $(uname -r)"
-            echo "BPF support: $([ -d /sys/fs/bpf ] && echo 'Yes' || echo 'No')"
-            echo "Interfaces:"
-            ip link show | grep -E '^[0-9]+:' | head -5
-            echo "=== End System Info ==="
-        } >> "$test_dir/bpf_trace_enhanced.log"
-        print_color "yellow" "⚠ BPF tracing unavailable - collecting system info only"
+            echo "=== BPF System Analysis (Tracing Unavailable) ==="
+            echo "Date: $(date)"
+            echo "Kernel: $(uname -r)"
+            echo "Architecture: $(uname -m)"
+            echo ""
+            echo "BPF Support Analysis:"
+            echo "  BPF filesystem: $([ -d /sys/fs/bpf ] && echo 'Available' || echo 'Not mounted')"
+            echo "  Debug filesystem: $([ -d /sys/kernel/debug ] && echo 'Available' || echo 'Not mounted')"
+            echo "  bpftool available: $(command -v bpftool >/dev/null && echo 'Yes' || echo 'No')"
+            echo ""
+            echo "Interface Information:"
+            ip link show | grep -E '^[0-9]+:' | head -5 2>/dev/null || echo "  Could not list interfaces"
+            echo ""
+            echo "Process Information:"
+            pgrep -f 'vxlan_loader' >/dev/null && echo "  vxlan_loader: Running" || echo "  vxlan_loader: Not running"
+            pgrep -f 'packet_injector' >/dev/null && echo "  packet_injector: Running" || echo "  packet_injector: Not running"
+            echo ""
+            echo "=== Recommendation ==="
+            echo "For enhanced debugging, run with:"
+            echo "  sudo mount -t debugfs none /sys/kernel/debug"
+            echo "  sudo ./xdp.sh test"
+        } > "$test_dir/bpf_trace_enhanced.log"
+        print_color "yellow" "⚠ BPF tracing unavailable - comprehensive system analysis collected"
     fi
     
     capture_pids+=("$trace_pid:trace")
@@ -273,7 +328,7 @@ run_end_to_end_test() {
                 status_color="yellow"
             fi
             
-            # Enhanced progress display
+            # Enhanced progress display with bounds checking
             printf "\r\033[K"  # Clear line
             printf "[%02d/%02d] " $i $monitoring_duration
             case "$status_color" in
@@ -282,9 +337,19 @@ run_end_to_end_test() {
                 "blue") printf "\033[34m" ;;
                 "green") printf "\033[32m" ;;
             esac
+            
+            # Calculate delta with bounds checking
+            local prev_delta=0
+            if [ "${#pps_history[@]}" -gt 1 ]; then
+                local prev_index=$((${#pps_history[@]} - 2))
+                if [ "$prev_index" -ge 0 ]; then
+                    prev_delta=$((${pps_history[$prev_index]} * 2))
+                fi
+            fi
+            local rate_change=$((delta_rx - prev_delta))
+            
             printf "Δ: RX:%d(+%d) VXLAN:%d NAT:%d | Rate:%d pps | Eff:%.1f%% | %s" \
-                $delta_rx $((delta_rx - (i > 2 ? ${pps_history[-2]}*2 : 0))) \
-                $delta_vxlan $delta_nat $inst_pps $efficiency "$status"
+                $delta_rx $rate_change $delta_vxlan $delta_nat $inst_pps $efficiency "$status"
             printf "\033[0m"  # Reset color
         else
             printf "\r[%02d/%02d] Processing..." $i $monitoring_duration
@@ -348,17 +413,54 @@ run_end_to_end_test() {
     sleep 2
     sync
     
-    # Get final statistics with timeout protection
+    # Get final statistics with enhanced error handling and retries
     echo "Capturing final statistics..."
-    timeout 5 bash -c "show_statistics > '$test_dir/stats_after.txt' 2>/dev/null" || {
-        echo "Statistics collection timed out" > "$test_dir/stats_after.txt"
+    
+    # Save current baseline for backup
+    show_statistics > "$test_dir/stats_before.txt" 2>/dev/null || {
+        echo "Baseline statistics collection failed" > "$test_dir/stats_before.txt"
     }
     
-    # Calculate comprehensive deltas with error checking
-    local final_rx=$(timeout 3 bash -c "get_statistics 'total'" 2>/dev/null || echo "$baseline_rx")
-    local final_vxlan=$(timeout 3 bash -c "get_statistics 'vxlan'" 2>/dev/null || echo "$baseline_vxlan")
-    local final_nat=$(timeout 3 bash -c "get_statistics 'nat'" 2>/dev/null || echo "$baseline_nat")
-    local final_bytes=$(timeout 3 bash -c "get_statistics 'bytes'" 2>/dev/null || echo "$baseline_bytes")
+    # Multiple attempts to get final statistics
+    local stats_success=false
+    for attempt in 1 2 3; do
+        if timeout 5 bash -c "show_statistics > '$test_dir/stats_after_attempt_$attempt.txt' 2>/dev/null"; then
+            cp "$test_dir/stats_after_attempt_$attempt.txt" "$test_dir/stats_after.txt"
+            stats_success=true
+            break
+        else
+            print_color "yellow" "Statistics attempt $attempt failed, retrying..."
+            sleep 1
+        fi
+    done
+    
+    if [ "$stats_success" = "false" ]; then
+        echo "Final statistics collection failed after 3 attempts" > "$test_dir/stats_after.txt"
+        print_color "red" "⚠ Statistics collection failed - using baseline estimates"
+    fi
+    
+    # Calculate comprehensive deltas with enhanced error checking and fallbacks
+    local final_rx final_vxlan final_nat final_bytes
+    
+    if [ "$stats_success" = "true" ]; then
+        final_rx=$(timeout 3 bash -c "get_statistics 'total'" 2>/dev/null || echo "$baseline_rx")
+        final_vxlan=$(timeout 3 bash -c "get_statistics 'vxlan'" 2>/dev/null || echo "$baseline_vxlan")
+        final_nat=$(timeout 3 bash -c "get_statistics 'nat'" 2>/dev/null || echo "$baseline_nat")
+        final_bytes=$(timeout 3 bash -c "get_statistics 'bytes'" 2>/dev/null || echo "$baseline_bytes")
+    else
+        # Fallback to baseline if statistics collection completely failed
+        final_rx="$baseline_rx"
+        final_vxlan="$baseline_vxlan"
+        final_nat="$baseline_nat"
+        final_bytes="$baseline_bytes"
+        print_color "yellow" "Using baseline values due to statistics collection failure"
+    fi
+    
+    # Ensure all values are numeric
+    final_rx=${final_rx:-0}
+    final_vxlan=${final_vxlan:-0}
+    final_nat=${final_nat:-0}
+    final_bytes=${final_bytes:-0}
     
     local total_new_rx=$((final_rx - baseline_rx))
     local total_new_vxlan=$((final_vxlan - baseline_vxlan))
