@@ -349,7 +349,6 @@ run_end_to_end_test() {
     echo "  # View traces:"
     echo "  cat $test_dir/bpf_trace.log"
 }
-}
 
 # Quick health check
 quick_health_check() {
