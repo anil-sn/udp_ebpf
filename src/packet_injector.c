@@ -919,6 +919,7 @@ static void signal_handler(int sig __attribute__((unused))) {
  * - Linear scaling with CPU core count
  */
 int main(int argc, char **argv) {
+
     /*
      * COMMAND LINE ARGUMENT VALIDATION
      * ================================
@@ -1016,6 +1017,7 @@ int main(int argc, char **argv) {
     if (init_workers(target_interface) < 0) {
         printf("[!] Failed to initialize worker threads\n");
         return 1;
+    }
     
     /*
      * BPF PROGRAM LOADING AND INITIALIZATION
