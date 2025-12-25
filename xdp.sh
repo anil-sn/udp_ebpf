@@ -486,7 +486,10 @@ info() {
         sudo bpftool prog list 2>/dev/null | grep "vxlan_pipeline_main" | while read -r line; do
             PROG_ID=$(echo "$line" | awk '{print $1}' | tr -d ':')
             TAG=$(echo "$line" | grep -o 'tag [a-f0-9]*' | cut -d' ' -f2)
-            SIZE=$(echo "$line" | grep -o 'xlated [0-9]*B' | cut -d' ' -f2 || echo "N/A")
+            
+            # Extract size (xlated bytes)
+            SIZE=$(echo "$line" | grep -o 'xlated [0-9]*B' | cut -d' ' -f2)
+            [ -z "$SIZE" ] && SIZE="N/A"
             
             # Count maps by parsing map_ids
             MAP_IDS_RAW=$(echo "$line" | grep -o 'map_ids [0-9,]*' | cut -d' ' -f2)
@@ -496,11 +499,14 @@ info() {
                 MAP_COUNT=0
             fi
             
-            # Get process info - extract just the process name
-            PID_INFO=$(echo "$line" | sed -n 's/.*pids \([^(]*\).*/\1/p' | tr -d ' ' || echo "N/A")
+            # Extract process name from pids line
+            PID_INFO=$(echo "$line" | grep -o 'pids [^(]*' | cut -d' ' -f2-)
+            if [ -z "$PID_INFO" ] || [ "$PID_INFO" = "systemd(1)" ]; then
+                PID_INFO="kernel"
+            fi
             
             printf "│ %4s │ %7s │ %14s │ %7d │ %8s │ %-11s │\n" \
-                "$PROG_ID" "${TAG:0:7}" "${SIZE:-N/A}" "$MAP_COUNT" "${PID_INFO:-N/A}" "Active"
+                "$PROG_ID" "${TAG:0:7}" "$SIZE" "$MAP_COUNT" "${PID_INFO}" "Active"
         done
         echo -e "└──────┴─────────┴────────────────┴─────────┴──────────┴─────────────┘"
     else
@@ -519,39 +525,49 @@ info() {
     # NAT Rules Table
     echo -e "\n${YELLOW}=== NAT CONFIGURATION ===${NC}"
     
-    # Try to get NAT data and check if any maps have elements
-    NAT_HAS_DATA=false
-    NAT_ENTRIES_FILE=$(mktemp)
+    # Get NAT data from first available map with entries
+    NAT_FOUND=false
     
-    sudo bpftool map dump name nat_map 2>/dev/null | jq -r '.[] | select(.elements != null) | select((.elements | length) > 0) | .elements[] | [.key.src_port, .value.target_ip, .value.target_port] | @csv' 2>/dev/null > "$NAT_ENTRIES_FILE"
-    
-    if [ -s "$NAT_ENTRIES_FILE" ]; then
-        NAT_HAS_DATA=true
-        NAT_COUNT=$(wc -l < "$NAT_ENTRIES_FILE")
-        echo "Active NAT Rules: $NAT_COUNT"
-        echo ""
-        echo "┌─────────────┬─────────────────┬──────────────┬────────────────────┐"
-        echo "│ Source Port │   Target IP     │ Target Port  │      Status        │"
-        echo "├─────────────┼─────────────────┼──────────────┼────────────────────┤"
-        
-        while IFS=',' read -r src_port target_ip_int target_port; do
-            # Remove quotes from CSV output
-            src_port=$(echo "$src_port" | tr -d '"')
-            target_ip_int=$(echo "$target_ip_int" | tr -d '"')
-            target_port=$(echo "$target_port" | tr -d '"')
-            
-            if [ -n "$src_port" ] && [ -n "$target_ip_int" ] && [ -n "$target_port" ]; then
-                TARGET_IP=$(int_to_ip "$target_ip_int")
-                printf "│    %5d    │ %15s │    %6d    │       Active       │\n" \
-                    "$src_port" "$TARGET_IP" "$target_port"
+    # Try each NAT map to find one with data
+    for map_id in $(sudo bpftool map list 2>/dev/null | grep "nat_map" | awk '{print $1}' | tr -d ':'); do
+        NAT_DATA=$(sudo bpftool map dump id "$map_id" 2>/dev/null)
+        if [ -n "$NAT_DATA" ]; then
+            # Check if this map has actual entries
+            HAS_ENTRIES=$(echo "$NAT_DATA" | grep -q '"elements".*\[' && echo "true" || echo "false")
+            if [ "$HAS_ENTRIES" = "true" ]; then
+                NAT_FOUND=true
+                
+                # Extract entries using simpler method
+                NAT_COUNT=$(echo "$NAT_DATA" | grep -o '"src_port":[0-9]*' | wc -l)
+                
+                if [ "$NAT_COUNT" -gt 0 ]; then
+                    echo "Active NAT Rules: $NAT_COUNT"
+                    echo ""
+                    echo "┌─────────────┬─────────────────┬──────────────┬────────────────────┐"
+                    echo "│ Source Port │   Target IP     │ Target Port  │      Status        │"
+                    echo "├─────────────┼─────────────────┼──────────────┼────────────────────┤"
+                    
+                    # Extract values using grep/sed
+                    SRC_PORTS=$(echo "$NAT_DATA" | grep -o '"src_port":[0-9]*' | cut -d':' -f2)
+                    TARGET_IPS=$(echo "$NAT_DATA" | grep -o '"target_ip":[0-9]*' | cut -d':' -f2)
+                    TARGET_PORTS=$(echo "$NAT_DATA" | grep -o '"target_port":[0-9]*' | cut -d':' -f2)
+                    
+                    # Display each rule
+                    paste <(echo "$SRC_PORTS") <(echo "$TARGET_IPS") <(echo "$TARGET_PORTS") | while read -r src_port target_ip_int target_port; do
+                        if [ -n "$src_port" ] && [ -n "$target_ip_int" ] && [ -n "$target_port" ]; then
+                            TARGET_IP=$(int_to_ip "$target_ip_int")
+                            printf "│    %5d    │ %15s │    %6d    │       Active       │\n" \
+                                "$src_port" "$TARGET_IP" "$target_port"
+                        fi
+                    done
+                    echo "└─────────────┴─────────────────┴──────────────┴────────────────────┘"
+                fi
+                break
             fi
-        done < "$NAT_ENTRIES_FILE"
-        echo "└─────────────┴─────────────────┴──────────────┴────────────────────┘"
-    fi
+        fi
+    done
     
-    rm -f "$NAT_ENTRIES_FILE"
-    
-    if [ "$NAT_HAS_DATA" = false ]; then
+    if [ "$NAT_FOUND" = false ]; then
         echo "No NAT rules configured"
     fi
     
@@ -629,35 +645,53 @@ info() {
     
     # Per-CPU Statistics
     echo -e "\n${YELLOW}=== PER-CPU PACKET STATISTICS ===${NC}"
-    STATS_DATA=$(sudo bpftool map dump name stats_map 2>/dev/null)
-    if [ -n "$STATS_DATA" ]; then
+    
+    # Get stats from first available map with data
+    STATS_FOUND=false
+    
+    # Try each stats map to find one with data
+    for map_id in $(sudo bpftool map list 2>/dev/null | grep "stats_map" | awk '{print $1}' | tr -d ':'); do
+        STATS_DATA=$(sudo bpftool map dump id "$map_id" 2>/dev/null)
+        if [ -n "$STATS_DATA" ]; then
+            # Check if this map has actual entries with non-zero values
+            HAS_DATA=$(echo "$STATS_DATA" | grep -q '"value":[1-9]' && echo "true" || echo "false")
+            if [ "$HAS_DATA" = "true" ]; then
+                STATS_FOUND=true
+                
+                echo "┌─────┬─────────────┬─────────────┬─────────────┬─────────────┬─────────────┐"
+                echo "│ CPU │ RX Packets  │  Processed  │   Dropped   │    VXLAN    │ NAT Applied │"
+                echo "├─────┼─────────────┼─────────────┼─────────────┼─────────────┼─────────────┤"
+                
+                # Extract per-CPU stats for active CPUs
+                for cpu in 0 1 2 3 4 5 6 7; do
+                    # Get stats for each metric by key and CPU
+                    CPU_RX=$(echo "$STATS_DATA" | grep -A20 '"key":0' | grep '"cpu":'$cpu | grep -o '"value":[0-9]*' | cut -d':' -f2 || echo "0")
+                    CPU_PROC=$(echo "$STATS_DATA" | grep -A20 '"key":1' | grep '"cpu":'$cpu | grep -o '"value":[0-9]*' | cut -d':' -f2 || echo "0")
+                    CPU_DROP=$(echo "$STATS_DATA" | grep -A20 '"key":4' | grep '"cpu":'$cpu | grep -o '"value":[0-9]*' | cut -d':' -f2 || echo "0")
+                    CPU_VXLAN=$(echo "$STATS_DATA" | grep -A20 '"key":5' | grep '"cpu":'$cpu | grep -o '"value":[0-9]*' | cut -d':' -f2 || echo "0")
+                    CPU_NAT=$(echo "$STATS_DATA" | grep -A20 '"key":6' | grep '"cpu":'$cpu | grep -o '"value":[0-9]*' | cut -d':' -f2 || echo "0")
+                    
+                    # Only show CPUs with activity
+                    if [ "$CPU_RX" -gt 0 ] || [ "$CPU_PROC" -gt 0 ] || [ "$CPU_DROP" -gt 0 ] || [ "$CPU_VXLAN" -gt 0 ] || [ "$CPU_NAT" -gt 0 ]; then
+                        printf "│  %d  │ %11s │ %11s │ %11s │ %11s │ %11s │\n" "$cpu" \
+                            "$(printf "%'d" "$CPU_RX" 2>/dev/null || echo "$CPU_RX")" \
+                            "$(printf "%'d" "$CPU_PROC" 2>/dev/null || echo "$CPU_PROC")" \
+                            "$(printf "%'d" "$CPU_DROP" 2>/dev/null || echo "$CPU_DROP")" \
+                            "$(printf "%'d" "$CPU_VXLAN" 2>/dev/null || echo "$CPU_VXLAN")" \
+                            "$(printf "%'d" "$CPU_NAT" 2>/dev/null || echo "$CPU_NAT")"
+                    fi
+                done
+                echo "└─────┴─────────────┴─────────────┴─────────────┴─────────────┴─────────────┘"
+                break
+            fi
+        fi
+    done
+    
+    if [ "$STATS_FOUND" = false ]; then
         echo "┌─────┬─────────────┬─────────────┬─────────────┬─────────────┬─────────────┐"
         echo "│ CPU │ RX Packets  │  Processed  │   Dropped   │    VXLAN    │ NAT Applied │"
         echo "├─────┼─────────────┼─────────────┼─────────────┼─────────────┼─────────────┤"
-        
-        # Get the first stats map that has data
-        FIRST_MAP_WITH_DATA=$(echo "$STATS_DATA" | jq -r '[.[] | select(.elements != null and (.elements | length) > 0)] | first | .id' 2>/dev/null)
-        
-        if [ -n "$FIRST_MAP_WITH_DATA" ] && [ "$FIRST_MAP_WITH_DATA" != "null" ]; then
-            for cpu in 0 1 2 3 4 5 6 7; do
-                CPU_RX=$(echo "$STATS_DATA" | jq -r ".[] | select(.id == $FIRST_MAP_WITH_DATA) | .elements[] | select(.key == 0) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
-                CPU_PROC=$(echo "$STATS_DATA" | jq -r ".[] | select(.id == $FIRST_MAP_WITH_DATA) | .elements[] | select(.key == 1) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
-                CPU_DROP=$(echo "$STATS_DATA" | jq -r ".[] | select(.id == $FIRST_MAP_WITH_DATA) | .elements[] | select(.key == 4) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
-                CPU_VXLAN=$(echo "$STATS_DATA" | jq -r ".[] | select(.id == $FIRST_MAP_WITH_DATA) | .elements[] | select(.key == 5) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
-                CPU_NAT=$(echo "$STATS_DATA" | jq -r ".[] | select(.id == $FIRST_MAP_WITH_DATA) | .elements[] | select(.key == 6) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
-            
-                if [ "$CPU_RX" -gt 0 ] || [ "$CPU_PROC" -gt 0 ] || [ "$CPU_DROP" -gt 0 ] || [ "$CPU_VXLAN" -gt 0 ] || [ "$CPU_NAT" -gt 0 ]; then
-                    printf "│  %d  │ %11s │ %11s │ %11s │ %11s │ %11s │\n" "$cpu" \
-                        "$(printf "%'d" "$CPU_RX" 2>/dev/null || echo "$CPU_RX")" \
-                        "$(printf "%'d" "$CPU_PROC" 2>/dev/null || echo "$CPU_PROC")" \
-                        "$(printf "%'d" "$CPU_DROP" 2>/dev/null || echo "$CPU_DROP")" \
-                        "$(printf "%'d" "$CPU_VXLAN" 2>/dev/null || echo "$CPU_VXLAN")" \
-                        "$(printf "%'d" "$CPU_NAT" 2>/dev/null || echo "$CPU_NAT")"
-                fi
-            done
-        fi
         echo "└─────┴─────────────┴─────────────┴─────────────┴─────────────┴─────────────┘"
-    else
         echo "No statistics available"
     fi
     
