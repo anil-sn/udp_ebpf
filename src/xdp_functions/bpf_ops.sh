@@ -63,7 +63,7 @@ dump_bpf_map() {
     esac
 }
 
-# Count entries in BPF map - Fixed to handle multiple maps with same name
+# Count entries in BPF map - FIXED to handle actual bpftool JSON format
 count_bpf_map_entries() {
     local map_name="$1"
     
@@ -77,8 +77,9 @@ count_bpf_map_entries() {
     
     # Check if jq is available for proper JSON parsing
     if command -v jq >/dev/null 2>&1; then
-        # Count entries across ALL maps with this name (sum all non-empty maps)
-        local total_count=$(echo "$map_data" | jq -r 'if (type == "array") then [.[] | select(.elements != null and (.elements | length) > 0) | .elements | length] | add // 0 else 0 end' 2>/dev/null || echo "0")
+        # FIXED: Handle actual bpftool JSON format - array of key-value objects
+        local total_count=$(echo "$map_data" | jq -r 'if (type == "array") then length else 0 end' 2>/dev/null || echo "0")
+        total_count=$(echo "$total_count" | tr -d '\n\r' | tr -d ' ')
         echo "$total_count"
     else
         # Fallback to counting "key" occurrences
