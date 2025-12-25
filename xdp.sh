@@ -111,8 +111,8 @@ stop() {
         fix_terminal  # Immediate fix after force kill
     fi
 
-    # Clean interface
-    sudo ip link set $INTERFACE xdp off 2>/dev/null || true
+    # Clean interface - use xdpgeneric since that's the mode we load in
+    sudo ip link set $INTERFACE xdpgeneric off 2>/dev/null || true
     
     fix_terminal  # Final terminal fix
     echo -e "${GREEN}Stopped and Detached.${NC}"
@@ -124,7 +124,7 @@ clean() {
     sudo pkill -KILL -f "vxlan_loader" 2>/dev/null || true
     fix_terminal  # Immediate fix after pkill
     
-    sudo ip link set $INTERFACE xdp off 2>/dev/null || true
+    sudo ip link set $INTERFACE xdpgeneric off 2>/dev/null || true
     
     # FIX TERMINAL NOW because the kill might have left it raw
     fix_terminal
