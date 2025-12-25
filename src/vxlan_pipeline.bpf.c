@@ -748,21 +748,22 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
             pkt_len = 1500; /* Limit to max packet data size */
         }
         
-        /* Reserve space in ring buffer */
-        __u32 event_size = sizeof(__u32) + sizeof(__u16) + pkt_len;
-        struct packet_event *event = bpf_ringbuf_reserve(&packet_ringbuf, event_size, 0);
+        /* Reserve space in ring buffer using fixed maximum size for BPF verifier */
+        /* Size: sizeof(__u32) + sizeof(__u16) + 1500 bytes = 1506 bytes */
+        struct packet_event *event = bpf_ringbuf_reserve(&packet_ringbuf, 1506, 0);
         if (event) {
             /* Copy packet metadata */
             event->ifindex = *target_ifindex;
+            
+            /* Ensure packet length is within bounds for BPF verifier */
+            if (pkt_len > 1500) pkt_len = 1500;
             event->len = pkt_len;
             
-            /* Copy packet data safely using BPF-verifier friendly loop */
-            if (pkt_len > 0 && data + pkt_len <= data_end && pkt_len <= 1500) {
-                /* Manual copy loop that BPF verifier can validate */
-                for (__u32 i = 0; i < pkt_len && i < 1500; i++) {
-                    if (data + i >= data_end) break;
-                    event->data[i] = ((char*)data)[i];
-                }
+            /* Manual byte-by-byte copy with BPF verifier-friendly bounds checking */
+            for (int i = 0; i < 1500; i++) {
+                if (i >= pkt_len) break;
+                if ((char *)data + i >= (char *)data_end) break;
+                event->data[i] = *((char *)data + i);
             }
             
             /* Submit to userspace */
