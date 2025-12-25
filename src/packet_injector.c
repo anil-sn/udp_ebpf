@@ -15,6 +15,8 @@
  * - Memory prefetching: Reduce cache misses
  */
 
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -22,14 +24,15 @@
 #include <errno.h>
 #include <pthread.h>
 #include <sys/socket.h>
+#include <sys/mman.h>
+#include <sched.h>
+#include <sys/time.h>
+#include <time.h>
 #include <linux/if_packet.h>
 #include <net/ethernet.h>
 #include <net/if.h>
 #include <arpa/inet.h>
 #include <signal.h>
-#include <sys/mman.h>
-#include <sched.h>
-#include <sys/time.h>
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 
@@ -380,7 +383,7 @@ static void* monitor_thread(void *arg) {
 /*
  * Signal handler
  */
-static void signal_handler(int sig) {
+static void signal_handler(int sig __attribute__((unused))) {
     printf("\n[!] Stopping high-performance packet injector...\n");
     running = 0;
 }
