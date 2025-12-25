@@ -127,6 +127,26 @@ start() {
             echo -e "${RED}✗ Stats map: Missing${NC}"
         fi
         
+        # Start packet injector for userspace packet processing
+        echo -e "${BLUE}Starting packet injector...${NC}"
+        cd src
+        nohup sudo ./packet_injector -i $TARGET_INTERFACE \
+            </dev/null >"/tmp/packet_injector.log" 2>&1 &
+        cd ..
+        
+        # Wait a moment for packet_injector startup
+        sleep 2
+        
+        # Verify packet_injector startup
+        INJECTOR_PID=$(pgrep -f "packet_injector.*-i.*$TARGET_INTERFACE" | head -1)
+        if [ -n "$INJECTOR_PID" ]; then
+            echo -e "${GREEN}✓ Packet injector started (PID: $INJECTOR_PID)${NC}"
+            echo -e "${GREEN}Log file: /tmp/packet_injector.log${NC}"
+        else
+            echo -e "${YELLOW}Warning: Packet injector failed to start${NC}"
+            echo -e "${YELLOW}Check log: cat /tmp/packet_injector.log${NC}"
+        fi
+        
         sleep 1
         fix_terminal
     else
@@ -141,8 +161,9 @@ stop() {
     fix_terminal
     echo -e "${BLUE}Stopping Pipeline...${NC}"
     
-    # Kill process if exists
+    # Kill vxlan_loader process if exists
     if pgrep -f "vxlan_loader" > /dev/null; then
+        echo -e "${YELLOW}Stopping vxlan_loader...${NC}"
         sudo pkill -TERM -f "vxlan_loader" 2>/dev/null || true
         fix_terminal  # Immediate fix after pkill
         
@@ -155,6 +176,25 @@ stop() {
         # Force kill
         sudo pkill -KILL -f "vxlan_loader" 2>/dev/null || true
         fix_terminal  # Immediate fix after force kill
+        echo -e "${GREEN}✓ vxlan_loader stopped${NC}"
+    fi
+    
+    # Kill packet_injector process if exists
+    if pgrep -f "packet_injector" > /dev/null; then
+        echo -e "${YELLOW}Stopping packet_injector...${NC}"
+        sudo pkill -TERM -f "packet_injector" 2>/dev/null || true
+        fix_terminal  # Immediate fix after pkill
+        
+        # Wait loop
+        for i in {1..3}; do
+            pgrep -f "packet_injector" > /dev/null || break
+            sleep 1
+        done
+        
+        # Force kill
+        sudo pkill -KILL -f "packet_injector" 2>/dev/null || true
+        fix_terminal  # Immediate fix after force kill
+        echo -e "${GREEN}✓ packet_injector stopped${NC}"
     fi
 
     # Clean interface - use xdpgeneric since that's the mode we load in
@@ -166,8 +206,10 @@ stop() {
 }
 
 clean() {
-    # Aggressive cleanup
+    # Aggressive cleanup of both processes
+    echo -e "${YELLOW}Cleaning up all processes...${NC}"
     sudo pkill -KILL -f "vxlan_loader" 2>/dev/null || true
+    sudo pkill -KILL -f "packet_injector" 2>/dev/null || true
     fix_terminal  # Immediate fix after pkill
     
     sudo ip link set $INTERFACE xdpgeneric off 2>/dev/null || true
@@ -175,26 +217,41 @@ clean() {
     # FIX TERMINAL NOW because the kill might have left it raw
     fix_terminal
     
-    echo -e "${GREEN}Environment Reset.${NC}"
+    echo -e "${GREEN}Environment Reset - All processes stopped.${NC}"
     fix_terminal  # Final fix
 }
 
 status() {
     fix_terminal
     clear
-    echo -e "${CYAN}--- XDP VXLAN STATUS ---${NC}"
+    echo -e "${CYAN}--- XDP VXLAN PIPELINE STATUS ---${NC}"
     
-    PID=$(pgrep -f "vxlan_loader" | head -1)
+    # Check vxlan_loader
+    LOADER_PID=$(pgrep -f "vxlan_loader" | head -1)
     
-    if [ -n "$PID" ]; then
-        echo -e "Service:  ${GREEN}RUNNING${NC} (PID: $PID)"
+    if [ -n "$LOADER_PID" ]; then
+        echo -e "vxlan_loader: ${GREEN}RUNNING${NC} (PID: $LOADER_PID)"
         
         if ip link show $INTERFACE 2>/dev/null | grep -q xdp; then
-            echo -e "XDP Hook: ${GREEN}ATTACHED${NC} ($INTERFACE)"
+            echo -e "XDP Hook:     ${GREEN}ATTACHED${NC} ($INTERFACE)"
         else
-            echo -e "XDP Hook: ${RED}DETACHED${NC} (Error)"
+            echo -e "XDP Hook:     ${RED}DETACHED${NC} (Error)"
         fi
-        
+    else
+        echo -e "vxlan_loader: ${RED}STOPPED${NC}"
+        echo -e "XDP Hook:     ${RED}DETACHED${NC}"
+    fi
+    
+    # Check packet_injector
+    INJECTOR_PID=$(pgrep -f "packet_injector" | head -1)
+    
+    if [ -n "$INJECTOR_PID" ]; then
+        echo -e "packet_injector: ${GREEN}RUNNING${NC} (PID: $INJECTOR_PID)"
+    else
+        echo -e "packet_injector: ${RED}STOPPED${NC}"
+    fi
+    
+    if [ -n "$LOADER_PID" ]; then
         echo ""
         echo -e "${BLUE}Configuration:${NC}"
         echo "  Inbound:  $INTERFACE (Port $SOURCE_PORT)"
