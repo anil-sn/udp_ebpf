@@ -15,6 +15,11 @@ start_pipeline() {
         return 1
     fi
     
+    # CRITICAL: Check for existing XDP programs to prevent duplicates
+    if ! check_existing_xdp_programs; then
+        return 1
+    fi
+    
     # Clean orphans
     print_color "yellow" "Cleaning any orphaned XDP programs..."
     sudo ip link set "$INTERFACE" xdp off 2>/dev/null || true
