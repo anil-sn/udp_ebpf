@@ -17,8 +17,9 @@ run_end_to_end_test() {
     
     print_color "green" "✓ XDP pipeline is running"
     
-    # Create test output directory
-    local test_dir="/tmp/xdp_test_$(date +%Y%m%d_%H%M%S)"
+    # Create unique test output directory
+    local timestamp=$(date +%Y%m%d_%H%M%S_%N | cut -c1-19)
+    local test_dir="/tmp/xdp_test_${timestamp}"
     mkdir -p "$test_dir"
     print_color "yellow" "Test outputs will be saved to: $test_dir"
     
@@ -31,8 +32,18 @@ run_end_to_end_test() {
     local baseline_rx=$(get_statistics "total")
     local baseline_vxlan=$(get_statistics "vxlan")
     local baseline_nat=$(get_statistics "nat")
+    local baseline_bytes=$(get_statistics "bytes")
     
     echo "Baseline - RX: $baseline_rx, VXLAN: $baseline_vxlan, NAT: $baseline_nat"
+    
+    # Check if we're seeing massive production traffic
+    if [ "$baseline_rx" -gt 1000000 ]; then
+        print_color "yellow" "⚠ Detected high production traffic ($baseline_rx packets)"
+        print_color "yellow" "  Test will focus on incremental analysis rather than packet capture"
+        local high_traffic_mode=true
+    else
+        local high_traffic_mode=false
+    fi
     
     # Enable debug logging temporarily if .env exists
     local original_debug=""
@@ -42,44 +53,78 @@ run_end_to_end_test() {
         sed -i 's/DEBUG_LEVEL=".*"/DEBUG_LEVEL="3"/' "${SCRIPT_DIR}/../.env" 2>/dev/null || true
     fi
     
-    # Start packet captures
+    # Start packet captures based on traffic mode
     echo ""
-    print_color "yellow" "Starting packet captures..."
+    print_color "yellow" "Starting monitoring and captures..."
     
-    # Ingress capture (VXLAN traffic)
-    echo "Capturing ingress VXLAN traffic..."
-    timeout 30 sudo tcpdump -i "$INTERFACE" "port 4789" -w "$test_dir/ingress_vxlan.pcap" -c 50 >/dev/null 2>&1 &
-    local ingress_pid=$!
+    if [ "$high_traffic_mode" = "true" ]; then
+        # High traffic mode - minimal captures, focus on statistics
+        print_color "blue" "High-traffic mode: Limited packet captures, statistical analysis"
+        
+        # Short targeted captures
+        timeout 10 sudo tcpdump -i "$INTERFACE" "udp port 4789" -c 10 -w "$test_dir/sample_vxlan.pcap" >/dev/null 2>&1 &
+        local vxlan_pid=$!
+        
+        timeout 10 sudo tcpdump -i "$TARGET_INTERFACE" -c 10 -w "$test_dir/sample_egress.pcap" >/dev/null 2>&1 &
+        local egress_pid=$!
+        
+        local monitoring_duration=10
+    else
+        # Normal traffic mode - full captures
+        print_color "blue" "Normal-traffic mode: Full packet captures"
+        
+        # Broader capture filters for better detection
+        timeout 30 sudo tcpdump -i "$INTERFACE" "udp" -c 50 -w "$test_dir/ingress_udp.pcap" >/dev/null 2>&1 &
+        local vxlan_pid=$!
+        
+        timeout 30 sudo tcpdump -i "$TARGET_INTERFACE" -c 50 -w "$test_dir/egress.pcap" >/dev/null 2>&1 &
+        local egress_pid=$!
+        
+        local monitoring_duration=20
+    fi
     
-    # Egress capture (processed traffic)
-    echo "Capturing egress traffic..."
-    timeout 30 sudo tcpdump -i "$TARGET_INTERFACE" -w "$test_dir/egress.pcap" -c 50 >/dev/null 2>&1 &
-    local egress_pid=$!
-    
-    # BPF trace capture
-    echo "Starting BPF trace logging..."
-    timeout 30 bash -c "sudo cat /sys/kernel/debug/tracing/trace_pipe 2>/dev/null | grep -E '(vxlan|nat|trace)' > '$test_dir/bpf_trace.log'" &
+    # Enhanced BPF trace capture with better filtering
+    timeout $monitoring_duration bash -c "
+        sudo cat /sys/kernel/debug/tracing/trace_pipe 2>/dev/null | \
+        grep -E '(vxlan|xdp|bpf_trace_printk)' > '$test_dir/bpf_trace.log' 2>/dev/null
+    " &
     local trace_pid=$!
     
     print_color "green" "✓ Monitoring started"
     echo "┌─────────────────────────────────────────────────┐"
     echo "│                 LIVE MONITORING                 │"
     echo "├─────────────────────────────────────────────────┤"
-    echo "│ Ingress ($INTERFACE):    Capturing VXLAN (port 4789) │"
-    echo "│ Egress ($TARGET_INTERFACE):     Capturing processed traffic │"
+    
+    if [ "$high_traffic_mode" = "true" ]; then
+        echo "│ Mode:              High-traffic production      │"
+        echo "│ Ingress ($INTERFACE):    Sample UDP captures         │"
+        echo "│ Egress ($TARGET_INTERFACE):     Sample processed traffic  │"
+        echo "│ Duration:          ${monitoring_duration}s (accelerated)    │"
+    else
+        echo "│ Mode:              Normal testing               │"
+        echo "│ Ingress ($INTERFACE):    Full UDP traffic capture   │"
+        echo "│ Egress ($TARGET_INTERFACE):     Full processed traffic      │"
+        echo "│ Duration:          ${monitoring_duration}s (standard)       │"
+    fi
+    
     echo "│ BPF Traces:        Kernel debug logs           │"
     echo "│ Statistics:        Real-time counters          │"
     echo "└─────────────────────────────────────────────────┘"
     
-    # Monitor for specified duration
-    local test_duration=30
+    # Monitor for specified duration with enhanced reporting
     echo ""
-    print_color "yellow" "Monitoring for $test_duration seconds..."
-    echo "Waiting for real VXLAN packets (you can send traffic now)..."
+    print_color "yellow" "Monitoring for $monitoring_duration seconds..."
     
-    for i in $(seq 1 $test_duration); do
-        # Show current statistics every 5 seconds
-        if [ $((i % 5)) -eq 0 ]; then
+    if [ "$high_traffic_mode" = "true" ]; then
+        echo "Analyzing production traffic patterns..."
+    else
+        echo "Waiting for VXLAN packets (you can send test traffic now)..."
+    fi
+    
+    # More detailed progress reporting
+    local report_interval=2
+    for i in $(seq 1 $monitoring_duration); do
+        if [ $((i % report_interval)) -eq 0 ]; then
             local current_rx=$(get_statistics "total")
             local current_vxlan=$(get_statistics "vxlan")
             local current_nat=$(get_statistics "nat")
@@ -88,24 +133,38 @@ run_end_to_end_test() {
             local new_vxlan=$((current_vxlan - baseline_vxlan))
             local new_nat=$((current_nat - baseline_nat))
             
-            printf "\r[%02d/%02d] New packets - RX: %d, VXLAN: %d, NAT: %d" $i $test_duration $new_rx $new_vxlan $new_nat
+            # Calculate rate
+            local rx_rate=$((new_rx / i))
+            local status="PROCESSING"
+            if [ "$rx_rate" -gt 10000 ]; then
+                status="HIGH-RATE"
+            elif [ "$rx_rate" -gt 1000 ]; then
+                status="MODERATE"
+            elif [ "$rx_rate" -gt 0 ]; then
+                status="LOW-RATE"
+            else
+                status="IDLE"
+            fi
+            
+            printf "\r[%02d/%02d] Δ packets: RX:%d VXLAN:%d NAT:%d | Rate:%d pps | %s" \
+                $i $monitoring_duration $new_rx $new_vxlan $new_nat $rx_rate "$status"
         else
-            printf "\r[%02d/%02d] Monitoring..." $i $test_duration
+            printf "\r[%02d/%02d] Monitoring..." $i $monitoring_duration
         fi
         sleep 1
     done
     
     echo ""
     echo ""
-    print_color "yellow" "Stopping captures..."
+    print_color "yellow" "Stopping captures and analyzing results..."
     
     # Stop all captures gracefully
-    kill $ingress_pid 2>/dev/null || true
+    kill $vxlan_pid 2>/dev/null || true
     kill $egress_pid 2>/dev/null || true
     kill $trace_pid 2>/dev/null || true
     
     # Wait for captures to finish
-    wait $ingress_pid 2>/dev/null || true
+    wait $vxlan_pid 2>/dev/null || true
     wait $egress_pid 2>/dev/null || true
     wait $trace_pid 2>/dev/null || true
     
@@ -113,63 +172,183 @@ run_end_to_end_test() {
     echo "Capturing final statistics..."
     show_statistics > "$test_dir/stats_after.txt" 2>/dev/null
     
-    # Restore original debug level
-    if [ -n "$original_debug" ] && [ -f "${SCRIPT_DIR}/../.env" ]; then
-        sed -i "s/DEBUG_LEVEL=\".*\"/DEBUG_LEVEL=\"$original_debug\"/" "${SCRIPT_DIR}/../.env" 2>/dev/null || true
-    fi
-    
-    # Analysis and results
-    echo ""
-    print_color "green" "Test Results Analysis"
-    echo "===================="
-    
-    # Calculate packet deltas
+    # Calculate comprehensive deltas
     local final_rx=$(get_statistics "total")
     local final_vxlan=$(get_statistics "vxlan")
     local final_nat=$(get_statistics "nat")
+    local final_bytes=$(get_statistics "bytes")
     
     local total_new_rx=$((final_rx - baseline_rx))
     local total_new_vxlan=$((final_vxlan - baseline_vxlan))
     local total_new_nat=$((final_nat - baseline_nat))
+    local total_new_bytes=$((final_bytes - baseline_bytes))
     
-    echo "Packets processed during test:"
-    echo "  Total RX:        $total_new_rx packets"
-    echo "  VXLAN processed: $total_new_vxlan packets"
-    echo "  NAT applied:     $total_new_nat packets"
+    # Restore original debug level if it was changed
+    if [ -n "$original_debug" ] && [ -f "${SCRIPT_DIR}/../.env" ]; then
+        sed -i "s/DEBUG_LEVEL=\".*\"/DEBUG_LEVEL=\"$original_debug\"/" "${SCRIPT_DIR}/../.env" 2>/dev/null || true
+    fi
     
-    # Check capture files
+    # Enhanced analysis and results
     echo ""
-    echo "Capture file analysis:"
-    if [ -f "$test_dir/ingress_vxlan.pcap" ]; then
-        local ingress_count=$(tcpdump -r "$test_dir/ingress_vxlan.pcap" 2>/dev/null | wc -l || echo "0")
-        echo "  Ingress VXLAN:   $ingress_count packets captured"
+    print_color "green" "Test Results Analysis"
+    echo "===================="
+    
+    # Traffic analysis with rates
+    local avg_pps=$((total_new_rx / monitoring_duration))
+    local throughput_mbps=$(echo "$total_new_bytes $monitoring_duration" | awk '{printf "%.2f", ($1*8)/(1024*1024*$2)}')
+    
+    echo "Traffic During Test (${monitoring_duration}s):"
+    echo "  Total RX:        $(format_number $total_new_rx) packets"
+    echo "  VXLAN processed: $(format_number $total_new_vxlan) packets"
+    echo "  NAT applied:     $(format_number $total_new_nat) packets"
+    echo "  Data volume:     $(format_bytes $total_new_bytes)"
+    echo "  Average PPS:     $(format_number $avg_pps)"
+    echo "  Throughput:      ${throughput_mbps} Mbps"
+    
+    # Processing efficiency analysis
+    local vxlan_efficiency=100
+    local nat_efficiency=100
+    
+    if [ "$total_new_rx" -gt 0 ]; then
+        vxlan_efficiency=$(echo "$total_new_vxlan $total_new_rx" | awk '{printf "%.1f", ($1/$2)*100}')
+        nat_efficiency=$(echo "$total_new_nat $total_new_rx" | awk '{printf "%.1f", ($1/$2)*100}')
     fi
     
-    if [ -f "$test_dir/egress.pcap" ]; then
-        local egress_count=$(tcpdump -r "$test_dir/egress.pcap" 2>/dev/null | wc -l || echo "0")
-        echo "  Egress packets:  $egress_count packets captured"
-    fi
+    echo ""
+    echo "Pipeline Efficiency:"
+    echo "  VXLAN processing:  ${vxlan_efficiency}% ($(format_number $total_new_vxlan)/$(format_number $total_new_rx))"
+    echo "  NAT application:   ${nat_efficiency}% ($(format_number $total_new_nat)/$(format_number $total_new_rx))"
+    
+    # Enhanced capture file analysis
+    echo ""
+    echo "Capture File Analysis:"
+    
+    # Check all possible capture files
+    local capture_files=(
+        "sample_vxlan.pcap:Sample VXLAN"
+        "sample_egress.pcap:Sample Egress" 
+        "ingress_udp.pcap:Ingress UDP"
+        "egress.pcap:Egress Traffic"
+    )
+    
+    local total_captured=0
+    for file_info in "${capture_files[@]}"; do
+        local file="${file_info%%:*}"
+        local desc="${file_info##*:}"
+        
+        if [ -f "$test_dir/$file" ]; then
+            local count=$(tcpdump -r "$test_dir/$file" 2>/dev/null | wc -l || echo "0")
+            echo "  $desc: $count packets"
+            total_captured=$((total_captured + count))
+            
+            # Basic packet analysis
+            if [ "$count" -gt 0 ]; then
+                local first_packet=$(tcpdump -r "$test_dir/$file" -c 1 -n 2>/dev/null | head -1 || echo "")
+                if [ -n "$first_packet" ]; then
+                    echo "    Sample: ${first_packet:0:80}..."
+                fi
+            fi
+        fi
+    done
     
     # Show trace log summary
     if [ -f "$test_dir/bpf_trace.log" ]; then
         local trace_lines=$(wc -l < "$test_dir/bpf_trace.log" 2>/dev/null || echo "0")
         echo "  BPF trace logs:  $trace_lines lines captured"
+        
+        if [ "$trace_lines" -gt 0 ]; then
+            echo "    Recent entries:"
+            tail -3 "$test_dir/bpf_trace.log" 2>/dev/null | sed 's/^/      /' || true
+        fi
     fi
+    
+    # Performance assessment
+    echo ""
+    echo "Performance Assessment:"
+    
+    if [ "$avg_pps" -ge "$TARGET_PPS" ]; then
+        print_color "green" "  ✓ EXCELLENT: Exceeds target PPS ($TARGET_PPS)"
+    elif [ "$avg_pps" -ge $((TARGET_PPS * 70 / 100)) ]; then
+        print_color "yellow" "  ⚠ GOOD: 70%+ of target PPS"
+    elif [ "$avg_pps" -gt 0 ]; then
+        print_color "yellow" "  ⚠ ACTIVE: Processing traffic but below target"
+    else
+        print_color "red" "  ✗ IDLE: No traffic processed during test"
+    fi
+    
+    # Test result summary
+    echo ""
+    local test_result="PASSED"
+    local issues=()
+    
+    # Check for issues
+    if [ "$total_new_rx" -eq 0 ]; then
+        issues+=("No packets received")
+        test_result="FAILED"
+    fi
+    
+    if [ "$total_captured" -eq 0 ]; then
+        issues+=("No packets captured")
+        test_result="WARNING"
+    fi
+    
+    if [ "${#issues[@]}" -gt 0 ]; then
+        print_color "yellow" "Issues detected:"
+        for issue in "${issues[@]}"; do
+            echo "  • $issue"
+        done
+        echo ""
+    fi
+    
+    # Final result
+    case "$test_result" in
+        "PASSED")
+            print_color "green" "=== TEST PASSED ==="
+            print_color "green" "Pipeline successfully processed $(format_number $total_new_rx) packets"
+            ;;
+        "WARNING") 
+            print_color "yellow" "=== TEST PASSED (WITH WARNINGS) ==="
+            print_color "yellow" "Pipeline processed traffic but some captures failed"
+            ;;
+        "FAILED")
+            print_color "red" "=== TEST FAILED ==="
+            print_color "red" "Pipeline did not process any traffic"
+            ;;
+    esac
+    
     
     print_color "green" "✓ Test completed successfully!"
     print_color "yellow" "Test outputs saved in: $test_dir"
     echo ""
-    echo "Available files:"
-    echo "  • ingress_vxlan.pcap - Raw VXLAN packets from $INTERFACE"
-    echo "  • egress.pcap       - Processed packets to $TARGET_INTERFACE"
+    
+    echo "Available files and analysis:"
+    for file_info in "${capture_files[@]}"; do
+        local file="${file_info%%:*}"
+        local desc="${file_info##*:}"
+        if [ -f "$test_dir/$file" ]; then
+            echo "  • $file - $desc"
+        fi
+    done
+    
     echo "  • bpf_trace.log     - Kernel BPF debug traces"
     echo "  • stats_before.txt  - Statistics before test"
     echo "  • stats_after.txt   - Statistics after test"
     echo ""
-    echo "Analysis commands:"
-    echo "  tcpdump -r $test_dir/ingress_vxlan.pcap -vvn"
-    echo "  tcpdump -r $test_dir/egress.pcap -vvn"
+    
+    echo "Quick analysis commands:"
+    echo "  # View captured packets:"
+    for file_info in "${capture_files[@]}"; do
+        local file="${file_info%%:*}"
+        if [ -f "$test_dir/$file" ]; then
+            echo "  tcpdump -r $test_dir/$file -vvn"
+            break
+        fi
+    done
+    echo "  # Compare statistics:"
     echo "  diff $test_dir/stats_before.txt $test_dir/stats_after.txt"
+    echo "  # View traces:"
+    echo "  cat $test_dir/bpf_trace.log"
+}
 }
 
 # Quick health check
