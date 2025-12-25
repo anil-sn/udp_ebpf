@@ -60,11 +60,6 @@
 #define XDP_TX      3
 #define XDP_REDIRECT 4
 
-/* Ring buffer helper functions */
-static void *(*bpf_ringbuf_reserve)(void *ringbuf, __u64 size, __u64 flags) = (void *) 131;
-static void (*bpf_ringbuf_submit)(void *data, __u64 flags) = (void *) 132;
-static void (*bpf_ringbuf_discard)(void *data, __u64 flags) = (void *) 133;
-
 // XDP metadata structure
 struct xdp_md {
     __u32 data;
@@ -761,9 +756,13 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
             event->ifindex = *target_ifindex;
             event->len = pkt_len;
             
-            /* Copy packet data safely */
-            if (pkt_len > 0 && data + pkt_len <= data_end) {
-                __builtin_memcpy(event->data, data, pkt_len);
+            /* Copy packet data safely using BPF-verifier friendly loop */
+            if (pkt_len > 0 && data + pkt_len <= data_end && pkt_len <= 1500) {
+                /* Manual copy loop that BPF verifier can validate */
+                for (__u32 i = 0; i < pkt_len && i < 1500; i++) {
+                    if (data + i >= data_end) break;
+                    event->data[i] = ((char*)data)[i];
+                }
             }
             
             /* Submit to userspace */
