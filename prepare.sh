@@ -73,13 +73,46 @@ install_dependencies() {
             sudo apt-get install -y iproute2 net-tools tcpdump
             log "Network tools installed"
             
-            # BPF tools (try multiple approaches)
+            # Extended XDP development packages
+            sudo apt-get install -y git llvm libelf-dev libpcap-dev pkg-config m4 zlib1g-dev libcap-dev
+            log "Extended XDP development packages installed"
+            
+            # BPF tools - Enhanced installation for AWS kernels
             if ! command -v bpftool >/dev/null 2>&1; then
-                sudo apt-get install -y linux-tools-common linux-tools-generic || {
-                    sudo apt-get install -y bpftool || {
-                        warn "Could not install bpftool via package manager"
+                info "Installing bpftool..."
+                
+                # Try AWS-specific kernel tools first
+                if uname -r | grep -q aws; then
+                    info "Detected AWS kernel, installing AWS-specific tools..."
+                    sudo apt-get install -y linux-tools-$(uname -r) linux-cloud-tools-$(uname -r) || {
+                        warn "AWS-specific tools failed, trying generic packages..."
+                        sudo apt-get install -y linux-tools-aws linux-cloud-tools-aws || {
+                            warn "AWS tools failed, trying generic linux-tools..."
+                            sudo apt-get install -y linux-tools-common linux-tools-generic || {
+                                sudo apt-get install -y bpftool || {
+                                    warn "Could not install bpftool via package manager"
+                                }
+                            }
+                        }
                     }
-                }
+                else
+                    # Non-AWS systems
+                    sudo apt-get install -y linux-tools-$(uname -r) linux-tools-common linux-tools-generic || {
+                        sudo apt-get install -y bpftool || {
+                            warn "Could not install bpftool via package manager"
+                        }
+                    }
+                fi
+                
+                # Verify bpftool installation
+                if command -v bpftool >/dev/null 2>&1; then
+                    log "bpftool installed successfully"
+                    info "bpftool version: $(bpftool version 2>/dev/null | head -1 || echo 'installed')"
+                else
+                    warn "bpftool installation may have failed - XDP debugging will be limited"
+                fi
+            else
+                log "bpftool already available"
             fi
             
             # Python development
@@ -103,7 +136,80 @@ install_dependencies() {
 }
 
 # ============================================================================
-# STEP 2: PYTHON VIRTUAL ENVIRONMENT
+# STEP 2: XDP TOOLS INSTALLATION
+# ============================================================================
+
+install_xdp_tools() {
+    section "Installing XDP Tools"
+    
+    local xdp_tools_dir="/tmp/xdp-tools"
+    
+    # Check if xdp-loader already exists
+    if command -v xdp-loader >/dev/null 2>&1; then
+        log "XDP tools already installed"
+        return 0
+    fi
+    
+    info "Cloning xdp-tools repository..."
+    
+    # Remove existing directory if it exists
+    [ -d "$xdp_tools_dir" ] && rm -rf "$xdp_tools_dir"
+    
+    # Clone xdp-tools
+    if git clone https://github.com/xdp-project/xdp-tools.git "$xdp_tools_dir"; then
+        log "XDP tools repository cloned"
+    else
+        warn "Failed to clone xdp-tools repository"
+        return 1
+    fi
+    
+    cd "$xdp_tools_dir"
+    
+    info "Cleaning previous build..."
+    make clean >/dev/null 2>&1 || true
+    
+    info "Updating submodules..."
+    git submodule update --init --recursive
+    
+    info "Configuring with bundled libbpf..."
+    export FORCE_SUBDIR_LIBBPF=1
+    ./configure
+    
+    info "Building xdp-tools (this may take a few minutes)..."
+    if make -j$(nproc); then
+        log "XDP tools built successfully"
+    else
+        error "Failed to build xdp-tools"
+        cd "$PROJECT_ROOT"
+        return 1
+    fi
+    
+    info "Installing xdp-tools..."
+    if sudo make install && sudo ldconfig; then
+        log "XDP tools installed successfully"
+    else
+        error "Failed to install xdp-tools"
+        cd "$PROJECT_ROOT"
+        return 1
+    fi
+    
+    cd "$PROJECT_ROOT"
+    
+    # Verify installation
+    if command -v xdp-loader >/dev/null 2>&1; then
+        log "XDP tools verification successful"
+        info "xdp-loader version: $(xdp-loader --version 2>/dev/null || echo 'installed')"
+    else
+        warn "XDP tools installation may have issues"
+    fi
+    
+    # Cleanup
+    rm -rf "$xdp_tools_dir"
+    log "Temporary files cleaned up"
+}
+
+# ============================================================================
+# STEP 3: PYTHON VIRTUAL ENVIRONMENT
 # ============================================================================
 
 setup_venv() {
@@ -148,7 +254,7 @@ setup_venv() {
 }
 
 # ============================================================================
-# STEP 3: BUILD PROJECT
+# STEP 4: BUILD PROJECT
 # ============================================================================
 
 build_project() {
@@ -178,7 +284,7 @@ build_project() {
 }
 
 # ============================================================================
-# STEP 4: VERIFY SETUP
+# STEP 5: VERIFY SETUP
 # ============================================================================
 
 verify_setup() {
@@ -237,7 +343,7 @@ verify_setup() {
 }
 
 # ============================================================================
-# STEP 5: FINAL STATUS
+# STEP 6: FINAL STATUS
 # ============================================================================
 
 show_status() {
@@ -271,6 +377,7 @@ main() {
     
     # Run all setup steps
     install_dependencies
+    install_xdp_tools
     setup_venv
     build_project
     verify_setup
