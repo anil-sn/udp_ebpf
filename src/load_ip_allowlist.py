@@ -16,7 +16,7 @@ def ip_to_bytes(ip_str):
     """Convert IP string to 4-byte representation for BPF map"""
     try:
         ip = ipaddress.IPv4Address(ip_str)
-        return ip.packed.hex()
+        return ip.packed
     except ValueError as e:
         print(f"Invalid IP address {ip_str}: {e}")
         return None
@@ -39,20 +39,37 @@ def load_from_json(json_file):
             total_expected = len(ip_list)
         
         print(f"Loading {total_expected} IPs from {json_file}")
+        
+        # Check if BPF map exists first
+        check_cmd = ['bpftool', 'map', 'show', 'name', 'ip_allowlist']
+        try:
+            subprocess.run(check_cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError:
+            print("Error: BPF map 'ip_allowlist' not found. Please load the XDP program first.")
+            print("Run: sudo ./vxlan_loader -i <interface> --load-xdp")
+            return 0
+        
         loaded_count = 0
         
         for ip_str in ip_list:
             ip_bytes = ip_to_bytes(ip_str.strip())
             if ip_bytes:
+                # Convert IP bytes to hex format for bpftool
+                hex_key = ' '.join([f'{b:02x}' for b in ip_bytes])
+                
                 # Add to BPF map (value 1 = allowed)
                 cmd = ['bpftool', 'map', 'update', 'name', 'ip_allowlist', 
-                       'key', 'hex'] + [ip_bytes[i:i+2] for i in range(0, 8, 2)] + ['value', 'hex', '01']
+                       'key', 'hex'] + hex_key.split() + ['value', 'hex', '01']
                 
                 try:
-                    subprocess.run(cmd, check=True, capture_output=True, text=True)
+                    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
                     loaded_count += 1
+                    if loaded_count % 50 == 0:  # Progress indicator
+                        print(f"Loaded {loaded_count}/{total_expected} IPs...")
                 except subprocess.CalledProcessError as e:
-                    print(f"Failed to add IP {ip_str}: {e.stderr}")
+                    print(f"Failed to add IP {ip_str}: {e.stderr.strip() if e.stderr else 'Unknown error'}")
+                    if loaded_count == 0:  # If first IP fails, show the command for debugging
+                        print(f"Debug: Command was: {' '.join(cmd)}")
         
         print(f"Successfully loaded {loaded_count}/{total_expected} IPs into allowlist")
         return loaded_count
@@ -81,19 +98,22 @@ def display_loaded_ips():
         
         for line in lines:
             if 'key:' in line and 'value:' in line:
-                # Extract hex key
+                # Extract hex key - format is usually "key: 0a 00 00 01  value: 01"
                 key_part = line.split('key:')[1].split('value:')[0].strip()
+                # Remove any extra spaces and convert to bytes
                 hex_bytes = key_part.replace(' ', '')
                 
                 try:
-                    # Convert hex to IP
-                    ip_bytes = bytes.fromhex(hex_bytes)
-                    if len(ip_bytes) == 4:
+                    # Convert hex to IP (should be exactly 8 hex chars = 4 bytes)
+                    if len(hex_bytes) == 8:
+                        ip_bytes = bytes.fromhex(hex_bytes)
                         ip = ipaddress.IPv4Address(ip_bytes)
                         print(f"{ip_count+1:3d}. {ip}")
                         ip_count += 1
+                    else:
+                        print(f"Warning: Unexpected key length {len(hex_bytes)} for: {hex_bytes}")
                 except Exception as e:
-                    print(f"Error parsing IP from {hex_bytes}: {e}")
+                    print(f"Error parsing IP from '{hex_bytes}': {e}")
         
         print("-" * 40)
         print(f"Total IPs loaded: {ip_count}")
@@ -120,19 +140,23 @@ def clear_all_ips():
         
         for line in lines:
             if 'key:' in line:
-                # Extract hex key
+                # Extract hex key - format is usually "key: 0a 00 00 01  value: 01"
                 key_part = line.split('key:')[1].split('value:')[0].strip()
-                hex_bytes = key_part.replace(' ', '').replace('0x', '')
+                # Clean up the hex string and format for bpftool
+                hex_clean = key_part.replace(' ', '').replace('0x', '')
                 
-                # Delete from map
-                cmd = ['bpftool', 'map', 'delete', 'name', 'ip_allowlist', 'key', 'hex'] + \
-                      [hex_bytes[i:i+2] for i in range(0, len(hex_bytes), 2)]
-                
-                try:
-                    subprocess.run(cmd, check=True, capture_output=True)
-                    deleted_count += 1
-                except subprocess.CalledProcessError:
-                    pass  # Key might already be deleted
+                # Convert to space-separated hex bytes for bpftool
+                if len(hex_clean) == 8:  # 4 bytes = 8 hex chars
+                    hex_bytes = [hex_clean[i:i+2] for i in range(0, 8, 2)]
+                    
+                    # Delete from map
+                    cmd = ['bpftool', 'map', 'delete', 'name', 'ip_allowlist', 'key', 'hex'] + hex_bytes
+                    
+                    try:
+                        subprocess.run(cmd, check=True, capture_output=True)
+                        deleted_count += 1
+                    except subprocess.CalledProcessError:
+                        pass  # Key might already be deleted
         
         print(f"Cleared {deleted_count} IPs from allowlist")
         
