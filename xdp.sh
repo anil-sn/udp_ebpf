@@ -130,7 +130,7 @@ start() {
         # Start packet injector for userspace packet processing
         echo -e "${BLUE}Starting packet injector...${NC}"
         cd src
-        nohup sudo ./packet_injector -i $TARGET_INTERFACE \
+        nohup sudo ./packet_injector vxlan_pipeline.bpf.o $TARGET_INTERFACE \
             </dev/null >"/tmp/packet_injector.log" 2>&1 &
         cd ..
         
