@@ -216,7 +216,7 @@ static int configure_nat_rules()
 {
     struct nat_entry entry = {0};
     struct nat_key key = {
-        .src_port = htons(cfg.nat_source_port)  /* NOTE: Despite name, this matches destination port in packets */
+        .src_port = htons(cfg.nat_source_port)  /* Convert to network byte order for map storage */
     };
     
     /* Parse target IP address */
