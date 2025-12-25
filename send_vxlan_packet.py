@@ -70,38 +70,13 @@ def main():
 
     interface = sys.argv[1]
 
-    # Create VXLAN packet programmatically to ensure correct format
-    # Outer Ethernet header
-    outer_eth = Ether(src="0a:e5:16:61:b0:6d", dst="0a:63:c2:8f:07:ed")
-    
-    # Outer IP header  
-    outer_ip = IP(src="172.30.83.192", dst="172.30.82.75", ttl=254, proto=17)
-    
-    # Outer UDP header (VXLAN)
-    outer_udp = UDP(sport=65518, dport=4789)  # Standard VXLAN port
-    
-    # VXLAN header
-    vxlan = VXLAN(vni=1)
-    
-    # Inner Ethernet header
-    inner_eth = Ether(src="0a:2c:e3:32:fb:b9", dst="0a:20:55:87:cb:dd")
-    
-    # Inner IP header
-    inner_ip = IP(src="172.30.82.157", dst="172.30.74.144", ttl=64, proto=17)
-    
-    # Inner UDP header - THIS IS THE KEY PART
-    inner_udp = UDP(sport=31749, dport=31749)  # Use 31749 as destination port for NAT matching
-    
-    # Payload (dummy data)
-    payload = Raw(b"\\x00" * 200)  # 200 bytes of payload
-    
-    # Construct complete packet
-    packet = outer_eth / outer_ip / outer_udp / vxlan / inner_eth / inner_ip / inner_udp / payload
-    packet_data = bytes(packet)
+    # Create packet matching .env configuration:
+    # SOURCE_PORT="31765" - inner source port should be 31765
+    # Inner IP 172.30.82.157 is already in allowlist
 
-    print('🚀 VXLAN Packet Injector')
-    print('📡 Sending packet on interface: {}'.format(interface))
-    print('📦 Packet size: {} bytes'.format(len(packet_data)))
+    hex_dump = \
+        """
+  0x0000:  0a63 c28f 07ed 0ae5 1661 b06d 0800 4500
   0x0010:  02de 0000 0000 fe11 bbc6 ac1e 53c0 ac1e
   0x0020:  524b ffee 12b5 02ca 0000 0800 0000 0000
   0x0030:  0100 0a2c e332 fbb9 0a20 5587 cbdd 0800
@@ -150,12 +125,12 @@ def main():
   0x02e0:  2625 a000 0000 0000 05f5 e100
 """
 
-    print('\xf0\x9f\x9a\x80 VXLAN Packet Injector')
-    print('\xf0\x9f\x93\xa1 Sending packet on interface: {}'.format(interface))
+    print('🚀 VXLAN Packet Injector')
+    print('📡 Sending packet on interface: {}'.format(interface))
 
     # Convert hex dump to packet
     packet_data = hex_to_packet(hex_dump)
-    print('\xf0\x9f\x93\xa6 Packet size: {} bytes'.format(len(packet_data)))
+    print('📦 Packet size: {} bytes'.format(len(packet_data)))
 
     # Parse and display packet info
     try:
