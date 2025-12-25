@@ -68,6 +68,10 @@ start() {
     echo -e "${YELLOW}Configuring interface MTU for XDP...${NC}"
     sudo ip link set $INTERFACE mtu 3000
     
+    # Configure queue count for AWS ENA XDP compatibility (max half of available)
+    echo -e "${YELLOW}Configuring interface queues for XDP...${NC}"
+    sudo ethtool -L $INTERFACE combined 4
+    
     # Start background process with comprehensive redirection
     echo -e "${BLUE}Launching vxlan_loader...${NC}"
     # Change to src directory where .bpf.o file is located and fix log path
