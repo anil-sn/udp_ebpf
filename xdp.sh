@@ -624,15 +624,16 @@ info() {
                 CPU_VXLAN=$(echo "$STATS_DATA" | jq -r ".[] | select(.id == $FIRST_MAP_WITH_DATA) | .elements[] | select(.key == 5) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
                 CPU_NAT=$(echo "$STATS_DATA" | jq -r ".[] | select(.id == $FIRST_MAP_WITH_DATA) | .elements[] | select(.key == 6) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
             
-            if [ "$CPU_RX" -gt 0 ] || [ "$CPU_PROC" -gt 0 ] || [ "$CPU_DROP" -gt 0 ] || [ "$CPU_VXLAN" -gt 0 ] || [ "$CPU_NAT" -gt 0 ]; then
-                printf "│  %d  │ %11s │ %11s │ %11s │ %11s │ %11s │\n" "$cpu" \
-                    "$(printf "%'d" "$CPU_RX" 2>/dev/null || echo "$CPU_RX")" \
-                    "$(printf "%'d" "$CPU_PROC" 2>/dev/null || echo "$CPU_PROC")" \
-                    "$(printf "%'d" "$CPU_DROP" 2>/dev/null || echo "$CPU_DROP")" \
-                    "$(printf "%'d" "$CPU_VXLAN" 2>/dev/null || echo "$CPU_VXLAN")" \
-                    "$(printf "%'d" "$CPU_NAT" 2>/dev/null || echo "$CPU_NAT")"
-            fi
-        done
+                if [ "$CPU_RX" -gt 0 ] || [ "$CPU_PROC" -gt 0 ] || [ "$CPU_DROP" -gt 0 ] || [ "$CPU_VXLAN" -gt 0 ] || [ "$CPU_NAT" -gt 0 ]; then
+                    printf "│  %d  │ %11s │ %11s │ %11s │ %11s │ %11s │\n" "$cpu" \
+                        "$(printf "%'d" "$CPU_RX" 2>/dev/null || echo "$CPU_RX")" \
+                        "$(printf "%'d" "$CPU_PROC" 2>/dev/null || echo "$CPU_PROC")" \
+                        "$(printf "%'d" "$CPU_DROP" 2>/dev/null || echo "$CPU_DROP")" \
+                        "$(printf "%'d" "$CPU_VXLAN" 2>/dev/null || echo "$CPU_VXLAN")" \
+                        "$(printf "%'d" "$CPU_NAT" 2>/dev/null || echo "$CPU_NAT")"
+                fi
+            done
+        fi
         echo "└─────┴─────────────┴─────────────┴─────────────┴─────────────┴─────────────┘"
     else
         echo "No statistics available"
