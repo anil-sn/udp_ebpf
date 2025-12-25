@@ -352,7 +352,8 @@ run_end_to_end_test() {
                 $delta_rx $rate_change $delta_vxlan $delta_nat $inst_pps $efficiency "$status"
             printf "\033[0m"  # Reset color
         else
-            # Clear entire line before showing monitoring status\n            printf \"\\r\\033[K[%02d/%02d] Monitoring...\" $i $monitoring_duration
+            # Clear entire line before showing monitoring status
+            printf "\r\033[K[%02d/%02d] Monitoring..." $i $monitoring_duration
         fi
         sleep 1
     done
