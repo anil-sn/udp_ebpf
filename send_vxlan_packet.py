@@ -125,50 +125,45 @@ def main():
   0x02e0:  2625 a000 0000 0000 05f5 e100
 """
 
+    print('\xf0\x9f\x9a\x80 VXLAN Packet Injector')
+    print('\xf0\x9f\x93\xa1 Sending packet on interface: {}'.format(interface))
 
-print('\xf0\x9f\x9a\x80 VXLAN Packet Injector')
-print('\xf0\x9f\x93\xa1 Sending packet on interface: {}'.format(interface))
+    # Convert hex dump to packet
+    packet_data = hex_to_packet(hex_dump)
+    print('\xf0\x9f\x93\xa6 Packet size: {} bytes'.format(len(packet_data)))
 
-# Convert hex dump to packet
+    # Parse and display packet info
+    try:
+        pkt = Ether(packet_data)
+        print('\xf0\x9f\x93\x8b Packet summary: {}'.format(pkt.summary()))
+        if hasattr(pkt, 'src'):
+            print('   \xe2\x94\x94\xe2\x94\x80 Src MAC: {}'.format(pkt.src))
+            print('   \xe2\x94\x94\xe2\x94\x80 Dst MAC: {}'.format(pkt.dst))
+        if pkt.haslayer(IP):
+            ip_layer = pkt[IP]
+            print('   \xe2\x94\x94\xe2\x94\x80 Outer IP: {} \xe2\x86\x92 {}'.format(ip_layer.src,
+                    ip_layer.dst))
+        if pkt.haslayer(VXLAN):
+            vxlan_layer = pkt[VXLAN]
+            print('   \xe2\x94\x94\xe2\x94\x80 VXLAN VNI: {}'.format(vxlan_layer.vni))
 
-packet_data = hex_to_packet(hex_dump)
-print('\xf0\x9f\x93\xa6 Packet size: {} bytes'.format(len(packet_data)))
+            # Check inner packet
+            if vxlan_layer.payload and vxlan_layer.payload.haslayer(IP):
+                inner_ip = vxlan_layer.payload[IP]
+                print('   \xe2\x94\x94\xe2\x94\x80 Inner IP: {} \xe2\x86\x92 {}'.format(inner_ip.src,
+                        inner_ip.dst))
+    except:
+        print('   \xe2\x94\x94\xe2\x94\x80 Raw packet (could not parse with Scapy)')
 
-# Parse and display packet info
-
-try:
-    pkt = Ether(packet_data)
-    print('\xf0\x9f\x93\x8b Packet summary: {}'.format(pkt.summary()))
-    if hasattr(pkt, 'src'):
-        print('   \xe2\x94\x94\xe2\x94\x80 Src MAC: {}'.format(pkt.src))
-        print('   \xe2\x94\x94\xe2\x94\x80 Dst MAC: {}'.format(pkt.dst))
-    if pkt.haslayer(IP):
-        ip_layer = pkt[IP]
-        print('   \xe2\x94\x94\xe2\x94\x80 Outer IP: {} \xe2\x86\x92 {}'.format(ip_layer.src,
-                ip_layer.dst))
-    if pkt.haslayer(VXLAN):
-        vxlan_layer = pkt[VXLAN]
-        print('   \xe2\x94\x94\xe2\x94\x80 VXLAN VNI: {}'.format(vxlan_layer.vni))
-
-        # Check inner packet
-
-        if vxlan_layer.payload and vxlan_layer.payload.haslayer(IP):
-            inner_ip = vxlan_layer.payload[IP]
-            print('   \xe2\x94\x94\xe2\x94\x80 Inner IP: {} \xe2\x86\x92 {}'.format(inner_ip.src,
-                    inner_ip.dst))
-except:
-    print('   \xe2\x94\x94\xe2\x94\x80 Raw packet (could not parse with Scapy)')
-
-# Send the packet
-
-if send_packet_on_interface(interface, packet_data):
-    print('\xe2\x9c\x85 SUCCESS: Packet sent on {}'.format(interface))
-    print('\xf0\x9f\x94\x8d Monitor {} and ens6 to see the packet processing:'.format(interface))
-    print('   sudo tcpdump -i {} -n -X'.format(interface))
-    print('   sudo tcpdump -i ens6 -n -X')
-else:
-    print('\xe2\x9d\x8c FAILED: Could not send packet')
-    sys.exit(1)
+    # Send the packet
+    if send_packet_on_interface(interface, packet_data):
+        print('\xe2\x9c\x85 SUCCESS: Packet sent on {}'.format(interface))
+        print('\xf0\x9f\x94\x8d Monitor {} and ens6 to see the packet processing:'.format(interface))
+        print('   sudo tcpdump -i {} -n -X'.format(interface))
+        print('   sudo tcpdump -i ens6 -n -X')
+    else:
+        print('\xe2\x9d\x8c FAILED: Could not send packet')
+        sys.exit(1)
 
 if __name__ == '__main__':
     main()
