@@ -23,27 +23,68 @@ run_end_to_end_test() {
     mkdir -p "$test_dir"
     print_color "yellow" "Test outputs will be saved to: $test_dir"
     
-    # Get baseline statistics
+    # Enhanced baseline analysis with traffic pattern detection
     echo ""
-    print_color "yellow" "Capturing baseline statistics..."
-    show_statistics > "$test_dir/stats_before.txt" 2>/dev/null
+    print_color "yellow" "Analyzing current traffic patterns..."
     
-    # Extract baseline counters for comparison
-    local baseline_rx=$(get_statistics "total")
-    local baseline_vxlan=$(get_statistics "vxlan")
-    local baseline_nat=$(get_statistics "nat")
-    local baseline_bytes=$(get_statistics "bytes")
+    # Multi-point baseline sampling for better accuracy
+    local samples=3
+    local sample_interval=2
+    local baseline_samples=()
     
-    echo "Baseline - RX: $baseline_rx, VXLAN: $baseline_vxlan, NAT: $baseline_nat"
+    for i in $(seq 1 $samples); do
+        local rx=$(get_statistics "total")
+        local vxlan=$(get_statistics "vxlan")
+        baseline_samples+=("$rx:$vxlan")
+        [ $i -lt $samples ] && sleep $sample_interval
+    done
     
-    # Check if we're seeing massive production traffic
-    if [ "$baseline_rx" -gt 1000000 ]; then
-        print_color "yellow" "⚠ Detected high production traffic ($baseline_rx packets)"
-        print_color "yellow" "  Test will focus on incremental analysis rather than packet capture"
-        local high_traffic_mode=true
+    # Calculate traffic rate and pattern
+    local first_sample=(${baseline_samples[0]//:/ })
+    local last_sample=(${baseline_samples[-1]//:/ })
+    local rx_rate=$(( (${last_sample[0]} - ${first_sample[0]}) / (sample_interval * (samples - 1)) ))
+    local vxlan_rate=$(( (${last_sample[1]} - ${first_sample[1]}) / (sample_interval * (samples - 1)) ))
+    
+    # Enhanced traffic classification
+    local traffic_mode="idle"
+    local monitoring_duration=20
+    local capture_limit=100
+    
+    if [ "$rx_rate" -gt 50000 ]; then
+        traffic_mode="production_high"
+        monitoring_duration=8
+        capture_limit=10
+        print_color "red" "⚠ PRODUCTION HIGH-RATE TRAFFIC: $rx_rate pps"
+        print_color "yellow" "  Switching to minimal-impact testing mode"
+    elif [ "$rx_rate" -gt 10000 ]; then
+        traffic_mode="production_moderate"
+        monitoring_duration=12
+        capture_limit=25
+        print_color "yellow" "⚠ PRODUCTION MODERATE TRAFFIC: $rx_rate pps"
+    elif [ "$rx_rate" -gt 1000 ]; then
+        traffic_mode="development_active"
+        monitoring_duration=15
+        capture_limit=50
+        print_color "blue" "Development active traffic: $rx_rate pps"
+    elif [ "$rx_rate" -gt 0 ]; then
+        traffic_mode="development_low"
+        monitoring_duration=20
+        capture_limit=100
+        print_color "green" "Development low traffic: $rx_rate pps"
     else
-        local high_traffic_mode=false
+        traffic_mode="idle"
+        monitoring_duration=30
+        capture_limit=200
+        print_color "green" "Idle system - full test mode available"
     fi
+    
+    # Extract final baseline for comparison
+    baseline_rx=${last_sample[0]}
+    baseline_vxlan=${last_sample[1]}
+    baseline_nat=$(get_statistics "nat")
+    baseline_bytes=$(get_statistics "bytes")
+    
+    echo "Baseline - RX: $baseline_rx, VXLAN: $baseline_vxlan, NAT: $baseline_nat (Rate: ${rx_rate} pps)"
     
     # Enable debug logging temporarily if .env exists
     local original_debug=""
@@ -53,115 +94,200 @@ run_end_to_end_test() {
         sed -i 's/DEBUG_LEVEL=".*"/DEBUG_LEVEL="3"/' "${SCRIPT_DIR}/../.env" 2>/dev/null || true
     fi
     
-    # Start packet captures based on traffic mode
+    # Enhanced monitoring strategy based on traffic analysis
     echo ""
-    print_color "yellow" "Starting monitoring and captures..."
+    print_color "yellow" "Starting adaptive monitoring (mode: $traffic_mode)..."
     
-    if [ "$high_traffic_mode" = "true" ]; then
-        # High traffic mode - minimal captures, focus on statistics
-        print_color "blue" "High-traffic mode: Limited packet captures, statistical analysis"
-        
-        # XDP intercepts VXLAN before tcpdump can see it, so capture any UDP traffic as reference
-        print_color "yellow" "  Note: XDP processes VXLAN before tcpdump - capturing sample UDP traffic"
-        timeout 5 sudo tcpdump -i "$INTERFACE" "udp" -c 5 -w "$test_dir/sample_vxlan.pcap" >/dev/null 2>&1 &
-        local vxlan_pid=$!
-        
-        timeout 10 sudo tcpdump -i "$TARGET_INTERFACE" -c 10 -w "$test_dir/sample_egress.pcap" >/dev/null 2>&1 &
-        local egress_pid=$!
-        
-        local monitoring_duration=10
-    else
-        # Normal traffic mode - full captures
-        print_color "blue" "Normal-traffic mode: Full packet captures"
-        
-        # Broader capture filters for better detection
-        timeout 30 sudo tcpdump -i "$INTERFACE" "udp" -c 50 -w "$test_dir/ingress_udp.pcap" >/dev/null 2>&1 &
-        local vxlan_pid=$!
-        
-        timeout 30 sudo tcpdump -i "$TARGET_INTERFACE" -c 50 -w "$test_dir/egress.pcap" >/dev/null 2>&1 &
-        local egress_pid=$!
-        
-        local monitoring_duration=20
+    # Process management arrays for robust cleanup
+    local capture_pids=()
+    local capture_files=()
+    
+    # Adaptive capture strategy
+    case "$traffic_mode" in
+        "production_high")
+            print_color "red" "MINIMAL IMPACT MODE: Limited captures to avoid performance impact"
+            timeout 5 sudo tcpdump -i "$INTERFACE" "udp port 4789" -c 3 -w "$test_dir/vxlan_sample.pcap" >/dev/null 2>&1 &
+            capture_pids+=("$!:vxlan_sample")
+            timeout 8 sudo tcpdump -i "$TARGET_INTERFACE" -c 5 -w "$test_dir/egress_sample.pcap" >/dev/null 2>&1 &
+            capture_pids+=("$!:egress_sample")
+            ;;
+        "production_moderate")
+            print_color "yellow" "BALANCED MODE: Moderate captures with performance monitoring"
+            timeout 10 sudo tcpdump -i "$INTERFACE" "udp" -c 15 -w "$test_dir/ingress_moderate.pcap" >/dev/null 2>&1 &
+            capture_pids+=("$!:ingress_moderate")
+            timeout 12 sudo tcpdump -i "$TARGET_INTERFACE" -c 20 -w "$test_dir/egress_moderate.pcap" >/dev/null 2>&1 &
+            capture_pids+=("$!:egress_moderate")
+            ;;
+        "development_active"|"development_low")
+            print_color "blue" "DEVELOPMENT MODE: Full packet analysis available"
+            timeout $monitoring_duration sudo tcpdump -i "$INTERFACE" "udp" -c $((capture_limit/2)) -w "$test_dir/ingress_full.pcap" >/dev/null 2>&1 &
+            capture_pids+=("$!:ingress_full")
+            timeout $monitoring_duration sudo tcpdump -i "$TARGET_INTERFACE" -c $capture_limit -w "$test_dir/egress_full.pcap" >/dev/null 2>&1 &
+            capture_pids+=("$!:egress_full")
+            ;;
+        "idle")
+            print_color "green" "COMPREHENSIVE MODE: Full monitoring and captures"
+            timeout $monitoring_duration sudo tcpdump -i "$INTERFACE" "udp" -c $capture_limit -w "$test_dir/ingress_comprehensive.pcap" >/dev/null 2>&1 &
+            capture_pids+=("$!:ingress_comprehensive")
+            timeout $monitoring_duration sudo tcpdump -i "$TARGET_INTERFACE" -c $capture_limit -w "$test_dir/egress_comprehensive.pcap" >/dev/null 2>&1 &
+            capture_pids+=("$!:egress_comprehensive")
+            
+            # Additional VXLAN-specific capture for idle systems
+            timeout $monitoring_duration sudo tcpdump -i "$INTERFACE" "udp port 4789" -c 50 -w "$test_dir/vxlan_specific.pcap" >/dev/null 2>&1 &
+            capture_pids+=("$!:vxlan_specific")
+            ;;
+    esac
+    
+    # Enhanced BPF trace capture with intelligent detection
+    local trace_available=false
+    local trace_method="none"
+    
+    # Check multiple trace sources in order of preference
+    if [ -r "/sys/kernel/debug/tracing/trace_pipe" ] && [ -w "/sys/kernel/debug/tracing/trace" ]; then
+        trace_available=true
+        trace_method="ftrace"
+    elif command -v bpftool >/dev/null 2>&1; then
+        trace_available=true
+        trace_method="bpftool"
+    elif [ -r "/sys/kernel/debug/tracing/events/bpf/enable" ]; then
+        trace_available=true
+        trace_method="events"
     fi
     
-    # Enhanced BPF trace capture with better filtering and fallbacks
-    timeout $monitoring_duration bash -c "
-        # Try to capture BPF traces with fallback options
-        if [ -r /sys/kernel/debug/tracing/trace_pipe ]; then
-            sudo cat /sys/kernel/debug/tracing/trace_pipe 2>/dev/null | \
-            grep -E '(vxlan|xdp|bpf_trace_printk|tracepoint)' > '$test_dir/bpf_trace.log' 2>/dev/null
-        else
-            # Fallback: capture any available trace data or mark as unavailable
-            echo 'BPF trace_pipe not accessible - trace logging disabled' > '$test_dir/bpf_trace.log'
-            # Try alternative tracing methods
-            if command -v bpftool >/dev/null 2>&1; then
-                echo 'Available BPF programs:' >> '$test_dir/bpf_trace.log'
-                bpftool prog list 2>/dev/null | grep -E '(xdp|vxlan)' >> '$test_dir/bpf_trace.log' 2>/dev/null || true
-            fi
-        fi
-    " &
-    local trace_pid=$!
+    # Start appropriate tracing method
+    local trace_pid=0
+    if [ "$trace_available" = "true" ]; then
+        timeout $monitoring_duration bash -c "
+            case '$trace_method' in
+                'ftrace')
+                    # Enhanced ftrace with XDP-specific filters
+                    echo 1 > /sys/kernel/debug/tracing/events/xdp/enable 2>/dev/null || true
+                    echo 1 > /sys/kernel/debug/tracing/events/net/enable 2>/dev/null || true
+                    cat /sys/kernel/debug/tracing/trace_pipe 2>/dev/null | \
+                        grep -E '(vxlan|xdp|redirect|nat)' > '$test_dir/bpf_trace_enhanced.log' 2>/dev/null
+                    ;;
+                'bpftool')
+                    # Use bpftool for program analysis
+                    echo 'BPF Program Analysis:' > '$test_dir/bpf_trace_enhanced.log'
+                    bpftool prog list | grep -E '(xdp|vxlan)' >> '$test_dir/bpf_trace_enhanced.log' 2>/dev/null || true
+                    echo 'BPF Map Contents:' >> '$test_dir/bpf_trace_enhanced.log'
+                    bpftool map show | head -20 >> '$test_dir/bpf_trace_enhanced.log' 2>/dev/null || true
+                    sleep $monitoring_duration
+                    ;;
+                'events')
+                    # Use tracing events
+                    echo 1 > /sys/kernel/debug/tracing/events/bpf/enable 2>/dev/null || true
+                    cat /sys/kernel/debug/tracing/trace_pipe 2>/dev/null | \
+                        head -100 > '$test_dir/bpf_trace_enhanced.log' 2>/dev/null
+                    ;;
+            esac
+        " &
+        trace_pid=$!
+        print_color "green" "✓ Enhanced BPF tracing active (method: $trace_method)"
+    else
+        echo "BPF tracing not available - system information collection only" > "$test_dir/bpf_trace_enhanced.log"
+        {
+            echo "=== System Information ==="
+            echo "Kernel version: $(uname -r)"
+            echo "BPF support: $([ -d /sys/fs/bpf ] && echo 'Yes' || echo 'No')"
+            echo "Interfaces:"
+            ip link show | grep -E '^[0-9]+:' | head -5
+            echo "=== End System Info ==="
+        } >> "$test_dir/bpf_trace_enhanced.log"
+        print_color "yellow" "⚠ BPF tracing unavailable - collecting system info only"
+    fi
+    
+    capture_pids+=("$trace_pid:trace")
     
     print_color "green" "✓ Monitoring started"
-    echo "┌─────────────────────────────────────────────────┐"
-    echo "│                 LIVE MONITORING                 │"
-    echo "├─────────────────────────────────────────────────┤"
     
-    if [ "$high_traffic_mode" = "true" ]; then
-        echo "│ Mode:              High-traffic production      │"
-        echo "│ Ingress ($INTERFACE):    Sample UDP captures         │"
-        echo "│ Egress ($TARGET_INTERFACE):     Sample processed traffic  │"
-        echo "│ Duration:          ${monitoring_duration}s (accelerated)    │"
-    else
-        echo "│ Mode:              Normal testing               │"
-        echo "│ Ingress ($INTERFACE):    Full UDP traffic capture   │"
-        echo "│ Egress ($TARGET_INTERFACE):     Full processed traffic      │"
-        echo "│ Duration:          ${monitoring_duration}s (standard)       │"
-    fi
+    # Enhanced monitoring display
+    echo "┌─────────────────────────────────────────────────────────────┐"
+    echo "│                    ADAPTIVE LIVE MONITORING                 │"
+    echo "├─────────────────────────────────────────────────────────────┤"
+    printf "│ Mode: %-20s Traffic: %-15s │\n" "$traffic_mode" "${rx_rate} pps"
+    printf "│ Duration: %-8ss Captures: %-12s │\n" "$monitoring_duration" "${#capture_pids[@]} active"
+    printf "│ Ingress: %-15s Egress: %-16s │\n" "$INTERFACE" "$TARGET_INTERFACE"
+    printf "│ Tracing: %-15s Method: %-16s │\n" "$trace_available" "$trace_method"
+    echo "└─────────────────────────────────────────────────────────────┘"
     
-    echo "│ BPF Traces:        Kernel debug logs           │"
-    echo "│ Statistics:        Real-time counters          │"
-    echo "└─────────────────────────────────────────────────┘"
-    
-    # Monitor for specified duration with enhanced reporting
+    # Enhanced progress monitoring with performance analytics
     echo ""
-    print_color "yellow" "Monitoring for $monitoring_duration seconds..."
+    print_color "yellow" "Monitoring for $monitoring_duration seconds with real-time analysis..."
     
-    if [ "$high_traffic_mode" = "true" ]; then
-        echo "Analyzing production traffic patterns..."
-    else
-        echo "Waiting for VXLAN packets (you can send test traffic now)..."
-    fi
+    # Performance tracking arrays
+    local pps_history=()
+    local vxlan_history=()
+    local efficiency_history=()
     
-    # More detailed progress reporting
     local report_interval=2
+    local anomaly_threshold=$((rx_rate * 150 / 100))  # 150% of baseline rate
+    
     for i in $(seq 1 $monitoring_duration); do
         if [ $((i % report_interval)) -eq 0 ]; then
             local current_rx=$(get_statistics "total")
             local current_vxlan=$(get_statistics "vxlan")
             local current_nat=$(get_statistics "nat")
+            local current_errors=$(get_statistics "errors")
             
-            local new_rx=$((current_rx - baseline_rx))
-            local new_vxlan=$((current_vxlan - baseline_vxlan))
-            local new_nat=$((current_nat - baseline_nat))
+            local delta_rx=$((current_rx - baseline_rx))
+            local delta_vxlan=$((current_vxlan - baseline_vxlan))
+            local delta_nat=$((current_nat - baseline_nat))
             
-            # Calculate rate
-            local rx_rate=$((new_rx / i))
-            local status="PROCESSING"
-            if [ "$rx_rate" -gt 10000 ]; then
+            # Calculate instantaneous rate (last 2 seconds)
+            local inst_pps=$((delta_rx / i))
+            local inst_vxlan_pps=$((delta_vxlan / i))
+            
+            # Track performance history
+            pps_history+=("$inst_pps")
+            vxlan_history+=("$inst_vxlan_pps")
+            
+            # Calculate efficiency
+            local efficiency=0
+            if [ "$delta_rx" -gt 0 ]; then
+                efficiency=$(echo "$delta_vxlan $delta_rx" | awk '{printf "%.1f", ($1/$2)*100}')
+            fi
+            efficiency_history+=("$efficiency")
+            
+            # Status determination with anomaly detection
+            local status="NORMAL"
+            local status_color="green"
+            
+            if [ "$current_errors" -gt 0 ]; then
+                status="ERRORS"
+                status_color="red"
+            elif [ "$inst_pps" -gt "$anomaly_threshold" ]; then
+                status="SURGE"
+                status_color="yellow"
+            elif [ "$inst_pps" -gt 50000 ]; then
                 status="HIGH-RATE"
-            elif [ "$rx_rate" -gt 1000 ]; then
+                status_color="blue"
+            elif [ "$inst_pps" -gt 10000 ]; then
                 status="MODERATE"
-            elif [ "$rx_rate" -gt 0 ]; then
-                status="LOW-RATE"
+                status_color="green"
+            elif [ "$inst_pps" -gt 0 ]; then
+                status="ACTIVE"
+                status_color="green"
             else
                 status="IDLE"
+                status_color="yellow"
             fi
             
-            printf "\r[%02d/%02d] Δ packets: RX:%d VXLAN:%d NAT:%d | Rate:%d pps | %s" \
-                $i $monitoring_duration $new_rx $new_vxlan $new_nat $rx_rate "$status"
+            # Enhanced progress display
+            printf "\r\033[K"  # Clear line
+            printf "[%02d/%02d] " $i $monitoring_duration
+            case "$status_color" in
+                "red") printf "\033[31m" ;;
+                "yellow") printf "\033[33m" ;;
+                "blue") printf "\033[34m" ;;
+                "green") printf "\033[32m" ;;
+            esac
+            printf "Δ: RX:%d(+%d) VXLAN:%d NAT:%d | Rate:%d pps | Eff:%.1f%% | %s" \
+                $delta_rx $((delta_rx - (i > 2 ? ${pps_history[-2]}*2 : 0))) \
+                $delta_vxlan $delta_nat $inst_pps $efficiency "$status"
+            printf "\033[0m"  # Reset color
         else
-            printf "\r[%02d/%02d] Monitoring..." $i $monitoring_duration
+            printf "\r[%02d/%02d] Processing..." $i $monitoring_duration
         fi
         sleep 1
     done
@@ -170,23 +296,57 @@ run_end_to_end_test() {
     echo ""
     print_color "yellow" "Stopping captures and analyzing results..."
     
-    # Stop all captures with timeout to prevent hanging
-    {
-        kill $vxlan_pid 2>/dev/null || true
-        kill $egress_pid 2>/dev/null || true
-        kill $trace_pid 2>/dev/null || true
-    } &
+    # Enhanced cleanup with process tracking
+    local cleanup_timeout=10
+    local cleanup_success=true
     
-    # Wait briefly for graceful termination, then force kill if needed
+    print_color "blue" "Gracefully stopping ${#capture_pids[@]} capture processes..."
+    
+    # Phase 1: Graceful termination
+    for pid_info in "${capture_pids[@]}"; do
+        local pid="${pid_info%%:*}"
+        local name="${pid_info##*:}"
+        
+        if [ "$pid" -gt 0 ] && kill -0 "$pid" 2>/dev/null; then
+            print_color "blue" "  Stopping $name (PID: $pid)..."
+            kill "$pid" 2>/dev/null || true
+        fi
+    done
+    
+    # Wait for graceful termination
+    sleep 3
+    
+    # Phase 2: Force termination if needed
+    local force_killed=()
+    for pid_info in "${capture_pids[@]}"; do
+        local pid="${pid_info%%:*}"
+        local name="${pid_info##*:}"
+        
+        if [ "$pid" -gt 0 ] && kill -0 "$pid" 2>/dev/null; then
+            print_color "yellow" "  Force stopping $name (PID: $pid)..."
+            kill -9 "$pid" 2>/dev/null || true
+            force_killed+=("$name")
+            cleanup_success=false
+        fi
+    done
+    
+    # Report cleanup results
+    if [ "${#force_killed[@]}" -gt 0 ]; then
+        print_color "yellow" "⚠ Force-killed processes: ${force_killed[*]}"
+    else
+        print_color "green" "✓ All processes stopped gracefully"
+    fi
+    
+    # Additional cleanup - find any orphaned tcpdump processes
+    local orphaned=$(pgrep -f "tcpdump.*$test_dir" 2>/dev/null || true)
+    if [ -n "$orphaned" ]; then
+        print_color "yellow" "Cleaning up orphaned tcpdump processes: $orphaned"
+        echo "$orphaned" | xargs -r kill -9 2>/dev/null || true
+    fi
+    
+    # Wait for filesystem sync
     sleep 2
-    {
-        kill -9 $vxlan_pid 2>/dev/null || true
-        kill -9 $egress_pid 2>/dev/null || true  
-        kill -9 $trace_pid 2>/dev/null || true
-    } &>/dev/null
-    
-    # Brief wait for cleanup
-    sleep 1
+    sync
     
     # Get final statistics with timeout protection
     echo "Capturing final statistics..."
@@ -210,22 +370,49 @@ run_end_to_end_test() {
         sed -i "s/DEBUG_LEVEL=\".*\"/DEBUG_LEVEL=\"$original_debug\"/" "${SCRIPT_DIR}/../.env" 2>/dev/null || true
     fi
     
-    # Enhanced analysis and results
+    # Enhanced analysis and results with performance trends
     echo ""
     print_color "green" "Test Results Analysis"
-    echo "===================="
+    echo "==================="
     
-    # Traffic analysis with rates
+    # Performance trend analysis
+    local trend_analysis=""
+    if [ "${#pps_history[@]}" -gt 3 ]; then
+        local early_avg=$(printf "%s\n" "${pps_history[@]:0:3}" | awk '{sum+=$1} END {print int(sum/NR)}')
+        local late_avg=$(printf "%s\n" "${pps_history[@]: -3}" | awk '{sum+=$1} END {print int(sum/NR)}')
+        local trend_pct=$(echo "$late_avg $early_avg" | awk '{if($2>0) printf "%.1f", (($1-$2)/$2)*100; else print "N/A"}')
+        
+        if [ "$late_avg" -gt $((early_avg + early_avg * 10 / 100)) ]; then
+            trend_analysis="📈 INCREASING (${trend_pct}%)"
+        elif [ "$late_avg" -lt $((early_avg - early_avg * 10 / 100)) ]; then
+            trend_analysis="📉 DECREASING (${trend_pct}%)"
+        else
+            trend_analysis="📊 STABLE (${trend_pct}%)"
+        fi
+    else
+        trend_analysis="📊 INSUFFICIENT DATA"
+    fi
+    
+    # Traffic analysis with enhanced metrics
     local avg_pps=$((total_new_rx / monitoring_duration))
-    local throughput_mbps=$(echo "$total_new_bytes $monitoring_duration" | awk '{printf "%.2f", ($1*8)/(1024*1024*$2)}')
+    local peak_pps=0
+    if [ "${#pps_history[@]}" -gt 0 ]; then
+        peak_pps=$(printf "%s\n" "${pps_history[@]}" | sort -rn | head -1)
+    fi
     
-    echo "Traffic During Test (${monitoring_duration}s):"
-    echo "  Total RX:        $(format_number $total_new_rx) packets"
-    echo "  VXLAN processed: $(format_number $total_new_vxlan) packets"
-    echo "  NAT applied:     $(format_number $total_new_nat) packets"
-    echo "  Data volume:     $(format_bytes $total_new_bytes)"
-    echo "  Average PPS:     $(format_number $avg_pps)"
-    echo "  Throughput:      ${throughput_mbps} Mbps"
+    local throughput_mbps=$(echo "$total_new_bytes $monitoring_duration" | awk '{printf "%.2f", ($1*8)/(1024*1024*$2)}')
+    local avg_packet_size=$((total_new_bytes / (total_new_rx > 0 ? total_new_rx : 1)))
+    
+    echo "Traffic Analysis (${monitoring_duration}s, mode: $traffic_mode):"
+    echo "  Total RX:           $(format_number $total_new_rx) packets"
+    echo "  VXLAN processed:    $(format_number $total_new_vxlan) packets"
+    echo "  NAT applied:        $(format_number $total_new_nat) packets"
+    echo "  Data volume:        $(format_bytes $total_new_bytes)"
+    echo "  Average PPS:        $(format_number $avg_pps) (target: $(format_number $TARGET_PPS))"
+    echo "  Peak PPS:           $(format_number $peak_pps)"
+    echo "  Throughput:         ${throughput_mbps} Mbps"
+    echo "  Avg packet size:    ${avg_packet_size} bytes"
+    echo "  Performance trend:  $trend_analysis"
     
     # Processing efficiency analysis
     local vxlan_efficiency=100
@@ -241,71 +428,110 @@ run_end_to_end_test() {
     echo "  VXLAN processing:  ${vxlan_efficiency}% ($(format_number $total_new_vxlan)/$(format_number $total_new_rx))"
     echo "  NAT application:   ${nat_efficiency}% ($(format_number $total_new_nat)/$(format_number $total_new_rx))"
     
-    # Enhanced capture file analysis
+    # Enhanced capture file analysis with intelligent detection
     echo ""
-    echo "Capture File Analysis:"
+    echo "Capture Analysis:"
     
-    # Check all possible capture files
-    local capture_files=(
-        "sample_vxlan.pcap:Sample VXLAN (XDP may intercept before tcpdump)"
-        "sample_egress.pcap:Sample Egress" 
-        "ingress_udp.pcap:Ingress UDP"
-        "egress.pcap:Egress Traffic"
+    # Build comprehensive capture file map
+    local capture_files_map=(
+        "vxlan_sample.pcap:Sample VXLAN (Production High-Rate)"
+        "egress_sample.pcap:Sample Egress (Production High-Rate)"
+        "ingress_moderate.pcap:Moderate Ingress (Production Moderate)"
+        "egress_moderate.pcap:Moderate Egress (Production Moderate)"
+        "ingress_full.pcap:Full Ingress (Development)"
+        "egress_full.pcap:Full Egress (Development)"
+        "ingress_comprehensive.pcap:Comprehensive Ingress (Idle System)"
+        "egress_comprehensive.pcap:Comprehensive Egress (Idle System)"
+        "vxlan_specific.pcap:VXLAN-Specific (Port 4789)"
+        "bpf_trace_enhanced.log:Enhanced BPF Trace Log"
     )
     
     local total_captured=0
-    for file_info in "${capture_files[@]}"; do
+    local capture_summary=()
+    local vxlan_detected=false
+    
+    for file_info in "${capture_files_map[@]}"; do
         local file="${file_info%%:*}"
         local desc="${file_info##*:}"
         
         if [ -f "$test_dir/$file" ]; then
-            # Fixed packet counting with proper error handling and output sanitization
-            local count_raw=$(tcpdump -r "$test_dir/$file" 2>/dev/null | wc -l 2>/dev/null)
-            local count=$(echo "$count_raw" | tr -d '\n\r\t ' | grep -o '^[0-9]*' | head -1)
-            # Ensure count is a valid number, default to 0
-            if [ -z "$count" ] || ! [[ "$count" =~ ^[0-9]+$ ]]; then
-                count="0"
-            fi
-            echo "  $desc: $count packets"
-            total_captured=$((total_captured + count))
-            
-            # Basic packet analysis
-            if [ "$count" -gt 0 ]; then
-                local first_packet=$(tcpdump -r "$test_dir/$file" -c 1 -n 2>/dev/null | head -1 2>/dev/null || echo "")
-                if [ -n "$first_packet" ]; then
-                    echo "    Sample: ${first_packet:0:80}..."
+            if [[ "$file" == *.pcap ]]; then
+                # Enhanced packet analysis with protocol detection
+                local count_raw=$(tcpdump -r "$test_dir/$file" 2>/dev/null | wc -l 2>/dev/null)
+                local count=$(echo "$count_raw" | tr -d '\n\r\t ' | grep -o '^[0-9]*' | head -1)
+                if [ -z "$count" ] || ! [[ "$count" =~ ^[0-9]+$ ]]; then
+                    count="0"
                 fi
-            elif [[ "$file" == *"vxlan"* ]]; then
-                echo "    ℹ Empty VXLAN capture is normal - XDP processes packets before tcpdump"
+                
+                # Protocol analysis
+                local protocols=""
+                if [ "$count" -gt 0 ]; then
+                    local vxlan_count=$(tcpdump -r "$test_dir/$file" 'udp port 4789' 2>/dev/null | wc -l 2>/dev/null || echo "0")
+                    local udp_count=$(tcpdump -r "$test_dir/$file" 'udp' 2>/dev/null | wc -l 2>/dev/null || echo "0")
+                    local tcp_count=$(tcpdump -r "$test_dir/$file" 'tcp' 2>/dev/null | wc -l 2>/dev/null || echo "0")
+                    
+                    protocols="UDP:$udp_count"
+                    if [ "$vxlan_count" -gt 0 ]; then
+                        protocols="$protocols VXLAN:$vxlan_count"
+                        vxlan_detected=true
+                    fi
+                    if [ "$tcp_count" -gt 0 ]; then
+                        protocols="$protocols TCP:$tcp_count"
+                    fi
+                fi
+                
+                echo "  📊 $desc: $count packets ($protocols)"
+                total_captured=$((total_captured + count))
+                
+                # Sample packet analysis
+                if [ "$count" -gt 0 ]; then
+                    local sample=$(tcpdump -r "$test_dir/$file" -c 1 -n -q 2>/dev/null | head -1 2>/dev/null || echo "")
+                    if [ -n "$sample" ]; then
+                        echo "      └─ Sample: ${sample:0:90}..."
+                    fi
+                fi
+                
+                capture_summary+=("$file:$count")
+                
+            elif [[ "$file" == *.log ]]; then
+                # Enhanced log analysis
+                if [ -f "$test_dir/$file" ]; then
+                    local log_lines=$(wc -l < "$test_dir/$file" 2>/dev/null | tr -d '\n' || echo "0")
+                    if ! [[ "$log_lines" =~ ^[0-9]+$ ]]; then
+                        log_lines="0"
+                    fi
+                    
+                    echo "  📋 $desc: $log_lines lines"
+                    
+                    if [ "$log_lines" -gt 0 ]; then
+                        # Analyze log content
+                        local xdp_events=$(grep -c "xdp" "$test_dir/$file" 2>/dev/null || echo "0")
+                        local vxlan_events=$(grep -c "vxlan" "$test_dir/$file" 2>/dev/null || echo "0")
+                        local error_events=$(grep -ci "error" "$test_dir/$file" 2>/dev/null || echo "0")
+                        
+                        if [ "$xdp_events" -gt 0 ] || [ "$vxlan_events" -gt 0 ]; then
+                            echo "      └─ Events: XDP:$xdp_events VXLAN:$vxlan_events Errors:$error_events"
+                        fi
+                        
+                        # Show recent significant entries
+                        local recent=$(tail -2 "$test_dir/$file" 2>/dev/null | grep -v '^$' | head -1)
+                        if [ -n "$recent" ]; then
+                            echo "      └─ Recent: ${recent:0:80}..."
+                        fi
+                    else
+                        # Analyze why trace is empty
+                        if grep -q "not accessible" "$test_dir/$file" 2>/dev/null; then
+                            echo "      └─ ⚠ BPF tracing unavailable (permissions/debugfs)"
+                        elif grep -q "System Information" "$test_dir/$file" 2>/dev/null; then
+                            echo "      └─ ℹ System info collected (tracing unavailable)"
+                        else
+                            echo "      └─ ℹ Silent operation (no debug output from programs)"
+                        fi
+                    fi
+                fi
             fi
         fi
     done
-    
-    # Show trace log summary with enhanced diagnostics
-    if [ -f "$test_dir/bpf_trace.log" ]; then
-        local trace_lines=$(wc -l < "$test_dir/bpf_trace.log" 2>/dev/null | tr -d '\n' || echo "0")
-        # Ensure trace_lines is a valid number
-        if ! [[ "$trace_lines" =~ ^[0-9]+$ ]]; then
-            trace_lines="0"
-        fi
-        echo "  BPF trace logs:  $trace_lines lines captured"
-        
-        if [ "$trace_lines" -gt 0 ]; then
-            echo "    Recent entries:"
-            tail -3 "$test_dir/bpf_trace.log" 2>/dev/null | sed 's/^/      /' || true
-        else
-            # Provide diagnostic information for empty trace logs
-            if grep -q "not accessible" "$test_dir/bpf_trace.log" 2>/dev/null; then
-                echo "    ⚠ BPF kernel tracing not available (debugfs not mounted or no permissions)"
-                echo "    Note: This is normal on some systems and doesn't affect functionality"
-            else
-                echo "    ℹ No BPF debug traces captured (programs may not use bpf_trace_printk)"
-                echo "    Note: XDP programs often work silently without debug output"
-            fi
-        fi
-    else
-        echo "  BPF trace logs:  No trace file generated"
-    fi
     
     # VXLAN Processing Verification (since XDP intercepts before tcpdump)
     echo ""
