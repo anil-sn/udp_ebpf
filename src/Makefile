@@ -41,6 +41,9 @@ BPF_OBJ := vxlan_pipeline.bpf.o
 BPF_HEADER := vxlan_pipeline.h
 USER_PROG := vxlan_loader.c
 USER_BIN := vxlan_loader
+INJECTOR_PROG := packet_injector.c
+INJECTOR_BIN := packet_injector
+IP_LOADER_SCRIPT := load_ip_allowlist.py
 
 # Additional utilities
 SETUP_SCRIPT := setup_environment.sh
@@ -50,7 +53,7 @@ CONFIG_FILE := vxlan_config.conf
 .PHONY: all clean install uninstall check-deps setup test
 
 # Default target
-all: check-deps $(BPF_OBJ) $(USER_BIN)
+all: check-deps $(BPF_OBJ) $(USER_BIN) $(INJECTOR_BIN)
 
 # Compile eBPF program
 $(BPF_OBJ): $(BPF_PROG) $(BPF_HEADER)
@@ -63,6 +66,12 @@ $(USER_BIN): $(USER_PROG) $(BPF_OBJ) $(BPF_HEADER)
 	@echo "Compiling userspace controller..."
 	$(CC) $(USER_CFLAGS) $< -o $@ $(USER_LDFLAGS)
 	@echo "Userspace program compiled: $@"
+
+# Compile high-performance multithreaded packet injector
+$(INJECTOR_BIN): $(INJECTOR_PROG)
+	@echo "Compiling high-performance multithreaded packet injector..."
+	$(CC) $(USER_CFLAGS) -pthread $< -o $@ $(USER_LDFLAGS)
+	@echo "High-performance packet injector compiled: $@"
 
 # Check dependencies
 check-deps:
@@ -126,7 +135,7 @@ test: all
 # Clean build artifacts
 clean:
 	@echo "Cleaning build artifacts..."
-	rm -f $(BPF_OBJ) $(USER_BIN)
+	rm -f $(BPF_OBJ) $(USER_BIN) $(INJECTOR_BIN)
 	rm -f $(SETUP_SCRIPT)
 	rm -f *.o *.ll
 	@echo "Clean complete."

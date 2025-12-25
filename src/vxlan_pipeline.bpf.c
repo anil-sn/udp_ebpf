@@ -48,6 +48,7 @@
 #define BPF_MAP_TYPE_ARRAY              2
 #define BPF_MAP_TYPE_HASH               1
 #define BPF_MAP_TYPE_PERCPU_ARRAY       6
+#define BPF_MAP_TYPE_RINGBUF            27
 
 // BPF map flags
 #define BPF_F_NO_PREALLOC       0x01UL
@@ -58,6 +59,11 @@
 #define XDP_PASS    2
 #define XDP_TX      3
 #define XDP_REDIRECT 4
+
+/* Ring buffer helper functions */
+static void *(*bpf_ringbuf_reserve)(void *ringbuf, __u64 size, __u64 flags) = (void *) 131;
+static void (*bpf_ringbuf_submit)(void *data, __u64 flags) = (void *) 132;
+static void (*bpf_ringbuf_discard)(void *data, __u64 flags) = (void *) 133;
 
 // XDP metadata structure
 struct xdp_md {
@@ -248,6 +254,59 @@ struct {
     __type(value, __u32);                  /* Target interface index (from if_nametoindex) */
     __uint(max_entries, REDIRECT_MAP_MAX_ENTRIES);  /* Single redirect target */
 } redirect_map SEC(".maps");
+
+/* Ring buffer for packet forwarding to userspace */
+struct {
+    __uint(type, BPF_MAP_TYPE_RINGBUF);
+    __uint(max_entries, 1024 * 1024); /* 1MB buffer for high throughput */
+} packet_ringbuf SEC(".maps");
+
+/* Per-CPU ring buffers for multi-threaded processing (85K+ PPS) */
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __type(key, __u32);        /* CPU index */
+    __type(value, __u32);      /* Ring buffer FD (set by userspace) */
+    __uint(max_entries, 16);   /* Support up to 16 CPU cores */
+} percpu_ringbufs SEC(".maps");
+
+/* IP allowlist for filtering VXLAN packets */
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, __u32);        /* IPv4 address in network byte order */
+    __type(value, __u8);       /* 1 = allowed, 0 = blocked */
+    __uint(max_entries, 10000); /* Support up to 10K allowed IPs */
+} ip_allowlist SEC(".maps");
+
+/* Packet data structure for ring buffer */
+struct packet_event {
+    __u32 ifindex;     /* Target interface index */
+    __u16 len;         /* Packet length */
+    __u8 data[1500];   /* Packet data (max MTU) */
+} __attribute__((packed));
+
+/*
+ * IP Allowlist Filtering for High-Performance Selective Processing
+ * 
+ * Check if inner packet source or destination IP is in allowlist.
+ * This provides early filtering to reduce processing load for 85K+ PPS.
+ */
+static __always_inline int is_ip_allowed(struct iphdr *iph) {
+    if (!iph) return 0;
+    
+    /* Check destination IP first (most common case for NAT) */
+    __u8 *allowed = bpf_map_lookup_elem(&ip_allowlist, &iph->daddr);
+    if (allowed && *allowed == 1) {
+        return 1;
+    }
+    
+    /* Check source IP as backup */
+    allowed = bpf_map_lookup_elem(&ip_allowlist, &iph->saddr);
+    if (allowed && *allowed == 1) {
+        return 1;
+    }
+    
+    return 0; /* IP not in allowlist */
+}
 
 /*
  * Fast IP Header Checksum Calculation
@@ -584,6 +643,12 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     update_stat(STAT_INNER_PACKETS, 1);
     update_stat(STAT_BYTES_PROCESSED, bpf_ntohs(inner_iph->tot_len));
     
+    /* EARLY FILTERING: Check if IP is in allowlist for selective processing */
+    if (!is_ip_allowed(inner_iph)) {
+        /* IP not in allowlist - drop packet to reduce processing load */
+        return XDP_DROP;
+    }
+    
     /* Only process UDP inner packets */
     if (inner_iph->protocol != IPPROTO_UDP) {
         return XDP_PASS;
@@ -679,29 +744,33 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     __u32 *target_ifindex = bpf_map_lookup_elem(&redirect_map, &key);
     
     if (target_ifindex && *target_ifindex > 0) {
-        /* Use actual XDP_REDIRECT to force ens6 egress */
+        /* Send packet to userspace via ring buffer for ens6 injection */
         update_stat(STAT_REDIRECTED, 1);
         
-        /* Set destination MAC for proper L2 forwarding */
-        struct ethhdr *eth = (struct ethhdr *)data;
-        if ((void *)(eth + 1) <= data_end) {
-            __u32 if_key = 0;
-            struct interface_config *if_config = bpf_map_lookup_elem(&interface_map, &if_key);
-            if (if_config && if_config->ifindex > 0) {
-                /* Copy target interface MAC address */
-                eth->h_dest[0] = if_config->mac_addr[0];
-                eth->h_dest[1] = if_config->mac_addr[1]; 
-                eth->h_dest[2] = if_config->mac_addr[2];
-                eth->h_dest[3] = if_config->mac_addr[3];
-                eth->h_dest[4] = if_config->mac_addr[4];
-                eth->h_dest[5] = if_config->mac_addr[5];
-                
-                /* CRITICAL: Use XDP_REDIRECT to force ens6 egress */
-                return bpf_redirect(if_config->ifindex, 0);
-            }
+        /* Calculate packet length */
+        __u32 pkt_len = data_end - data;
+        if (pkt_len > 1500) {
+            pkt_len = 1500; /* Limit to max packet data size */
         }
         
-        /* Fallback if interface config fails - drop to prevent ens5 egress */
+        /* Reserve space in ring buffer */
+        __u32 event_size = sizeof(__u32) + sizeof(__u16) + pkt_len;
+        struct packet_event *event = bpf_ringbuf_reserve(&packet_ringbuf, event_size, 0);
+        if (event) {
+            /* Copy packet metadata */
+            event->ifindex = *target_ifindex;
+            event->len = pkt_len;
+            
+            /* Copy packet data safely */
+            if (pkt_len > 0 && data + pkt_len <= data_end) {
+                __builtin_memcpy(event->data, data, pkt_len);
+            }
+            
+            /* Submit to userspace */
+            bpf_ringbuf_submit(event, 0);
+        }
+        
+        /* Drop from ens5 - userspace will reinject to ens6 */
         return XDP_DROP;
     }
 
