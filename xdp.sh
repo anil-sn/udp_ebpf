@@ -64,6 +64,10 @@ start() {
     echo -e "${YELLOW}Cleaning any orphaned XDP programs...${NC}"
     sudo ip link set $INTERFACE xdp off 2>/dev/null || true
     
+    # Set MTU to safe value for XDP (max 3498, use 3000 for safety)
+    echo -e "${YELLOW}Configuring interface MTU for XDP...${NC}"
+    sudo ip link set $INTERFACE mtu 3000
+    
     # Start background process with comprehensive redirection
     echo -e "${BLUE}Launching vxlan_loader...${NC}"
     # Change to src directory where .bpf.o file is located and fix log path
