@@ -86,8 +86,6 @@ get_nat_rules() {
             return 0
         fi
     else
-        fi
-    else
         # Fallback to text parsing - extract individual components
         local src_ports=$(echo "$nat_data" | grep -o '"src_port":[0-9]*' | cut -d':' -f2)
         local target_ips=$(echo "$nat_data" | grep -o '"target_ip":[0-9]*' | cut -d':' -f2)
