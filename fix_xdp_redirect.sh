@@ -56,9 +56,10 @@ make clean >/dev/null 2>&1
 make all >/dev/null 2>&1
 cd ..
 
-# Start XDP program with explicit target interface
+# Start XDP program with explicit target interface (run from src directory)
 echo "🚀 Starting XDP program with ens6 redirect..."
-sudo ./src/vxlan_loader \
+cd src
+sudo ./vxlan_loader \
     -i $INTERFACE \
     -t $TARGET_INTERFACE \
     -a $NAT_IP \
@@ -67,6 +68,7 @@ sudo ./src/vxlan_loader \
     -v &
 
 XDP_PID=$!
+cd ..
 echo "   XDP Program PID: $XDP_PID"
 
 # Wait for program to initialize
