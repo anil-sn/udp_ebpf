@@ -240,6 +240,19 @@ cleanup_bpf() {
                 # Program will auto-cleanup when no longer referenced
             fi
         done
+        print_color "green" "✓ All XDP programs successfully removed"
+    fi
+    
+    # Clean up pinned maps created by vxlan_loader for packet_injector
+    print_color "yellow" "Cleaning pinned BPF maps..."
+    sudo rm -f /sys/fs/bpf/vxlan_stats_map 2>/dev/null || true
+    sudo rm -f /sys/fs/bpf/vxlan_nat_map 2>/dev/null || true
+    sudo rm -f /sys/fs/bpf/vxlan_redirect_map 2>/dev/null || true
+    sudo rm -f /sys/fs/bpf/vxlan_interface_map 2>/dev/null || true
+    sudo rm -f /sys/fs/bpf/vxlan_ip_allowlist 2>/dev/null || true
+    sudo rm -f /sys/fs/bpf/vxlan_packet_ringbuf 2>/dev/null || true
+            fi
+        done
     fi
     
     # Remove pinned BPF objects
