@@ -99,6 +99,8 @@ case $OS in
         ;;
 esac
 
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 echo ""
 echo -e "${GREEN}✓ Dependency installation complete!${NC}"
 echo ""
