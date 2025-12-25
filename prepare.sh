@@ -109,7 +109,46 @@ install_dependencies() {
                     log "bpftool installed successfully"
                     info "bpftool version: $(bpftool version 2>/dev/null | head -1 || echo 'installed')"
                 else
-                    warn "bpftool installation may have failed - XDP debugging will be limited"
+                    warn "bpftool installation may have failed - attempting source build..."
+                    
+                    # Install additional dependencies for bpftool source build
+                    sudo apt-get install -y libssl-dev binutils-dev libcap-dev
+                    
+                    # Build bpftool from source (more reliable)
+                    local bpftool_dir="/tmp/bpftool-source"
+                    [ -d "$bpftool_dir" ] && rm -rf "$bpftool_dir"
+                    
+                    info "Cloning bpftool source repository..."
+                    if git clone --recurse-submodules https://github.com/libbpf/bpftool.git "$bpftool_dir"; then
+                        cd "$bpftool_dir/src"
+                        
+                        info "Building bpftool from source..."
+                        if make -j$(nproc) && sudo make install; then
+                            log "bpftool built and installed from source"
+                            
+                            # Fix PATH to prioritize /usr/local/sbin
+                            if ! grep -q "/usr/local/sbin.*PATH" ~/.bashrc 2>/dev/null; then
+                                echo 'export PATH="/usr/local/sbin:$PATH"' >> ~/.bashrc
+                                export PATH="/usr/local/sbin:$PATH"
+                                info "Updated PATH to prioritize /usr/local/sbin"
+                            fi
+                            
+                            # Verify the source-built version works
+                            if /usr/local/sbin/bpftool version >/dev/null 2>&1; then
+                                log "Source-built bpftool verified working"
+                                info "bpftool version: $(/usr/local/sbin/bpftool version 2>/dev/null | head -1)"
+                            else
+                                warn "Source-built bpftool may have issues"
+                            fi
+                        else
+                            error "Failed to build bpftool from source"
+                        fi
+                        
+                        cd "$PROJECT_ROOT"
+                        rm -rf "$bpftool_dir"
+                    else
+                        error "Failed to clone bpftool repository"
+                    fi
                 fi
             else
                 log "bpftool already available"
