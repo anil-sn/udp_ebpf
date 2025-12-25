@@ -267,8 +267,9 @@ clean() {
     sleep 3
     
     # Verify cleanup
-    remaining=$(sudo bpftool prog show 2>/dev/null | grep -c "vxlan_pipeline_main" || echo "0")
-    if [ "$remaining" -eq "0" ]; then
+    remaining=$(sudo bpftool prog show 2>/dev/null | grep -c "vxlan_pipeline_main" 2>/dev/null || echo "0")
+    remaining=$(echo "$remaining" | tail -1 | tr -d '\n')  # Ensure single line, no newlines
+    if [ "$remaining" -eq "0" ] 2>/dev/null; then
         echo -e "${GREEN}✓ All BPF programs cleaned up${NC}"
     else
         echo -e "${YELLOW}Warning: $remaining BPF programs may still be loaded${NC}"
