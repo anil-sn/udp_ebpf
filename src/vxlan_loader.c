@@ -429,6 +429,39 @@ static int load_bpf_program()
         return -1;
     }
     
+    /* Pin maps for packet_injector access */
+    struct bpf_map *stats_map = bpf_object__find_map_by_name(bpf_obj, "stats_map");
+    struct bpf_map *nat_map = bpf_object__find_map_by_name(bpf_obj, "nat_map");
+    struct bpf_map *redirect_map = bpf_object__find_map_by_name(bpf_obj, "redirect_map");
+    struct bpf_map *interface_map = bpf_object__find_map_by_name(bpf_obj, "interface_map");
+    struct bpf_map *ip_allowlist_map = bpf_object__find_map_by_name(bpf_obj, "ip_allowlist");
+    struct bpf_map *ringbuf_map = bpf_object__find_map_by_name(bpf_obj, "packet_ringbuf");
+    
+    /* Create pinning directory if it doesn't exist */
+    system("mkdir -p /sys/fs/bpf");
+    
+    /* Pin all maps */
+    if (stats_map && bpf_map__pin(stats_map, "/sys/fs/bpf/vxlan_stats_map")) {
+        fprintf(stderr, "Warning: Failed to pin stats_map\n");
+    }
+    if (nat_map && bpf_map__pin(nat_map, "/sys/fs/bpf/vxlan_nat_map")) {
+        fprintf(stderr, "Warning: Failed to pin nat_map\n");
+    }
+    if (redirect_map && bpf_map__pin(redirect_map, "/sys/fs/bpf/vxlan_redirect_map")) {
+        fprintf(stderr, "Warning: Failed to pin redirect_map\n");
+    }
+    if (interface_map && bpf_map__pin(interface_map, "/sys/fs/bpf/vxlan_interface_map")) {
+        fprintf(stderr, "Warning: Failed to pin interface_map\n");
+    }
+    if (ip_allowlist_map && bpf_map__pin(ip_allowlist_map, "/sys/fs/bpf/vxlan_ip_allowlist")) {
+        fprintf(stderr, "Warning: Failed to pin ip_allowlist\n");
+    }
+    if (ringbuf_map && bpf_map__pin(ringbuf_map, "/sys/fs/bpf/vxlan_packet_ringbuf")) {
+        fprintf(stderr, "Warning: Failed to pin packet_ringbuf\n");
+    }
+    
+    printf("Maps pinned to /sys/fs/bpf/ for packet_injector access\n");
+    
     printf("eBPF program loaded successfully\n");
     return 0;
 }

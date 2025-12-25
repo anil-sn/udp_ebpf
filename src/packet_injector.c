@@ -1037,84 +1037,50 @@ int main(int argc, char **argv) {
     printf("[+] Loading BPF program: %s\n", bpf_program);
     
     /*
-     * STEP 1: OPEN BPF OBJECT FILE
-     * ============================
+     * STEP 1: ACCESS PINNED MAPS (NO XDP LOADING)
+     * ============================================
      * 
-     * Open the compiled BPF object file containing:
-     * - XDP program bytecode
-     * - Map definitions (ring buffer, IP allowlist)
-     * - BTF type information
-     * - Relocation data
+     * Access existing BPF maps created by vxlan_loader instead of
+     * loading the entire BPF object which would create duplicate XDP programs.
+     * This implements proper separation of concerns:
+     * - vxlan_loader: XDP program + map creation
+     * - packet_injector: map access only for userspace processing
      */
-    struct bpf_object *obj = bpf_object__open(bpf_program);
-    if (!obj) {
-        fprintf(stderr, "[!] Failed to open BPF object: %s\n", bpf_program);
-        fprintf(stderr, "    Check if file exists and is a valid BPF object\n");
+    printf("[+] Accessing pinned BPF maps from vxlan_loader...\n");
+    
+    /* Access pinned ring buffer map */
+    int ringbuf_fd = bpf_obj_get("/sys/fs/bpf/vxlan_packet_ringbuf");
+    if (ringbuf_fd < 0) {
+        fprintf(stderr, "[!] Failed to access pinned packet_ringbuf map\n");
+        fprintf(stderr, "    Ensure vxlan_loader is running and has pinned maps\n");
+        fprintf(stderr, "    Error: %s\n", strerror(errno));
         return 1;
     }
     
-    /*
-     * STEP 2: LOAD BPF PROGRAM INTO KERNEL
-     * ====================================
-     * 
-     * Load the BPF program into kernel, which involves:
-     * - BPF verifier checking program safety
-     * - JIT compilation for optimal performance
-     * - Map creation and initialization
-     * - Program validation and linking
-     */
-    if (bpf_object__load(obj)) {
-        fprintf(stderr, "[!] Failed to load BPF object into kernel\n");
-        fprintf(stderr, "    Common issues:\n");
-        fprintf(stderr, "    - BPF verifier rejection (check program logic)\n");
-        fprintf(stderr, "    - Missing kernel BPF features\n");
-        fprintf(stderr, "    - Insufficient privileges (need CAP_BPF)\n");
-        bpf_object__close(obj);
-        return 1;
-    }
-    
-    printf("[+] BPF program loaded successfully\n");
+    printf("[+] Ring buffer map accessed (fd: %d)\n", ringbuf_fd);
     
     /*
-     * STEP 3: LOCATE RING BUFFER MAP
-     * ==============================
-     * 
-     * Find the ring buffer map that will be used for high-performance
-     * kernel-to-userspace packet transfer. This map must match the
-     * name defined in the BPF program source.
-     */
-    struct bpf_map *ringbuf_map = bpf_object__find_map_by_name(obj, "packet_ringbuf");
-    if (!ringbuf_map) {
-        fprintf(stderr, "[!] Failed to find packet_ringbuf map\n");
-        fprintf(stderr, "    Ensure BPF program defines 'packet_ringbuf' map\n");
-        bpf_object__close(obj);
-        return 1;
-    }
-    
-    printf("[+] Ring buffer map located\n");
-    
-    /*
-     * STEP 4: SETUP RING BUFFER EVENT PROCESSING
+     * STEP 2: SETUP RING BUFFER EVENT PROCESSING
      * ==========================================
      * 
-     * Create ring buffer consumer that will process packet events
-     * from the kernel. This establishes the high-performance
-     * communication channel between XDP and userspace workers.
+     * Create ring buffer consumer using the pinned map file descriptor.
+     * This establishes the high-performance communication channel
+     * between XDP (loaded by vxlan_loader) and userspace workers.
      * 
      * CONFIGURATION:
      * - Event handler: handle_ring_buffer_event function
      * - No additional context or custom options needed
      * - Automatic event batching for efficiency
      */
-    rb = ring_buffer__new(bpf_map__fd(ringbuf_map), handle_ring_buffer_event, NULL, NULL);
+    rb = ring_buffer__new(ringbuf_fd, handle_ring_buffer_event, NULL, NULL);
     if (!rb) {
         fprintf(stderr, "[!] Failed to create ring buffer consumer\n");
         fprintf(stderr, "    This may indicate insufficient memory or kernel issues\n");
-        bpf_object__close(obj);
+        close(ringbuf_fd);
         return 1;
     }
     
-    printf("[+] Ring buffer consumer created\n");
+    printf("[+] Ring buffer consumer created (map-only mode)\n");
     
     /*
      * PERFORMANCE MONITORING THREAD STARTUP
@@ -1252,14 +1218,14 @@ int main(int argc, char **argv) {
      * 
      * Clean up all allocated resources to ensure proper system state:
      * - Ring buffer consumer resources
-     * - BPF program and maps
+     * - File descriptors (no BPF object to close in map-only mode)
      * - Memory-mapped packet pools
      */
     ring_buffer__free(rb);
     printf("[+] Ring buffer resources freed\n");
     
-    bpf_object__close(obj);
-    printf("[+] BPF program unloaded\n");
+    close(ringbuf_fd);
+    printf("[+] Pinned map file descriptors closed\n");
     
     if (munmap(packet_pool, pool_size * sizeof(struct packet_buffer)) != 0) {
         perror("[!] Warning: Failed to unmap memory pool");
