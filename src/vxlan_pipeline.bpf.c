@@ -700,12 +700,12 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
             }
         }
         
-        /* Return XDP_PASS to let kernel route via bridge/interface */
-        return XDP_PASS;
+        /* Return XDP_DROP to prevent ens5 egress - userspace will handle ens6 injection */
+        return XDP_DROP;
     }
-    
-    /* No specific target - let kernel routing handle it */
-    return XDP_PASS;
+
+    /* No specific target - drop NAT packets to prevent ens5 egress */
+    return XDP_DROP;
 }
 
 char _license[] SEC("license") = "GPL";
