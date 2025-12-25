@@ -64,20 +64,9 @@
 #define REDIRECT_MAP_TYPE              BPF_MAP_TYPE_ARRAY
 
 /* =================================================================== */
-/* DEFAULT CONFIGURATION VALUES                                        */
+/* PROTOCOL CONSTANTS ONLY - NO HARDCODED CONFIG                     */
+/* All configuration values passed via command line from xdp.sh       */
 /* =================================================================== */
-
-/* NAT Configuration */
-#define DEFAULT_NAT_SOURCE_PORT        31765        /* Default port for NAT matching */
-#define DEFAULT_NAT_TARGET_IP          "10.2.41.17" /* Default target IP (example) */
-#define DEFAULT_NAT_TARGET_PORT        8081         /* Default target port (example) */
-
-/* Interface Configuration */
-#define DEFAULT_INGRESS_INTERFACE      "ens4"       /* Default input interface */
-#define DEFAULT_EGRESS_INTERFACE       "ens5"       /* Default output interface */
-
-/* Monitoring Configuration */
-#define DEFAULT_STATS_INTERVAL         5            /* Default statistics reporting interval (seconds) */
 
 /* =================================================================== */
 /* PERFORMANCE TUNING CONSTANTS                                        */
@@ -158,17 +147,10 @@ extern int current_debug_level;
 /* AWS TRAFFIC MIRROR SPECIFIC                                         */
 /* =================================================================== */
 
-/* AWS Constants */
+/* AWS Constants (Protocol Requirements) */
 #define AWS_MIRROR_VNI                 1            /* AWS Traffic Mirror always uses VNI 1 */
 #define AWS_NLB_MTU                    9000         /* AWS NLB maximum MTU */
 #define AWS_VPC_MTU                    1500         /* AWS VPC standard MTU */
-
-/* Example Values from User Analysis */
-#define EXAMPLE_SOURCE_IP              "10.2.41.20"   /* Example source from hex dump */
-#define EXAMPLE_SOURCE_PORT            42844           /* Example port from hex dump */
-#define EXAMPLE_TARGET_IP              "10.2.41.17"    /* Example NAT target from analysis */
-#define EXAMPLE_TARGET_PORT            8081            /* Example NAT target port */
-#define EXAMPLE_LARGE_PACKET_SIZE      2852            /* Example jumbo frame size */
 
 /* =================================================================== */
 /* COMPILER AND OPTIMIZATION HINTS                                     */

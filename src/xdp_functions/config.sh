@@ -34,11 +34,11 @@ load_configuration() {
 
 # Load default configuration
 load_default_config() {
-    INTERFACE="${INTERFACE:-ens4}"
-    TARGET_INTERFACE="${TARGET_INTERFACE:-ens5}"
-    NAT_IP="${NAT_IP:-10.2.41.17}"
+    INTERFACE="${INTERFACE:-ens5}"
+    TARGET_INTERFACE="${TARGET_INTERFACE:-ens6}"
+    NAT_IP="${NAT_IP:-172.30.82.95}"
     NAT_PORT="${NAT_PORT:-8081}"
-    SOURCE_PORT="${SOURCE_PORT:-42844}"
+    SOURCE_PORT="${SOURCE_PORT:-31765}"
     STATS_INTERVAL="${STATS_INTERVAL:-5}"
     LOG_FILE="${LOG_FILE:-/tmp/vxlan_loader.log}"
     TARGET_PPS="${TARGET_PPS:-85000}"
