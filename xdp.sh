@@ -48,6 +48,16 @@ fix_terminal() {
     tput sgr0 2>/dev/null # Reset all attributes
 }
 
+# Helper to convert integer IP to dotted decimal notation
+int_to_ip() {
+    local ip_int="$1"
+    printf "%d.%d.%d.%d" \
+        $((ip_int & 0xFF)) \
+        $(((ip_int >> 8) & 0xFF)) \
+        $(((ip_int >> 16) & 0xFF)) \
+        $(((ip_int >> 24) & 0xFF))
+}
+
 start() {
     fix_terminal
     echo -e "${BLUE}Starting XDP VXLAN Pipeline...${NC}"
@@ -455,143 +465,232 @@ stats() {
     fi
 }
 
-# Comprehensive info function with all eBPF details
+# Comprehensive info function with all eBPF details formatted as tables
 info() {
-    echo -e "${GREEN}XDP VXLAN Pipeline - Comprehensive Information${NC}"
-    echo "================================================="
+    echo -e "${GREEN}XDP VXLAN Pipeline - Debug Information${NC}"
+    echo "======================================="
     
-    # XDP Programs
-    echo -e "\n${YELLOW}=== XDP PROGRAM DETAILS ===${NC}"
+    # XDP Programs Summary
+    echo -e "\n${YELLOW}=== XDP PROGRAM STATUS ===${NC}"
     XDP_PROGS=$(sudo bpftool prog list 2>/dev/null | grep -c "vxlan_pipeline_main" || echo "0")
     if [ "$XDP_PROGS" -gt "0" ]; then
-        echo -e "${GREEN}✓ XDP Programs: $XDP_PROGS loaded${NC}"
-        sudo bpftool prog list | grep -A3 -B1 "vxlan_pipeline_main"
+        echo -e "${GREEN}✓ Active XDP Programs: $XDP_PROGS${NC}"
+        
+        echo -e "\n┌─────────────────────────────────────────────────────────────────────┐"
+        echo -e "│                         XDP Program Details                         │"
+        echo -e "├──────┬─────────┬────────────────┬─────────┬──────────┬─────────────┤"
+        echo -e "│  ID  │   Tag   │     Size       │  Maps   │   PID    │   Status    │"
+        echo -e "├──────┼─────────┼────────────────┼─────────┼──────────┼─────────────┤"
+        
+        sudo bpftool prog list 2>/dev/null | grep -A1 "vxlan_pipeline_main" | while IFS= read -r line; do
+            if [[ $line =~ ^([0-9]+):[[:space:]]+xdp[[:space:]]+name[[:space:]]+vxlan_pipeline_main[[:space:]]+tag[[:space:]]+([a-f0-9]+) ]]; then
+                PROG_ID="${BASH_REMATCH[1]}"
+                TAG="${BASH_REMATCH[2]}"
+                # Get additional details
+                DETAIL_LINE=$(echo "$line" | grep -o 'xlated [0-9]*B.*memlock [0-9]*B')
+                if [ -n "$DETAIL_LINE" ]; then
+                    SIZE=$(echo "$DETAIL_LINE" | grep -o 'xlated [0-9]*B' | cut -d' ' -f2)
+                    MAP_IDS=$(echo "$line" | grep -o 'map_ids [0-9,]*' | cut -d' ' -f2 | tr ',' ' ' | wc -w)
+                    PID_LINE=$(sudo bpftool prog list id "$PROG_ID" 2>/dev/null | grep 'pids')
+                    if [ -n "$PID_LINE" ]; then
+                        PID_INFO=$(echo "$PID_LINE" | cut -d'(' -f2 | cut -d')' -f1)
+                    else
+                        PID_INFO="N/A"
+                    fi
+                    printf "│ %4s │ %7s │ %14s │ %7d │ %8s │ %-11s │\n" "$PROG_ID" "${TAG:0:7}" "$SIZE" "$MAP_IDS" "$PID_INFO" "Active"
+                fi
+            fi
+        done
+        echo -e "└──────┴─────────┴────────────────┴─────────┴──────────┴─────────────┘"
     else
         echo -e "${RED}✗ No XDP programs loaded${NC}"
     fi
     
-    # Network attachment
+    # Network Interface Attachment
     echo -e "\n${YELLOW}=== NETWORK ATTACHMENT ===${NC}"
-    sudo bpftool net list
-    
-    # All BPF Maps
-    echo -e "\n${YELLOW}=== BPF MAPS OVERVIEW ===${NC}"
-    echo "All pipeline-related maps:"
-    sudo bpftool map list | grep -E "(nat_map|stats_map|ip_allowlist|redirect_map|interface_map)"
-    
-    # NAT Rules (Full)
-    echo -e "\n${YELLOW}=== NAT CONFIGURATION (FULL) ===${NC}"
-    if sudo bpftool map show name nat_map > /dev/null 2>&1; then
-        NAT_COUNT=$(sudo bpftool map dump name nat_map 2>/dev/null | grep -c "key" || echo "0")
-        echo "Total NAT rules: $NAT_COUNT"
-        if [ "$NAT_COUNT" -gt "0" ]; then
-            echo "Complete NAT map dump:"
-            sudo bpftool map dump name nat_map
-        else
-            echo "No NAT rules configured"
-        fi
+    ATTACHMENT=$(sudo bpftool net list 2>/dev/null | grep -E '^xdp:|^tc:')
+    if [ -n "$ATTACHMENT" ]; then
+        echo "$ATTACHMENT"
     else
-        echo -e "${RED}NAT map not found${NC}"
+        echo "No XDP programs attached to interfaces"
     fi
     
-    # IP Allowlist (Full)
-    echo -e "\n${YELLOW}=== IP ALLOWLIST (FULL) ===${NC}"
-    if sudo bpftool map show name ip_allowlist > /dev/null 2>&1; then
-        IP_COUNT=$(sudo bpftool map dump name ip_allowlist 2>/dev/null | grep -c "key" || echo "0")
-        echo "Total allowed IPs: $IP_COUNT"
-        if [ "$IP_COUNT" -gt "0" ]; then
-            echo "Complete IP allowlist dump:"
-            sudo bpftool map dump name ip_allowlist | head -50  # Limit to first 50 for readability
-            if [ "$IP_COUNT" -gt "50" ]; then
-                echo "... (showing first 50 of $IP_COUNT total IPs)"
-            fi
-        else
-            echo "No IPs in allowlist"
-        fi
-    else
-        echo -e "${RED}IP allowlist map not found${NC}"
-    fi
+    # NAT Rules Table
+    echo -e "\n${YELLOW}=== NAT CONFIGURATION ===${NC}"
+    NAT_JSON=$(sudo bpftool map dump name nat_map 2>/dev/null | jq -r '.[] | select(.elements) | .elements[] | "\(.key.src_port),\(.value.target_ip),\(.value.target_port)"' 2>/dev/null)
     
-    # Statistics Map (Full)
-    echo -e "\n${YELLOW}=== STATISTICS MAP (FULL) ===${NC}"
-    if sudo bpftool map show name stats_map > /dev/null 2>&1; then
-        echo "Complete statistics map dump:"
-        sudo bpftool map dump name stats_map
-    else
-        echo -e "${RED}Statistics map not found${NC}"
-    fi
-    
-    # Other Maps
-    echo -e "\n${YELLOW}=== OTHER PIPELINE MAPS ===${NC}"
-    
-    # Redirect map
-    if sudo bpftool map show name redirect_map > /dev/null 2>&1; then
-        echo "Redirect map:"
-        sudo bpftool map dump name redirect_map
-    fi
-    
-    # Interface map
-    if sudo bpftool map show name interface_map > /dev/null 2>&1; then
-        echo "Interface map:"
-        sudo bpftool map dump name interface_map
-    fi
-    
-    # Per-CPU breakdown
-    echo -e "\n${YELLOW}=== PER-CPU BREAKDOWN ===${NC}"
-    if sudo bpftool map show name stats_map > /dev/null 2>&1; then
-        STATS_JSON=$(sudo bpftool map dump name stats_map 2>/dev/null)
-        if [ -n "$STATS_JSON" ]; then
-            echo "CPU | RX Packets  | Processed   | Dropped     | VXLAN       | NAT Applied"
-            echo "----+-------------+-------------+-------------+-------------+------------"
-            for cpu in 0 1 2 3 4 5 6 7; do
-                CPU_RX=$(echo "$STATS_JSON" | jq -r "first(.[] | select(.name == \"stats_map\")) | .elements[] | select(.key == 0) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
-                CPU_PROC=$(echo "$STATS_JSON" | jq -r "first(.[] | select(.name == \"stats_map\")) | .elements[] | select(.key == 1) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
-                CPU_DROP=$(echo "$STATS_JSON" | jq -r "first(.[] | select(.name == \"stats_map\")) | .elements[] | select(.key == 4) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
-                CPU_VXLAN=$(echo "$STATS_JSON" | jq -r "first(.[] | select(.name == \"stats_map\")) | .elements[] | select(.key == 5) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
-                CPU_NAT=$(echo "$STATS_JSON" | jq -r "first(.[] | select(.name == \"stats_map\")) | .elements[] | select(.key == 6) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
-                
-                if [ "$CPU_RX" -gt 0 ] || [ "$CPU_PROC" -gt 0 ] || [ "$CPU_DROP" -gt 0 ] || [ "$CPU_VXLAN" -gt 0 ] || [ "$CPU_NAT" -gt 0 ]; then
-                    printf " %d  | %11s | %11s | %11s | %11s | %s\n" "$cpu" \
-                        "$(printf "%'d" "$CPU_RX" 2>/dev/null || echo "$CPU_RX")" \
-                        "$(printf "%'d" "$CPU_PROC" 2>/dev/null || echo "$CPU_PROC")" \
-                        "$(printf "%'d" "$CPU_DROP" 2>/dev/null || echo "$CPU_DROP")" \
-                        "$(printf "%'d" "$CPU_VXLAN" 2>/dev/null || echo "$CPU_VXLAN")" \
-                        "$(printf "%'d" "$CPU_NAT" 2>/dev/null || echo "$CPU_NAT")"
-                fi
-            done
-        fi
-    fi
-    
-    # Interface statistics
-    echo -e "\n${YELLOW}Interface Statistics ($INTERFACE):${NC}"
-    if [ -f "/sys/class/net/$INTERFACE/statistics/rx_packets" ]; then
-        RX_PACKETS=$(cat /sys/class/net/$INTERFACE/statistics/rx_packets 2>/dev/null || echo "0")
-        TX_PACKETS=$(cat /sys/class/net/$INTERFACE/statistics/tx_packets 2>/dev/null || echo "0")
-        RX_BYTES=$(cat /sys/class/net/$INTERFACE/statistics/rx_bytes 2>/dev/null || echo "0")
-        TX_BYTES=$(cat /sys/class/net/$INTERFACE/statistics/tx_bytes 2>/dev/null || echo "0")
+    if [ -n "$NAT_JSON" ]; then
+        NAT_COUNT=$(echo "$NAT_JSON" | wc -l)
+        echo "Active NAT Rules: $NAT_COUNT"
+        echo ""
+        echo "┌─────────────┬─────────────────┬──────────────┬────────────────────┐"
+        echo "│ Source Port │   Target IP     │ Target Port  │      Status        │"
+        echo "├─────────────┼─────────────────┼──────────────┼────────────────────┤"
         
-        echo "RX: $RX_PACKETS packets ($RX_BYTES bytes)"
-        echo "TX: $TX_PACKETS packets ($TX_BYTES bytes)"
+        echo "$NAT_JSON" | while IFS=',' read -r src_port target_ip_int target_port; do
+            if [ -n "$src_port" ] && [ -n "$target_ip_int" ] && [ -n "$target_port" ]; then
+                TARGET_IP=$(int_to_ip "$target_ip_int")
+                printf "│    %5d    │ %15s │    %6d    │       Active       │\n" \
+                    "$src_port" "$TARGET_IP" "$target_port"
+            fi
+        done
+        echo "└─────────────┴─────────────────┴──────────────┴────────────────────┘"
     else
-        echo "Interface statistics not available"
+        echo "No NAT rules configured"
     fi
     
-    # Process status
-    echo -e "\n${YELLOW}Process Status:${NC}"
-    LOADER_PID=$(pgrep -f "vxlan_loader" 2>/dev/null || echo "")
-    INJECTOR_PID=$(pgrep -f "packet_injector" 2>/dev/null || echo "")
+    # IP Allowlist Table
+    echo -e "\n${YELLOW}=== IP ALLOWLIST ===${NC}"
+    IP_JSON=$(sudo bpftool map dump name ip_allowlist 2>/dev/null | jq -r '.[] | select(.elements) | .elements[].key' 2>/dev/null)
     
-    if [ -n "$LOADER_PID" ]; then
-        echo -e "${GREEN}✓ vxlan_loader: Running (PID: $LOADER_PID)${NC}"
+    if [ -n "$IP_JSON" ]; then
+        IP_COUNT=$(echo "$IP_JSON" | wc -l)
+        echo "Allowed IP Addresses: $IP_COUNT total"
+        echo ""
+        echo "┌─────────────────┬────────────────────────────────────────────────┐"
+        echo "│   IP Address    │                   Status                       │"
+        echo "├─────────────────┼────────────────────────────────────────────────┤"
+        
+        # Show first 20 IPs to keep output manageable
+        echo "$IP_JSON" | head -20 | while read -r ip_int; do
+            if [ -n "$ip_int" ]; then
+                IP_ADDR=$(int_to_ip "$ip_int")
+                printf "│ %15s │                    Allowed                     │\n" "$IP_ADDR"
+            fi
+        done
+        
+        if [ "$IP_COUNT" -gt 20 ]; then
+            printf "│       ...       │              ... (%d more IPs)                │\n" $((IP_COUNT - 20))
+        fi
+        echo "└─────────────────┴────────────────────────────────────────────────┘"
     else
-        echo -e "${RED}✗ vxlan_loader: Not running${NC}"
+        echo "No IPs in allowlist"
     fi
     
-    if [ -n "$INJECTOR_PID" ]; then
-        echo -e "${GREEN}✓ packet_injector: Running (PID: $INJECTOR_PID)${NC}"
+    # BPF Maps Summary
+    echo -e "\n${YELLOW}=== BPF MAPS SUMMARY ===${NC}"
+    echo "┌─────────────────┬─────┬──────────┬─────────┬─────────────────────────┐"
+    echo "│   Map Name      │ ID  │   Type   │ Elements│         Purpose         │"
+    echo "├─────────────────┼─────┼──────────┼─────────┼─────────────────────────┤"
+    
+    sudo bpftool map list 2>/dev/null | grep -E "(nat_map|stats_map|ip_allowlist|redirect_map|interface_map)" | while read -r line; do
+        MAP_ID=$(echo "$line" | awk '{print $1}' | tr -d ':')
+        MAP_TYPE=$(echo "$line" | awk '{print $2}')
+        MAP_NAME=$(echo "$line" | grep -o 'name [^ ]*' | cut -d' ' -f2)
+        
+        # Get element count
+        ELEMENTS=$(sudo bpftool map dump id "$MAP_ID" 2>/dev/null | jq '[.[].elements // []] | add | length // 0' 2>/dev/null || echo "0")
+        
+        # Set purpose
+        case "$MAP_NAME" in
+            "nat_map") PURPOSE="NAT rule storage" ;;
+            "stats_map") PURPOSE="Packet statistics" ;;
+            "ip_allowlist") PURPOSE="IP access control" ;;
+            "redirect_map") PURPOSE="Interface redirect" ;;
+            "interface_map") PURPOSE="Interface info" ;;
+            *) PURPOSE="Unknown" ;;
+        esac
+        
+        printf "│ %-15s │ %3s │ %-8s │ %7s │ %-23s │\n" \
+            "$MAP_NAME" "$MAP_ID" "$MAP_TYPE" "$ELEMENTS" "$PURPOSE"
+    done
+    echo "└─────────────────┴─────┴──────────┴─────────┴─────────────────────────┘"
+    
+    # Per-CPU Statistics
+    echo -e "\n${YELLOW}=== PER-CPU PACKET STATISTICS ===${NC}"
+    STATS_JSON=$(sudo bpftool map dump name stats_map 2>/dev/null)
+    if [ -n "$STATS_JSON" ]; then
+        echo "┌─────┬─────────────┬─────────────┬─────────────┬─────────────┬─────────────┐"
+        echo "│ CPU │ RX Packets  │  Processed  │   Dropped   │    VXLAN    │ NAT Applied │"
+        echo "├─────┼─────────────┼─────────────┼─────────────┼─────────────┼─────────────┤"
+        
+        for cpu in 0 1 2 3 4 5 6 7; do
+            CPU_RX=$(echo "$STATS_JSON" | jq -r ".[0] | select(.name == \"stats_map\") | .elements[] | select(.key == 0) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
+            CPU_PROC=$(echo "$STATS_JSON" | jq -r ".[0] | select(.name == \"stats_map\") | .elements[] | select(.key == 1) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
+            CPU_DROP=$(echo "$STATS_JSON" | jq -r ".[0] | select(.name == \"stats_map\") | .elements[] | select(.key == 4) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
+            CPU_VXLAN=$(echo "$STATS_JSON" | jq -r ".[0] | select(.name == \"stats_map\") | .elements[] | select(.key == 5) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
+            CPU_NAT=$(echo "$STATS_JSON" | jq -r ".[0] | select(.name == \"stats_map\") | .elements[] | select(.key == 6) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
+            
+            if [ "$CPU_RX" -gt 0 ] || [ "$CPU_PROC" -gt 0 ] || [ "$CPU_DROP" -gt 0 ] || [ "$CPU_VXLAN" -gt 0 ] || [ "$CPU_NAT" -gt 0 ]; then
+                printf "│  %d  │ %11s │ %11s │ %11s │ %11s │ %11s │\n" "$cpu" \
+                    "$(printf "%'d" "$CPU_RX" 2>/dev/null || echo "$CPU_RX")" \
+                    "$(printf "%'d" "$CPU_PROC" 2>/dev/null || echo "$CPU_PROC")" \
+                    "$(printf "%'d" "$CPU_DROP" 2>/dev/null || echo "$CPU_DROP")" \
+                    "$(printf "%'d" "$CPU_VXLAN" 2>/dev/null || echo "$CPU_VXLAN")" \
+                    "$(printf "%'d" "$CPU_NAT" 2>/dev/null || echo "$CPU_NAT")"
+            fi
+        done
+        echo "└─────┴─────────────┴─────────────┴─────────────┴─────────────┴─────────────┘"
     else
-        echo -e "${YELLOW}◦ packet_injector: Not running${NC}"
+        echo "No statistics available"
     fi
+    
+    # Interface Statistics
+    echo -e "\n${YELLOW}=== INTERFACE STATISTICS ===${NC}"
+    echo "┌─────────────┬─────────────────┬─────────────────┬─────────────────┬─────────────────┐"
+    echo "│ Interface   │   RX Packets    │    RX Bytes     │   TX Packets    │    TX Bytes     │"
+    echo "├─────────────┼─────────────────┼─────────────────┼─────────────────┼─────────────────┤"
+    
+    for iface in "$INTERFACE" "$TARGET_INTERFACE"; do
+        if [ -f "/sys/class/net/$iface/statistics/rx_packets" ]; then
+            RX_PACKETS=$(cat "/sys/class/net/$iface/statistics/rx_packets" 2>/dev/null || echo "0")
+            TX_PACKETS=$(cat "/sys/class/net/$iface/statistics/tx_packets" 2>/dev/null || echo "0")
+            RX_BYTES=$(cat "/sys/class/net/$iface/statistics/rx_bytes" 2>/dev/null || echo "0")
+            TX_BYTES=$(cat "/sys/class/net/$iface/statistics/tx_bytes" 2>/dev/null || echo "0")
+            
+            # Format bytes in human readable format
+            if [ "$RX_BYTES" -gt 1073741824 ]; then
+                RX_FMT=$(echo "$RX_BYTES" | awk '{printf "%.1f GB", $1/1073741824}')
+            elif [ "$RX_BYTES" -gt 1048576 ]; then
+                RX_FMT=$(echo "$RX_BYTES" | awk '{printf "%.1f MB", $1/1048576}')
+            else
+                RX_FMT=$(echo "$RX_BYTES" | awk '{printf "%.1f KB", $1/1024}')
+            fi
+            
+            if [ "$TX_BYTES" -gt 1073741824 ]; then
+                TX_FMT=$(echo "$TX_BYTES" | awk '{printf "%.1f GB", $1/1073741824}')
+            elif [ "$TX_BYTES" -gt 1048576 ]; then
+                TX_FMT=$(echo "$TX_BYTES" | awk '{printf "%.1f MB", $1/1048576}')
+            else
+                TX_FMT=$(echo "$TX_BYTES" | awk '{printf "%.1f KB", $1/1024}')
+            fi
+            
+            printf "│ %-11s │ %15s │ %15s │ %15s │ %15s │\n" \
+                "$iface" \
+                "$(printf "%'d" "$RX_PACKETS" 2>/dev/null || echo "$RX_PACKETS")" \
+                "$RX_FMT" \
+                "$(printf "%'d" "$TX_PACKETS" 2>/dev/null || echo "$TX_PACKETS")" \
+                "$TX_FMT"
+        fi
+    done
+    echo "└─────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┘"
+    
+    # Process Status
+    echo -e "\n${YELLOW}=== PROCESS STATUS ===${NC}"
+    echo "┌─────────────────┬─────────────┬─────────────────┬────────────────────────┐"
+    echo "│    Process      │   Status    │      PID(s)     │        Command         │"
+    echo "├─────────────────┼─────────────┼─────────────────┼────────────────────────┤"
+    
+    # vxlan_loader status
+    LOADER_PIDS=$(pgrep -f "vxlan_loader" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+    if [ -n "$LOADER_PIDS" ]; then
+        LOADER_CMD=$(ps -p "$(echo "$LOADER_PIDS" | cut -d',' -f1)" -o args= 2>/dev/null | cut -c1-22)
+        printf "│ vxlan_loader    │ ${GREEN}%-11s${NC} │ %-15s │ %-22s │\n" "Running" "$LOADER_PIDS" "$LOADER_CMD"
+    else
+        printf "│ vxlan_loader    │ ${RED}%-11s${NC} │ %-15s │ %-22s │\n" "Stopped" "N/A" "Not running"
+    fi
+    
+    # packet_injector status
+    INJECTOR_PIDS=$(pgrep -f "packet_injector" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+    if [ -n "$INJECTOR_PIDS" ]; then
+        INJECTOR_CMD=$(ps -p "$(echo "$INJECTOR_PIDS" | cut -d',' -f1)" -o args= 2>/dev/null | cut -c1-22)
+        printf "│ packet_injector │ ${GREEN}%-11s${NC} │ %-15s │ %-22s │\n" "Running" "$INJECTOR_PIDS" "$INJECTOR_CMD"
+    else
+        printf "│ packet_injector │ ${YELLOW}%-11s${NC} │ %-15s │ %-22s │\n" "Stopped" "N/A" "Not running"
+    fi
+    
+    echo "└─────────────────┴─────────────┴─────────────────┴────────────────────────┘"
+
 }
 
 # Test function for end-to-end packet tracing
