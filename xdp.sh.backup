@@ -532,14 +532,13 @@ info() {
     for map_id in $(sudo bpftool map list 2>/dev/null | grep "nat_map" | awk '{print $1}' | tr -d ':'); do
         NAT_DATA=$(sudo bpftool map dump id "$map_id" -j 2>/dev/null)
         if [ -n "$NAT_DATA" ]; then
-            # Check if this map has actual entries using jq
-            HAS_ENTRIES=$(echo "$NAT_DATA" | jq -r 'if (type == "array" and length > 0 and .[0].elements != null and (.[0].elements | length) > 0) then "true" else "false" end' 2>/dev/null)
+            # Check if this map has actual entries using jq (correct format for bpftool output)
+            HAS_ENTRIES=$(echo "$NAT_DATA" | jq -r 'if (type == "array" and length > 0) then "true" else "false" end' 2>/dev/null)
             if [ "$HAS_ENTRIES" = "true" ]; then
                 NAT_FOUND=true
                 
-                # Extract NAT rules using jq
-                NAT_RULES=$(echo "$NAT_DATA" | jq -r '.[0].elements[] | [.key.src_port, .value.target_ip, .value.target_port] | @csv' 2>/dev/null)
-                NAT_COUNT=$(echo "$NAT_DATA" | grep -o '"src_port":[0-9]*' | wc -l)
+                # Extract NAT rules using the correct formatted structure
+                NAT_COUNT=$(echo "$NAT_DATA" | jq -r 'length' 2>/dev/null)
                 
                 if [ "$NAT_COUNT" -gt 0 ]; then
                     echo "Active NAT Rules: $NAT_COUNT"
@@ -548,10 +547,10 @@ info() {
                     echo "│ Source Port │   Target IP     │ Target Port  │      Status        │"
                     echo "├─────────────┼─────────────────┼──────────────┼────────────────────┤"
                     
-                    # Extract values using grep/sed
-                    SRC_PORTS=$(echo "$NAT_DATA" | grep -o '"src_port":[0-9]*' | cut -d':' -f2)
-                    TARGET_IPS=$(echo "$NAT_DATA" | grep -o '"target_ip":[0-9]*' | cut -d':' -f2)
-                    TARGET_PORTS=$(echo "$NAT_DATA" | grep -o '"target_port":[0-9]*' | cut -d':' -f2)
+                    # Extract values using jq with correct formatted structure
+                    SRC_PORTS=$(echo "$NAT_DATA" | jq -r '.[].formatted.key.src_port' 2>/dev/null)
+                    TARGET_IPS=$(echo "$NAT_DATA" | jq -r '.[].formatted.value.target_ip' 2>/dev/null)
+                    TARGET_PORTS=$(echo "$NAT_DATA" | jq -r '.[].formatted.value.target_port' 2>/dev/null)
                     
                     # Display each rule
                     paste <(echo "$SRC_PORTS") <(echo "$TARGET_IPS") <(echo "$TARGET_PORTS") | while read -r src_port target_ip_int target_port; do
@@ -577,16 +576,18 @@ info() {
     IP_DATA=$(sudo bpftool map dump name ip_allowlist -j 2>/dev/null)
     
     if [ -n "$IP_DATA" ]; then
-        # Extract IP entries from any map that has elements using jq
-        IP_ENTRIES=$(echo "$IP_DATA" | jq -r '.[] | select(.elements != null and (.elements | length) > 0) | .elements[].key' 2>/dev/null)
+        # Check if array has entries using correct bpftool JSON format
+        IP_COUNT=$(echo "$IP_DATA" | jq -r 'length' 2>/dev/null)
         
-        if [ -n "$IP_ENTRIES" ]; then
-            IP_COUNT=$(echo "$IP_ENTRIES" | wc -l)
+        if [ "$IP_COUNT" -gt 0 ]; then
             echo "Allowed IP Addresses: $IP_COUNT total"
             echo ""
             echo "┌─────────────────┬────────────────────────────────────────────────┐"
             echo "│   IP Address    │                   Status                       │"
             echo "├─────────────────┼────────────────────────────────────────────────┤"
+            
+            # Extract IP entries using correct formatted structure
+            IP_ENTRIES=$(echo "$IP_DATA" | jq -r '.[].formatted.key' 2>/dev/null)
             
             # Show first 20 IPs to keep output manageable
             echo "$IP_ENTRIES" | head -20 | while read -r ip_int; do
@@ -618,13 +619,13 @@ info() {
         MAP_TYPE=$(echo "$line" | awk '{print $2}')
         MAP_NAME=$(echo "$line" | grep -o 'name [^ ]*' | cut -d' ' -f2)
         
-        # Get element count - try different approaches
+        # Get element count using correct bpftool JSON format
         if [ "$MAP_TYPE" = "hash" ]; then
-            # For hash maps, count actual key-value pairs
-            ELEMENTS=$(sudo bpftool map dump id "$MAP_ID" 2>/dev/null | jq -r 'if type == "array" then [.[] | select(.elements != null) | .elements | length] | add // 0 else 0 end' 2>/dev/null || echo "0")
+            # For hash maps, count array elements directly
+            ELEMENTS=$(sudo bpftool map dump id "$MAP_ID" -j 2>/dev/null | jq -r 'length' 2>/dev/null || echo "0")
         elif [ "$MAP_TYPE" = "array" ] || [ "$MAP_TYPE" = "percpu_array" ]; then
-            # For arrays, count non-zero entries
-            ELEMENTS=$(sudo bpftool map dump id "$MAP_ID" 2>/dev/null | jq -r 'if type == "array" then [.[] | select(.elements != null) | .elements | length] | add // 0 else 0 end' 2>/dev/null || echo "0")
+            # For arrays, count array elements directly
+            ELEMENTS=$(sudo bpftool map dump id "$MAP_ID" -j 2>/dev/null | jq -r 'length' 2>/dev/null || echo "0")
         else
             ELEMENTS="0"
         fi
