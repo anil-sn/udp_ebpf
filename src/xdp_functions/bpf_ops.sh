@@ -96,26 +96,36 @@ get_nat_rules() {
         return 1
     fi
     
-    # Parse JSON output using jq if available - fixed to handle multiple maps
+    # Parse JSON output using jq - fixed for actual bpftool format
     if command -v jq >/dev/null 2>&1; then
-        # Check if any map has entries (handle multiple maps with same name)
-        local has_entries=$(echo "$nat_data" | jq -r 'if (type == "array") then ([.[] | select(.elements != null and (.elements | length) > 0)] | length > 0) else false end' 2>/dev/null)
+        # Check if array has entries (correct bpftool format)
+        local has_entries=$(echo "$nat_data" | jq -r 'if (type == "array" and length > 0) then "true" else "false" end' 2>/dev/null)
         
         if [ "$has_entries" = "true" ]; then
-            # Get entries from all maps that have data, format as "src_port -> target_ip:target_port"
-            echo "$nat_data" | jq -r '.[] | select(.elements != null and (.elements | length) > 0) | .elements[] | "\(.key.src_port) -> \(.value.target_ip):\(.value.target_port)"' 2>/dev/null
+            # Extract from formatted structure: "src_port -> target_ip:target_port"
+            echo "$nat_data" | jq -r '.[] | "\(.formatted.key.src_port) -> \(.formatted.value.target_ip):\(.formatted.value.target_port)"' 2>/dev/null | while read -r rule; do
+                # Convert integer IP to dotted decimal
+                if [[ "$rule" =~ ([0-9]+)\ -\>\ ([0-9]+):([0-9]+) ]]; then
+                    local src_port="${BASH_REMATCH[1]}"
+                    local target_ip_int="${BASH_REMATCH[2]}"
+                    local target_port="${BASH_REMATCH[3]}"
+                    local target_ip=$(int_to_ip "$target_ip_int")
+                    echo "$src_port -> $target_ip:$target_port"
+                fi
+            done
             return 0
         fi
     else
-        # Fallback to text parsing - extract individual components
+        # Fallback to text parsing for formatted structure
         local src_ports=$(echo "$nat_data" | grep -o '"src_port":[0-9]*' | cut -d':' -f2)
-        local target_ips=$(echo "$nat_data" | grep -o '"target_ip":[0-9]*' | cut -d':' -f2)
+        local target_ips=$(echo "$nat_data" | grep -o '"target_ip":[0-9]*' | cut -d':' -f2) 
         local target_ports=$(echo "$nat_data" | grep -o '"target_port":[0-9]*' | cut -d':' -f2)
         
         if [ -n "$src_ports" ]; then
             paste <(echo "$src_ports") <(echo "$target_ips") <(echo "$target_ports") | while read -r src_port target_ip_int target_port; do
                 if [ -n "$src_port" ] && [ -n "$target_ip_int" ] && [ -n "$target_port" ]; then
-                    echo "$src_port -> $target_ip_int:$target_port"
+                    local target_ip=$(int_to_ip "$target_ip_int")
+                    echo "$src_port -> $target_ip:$target_port"
                 fi
             done
         fi
