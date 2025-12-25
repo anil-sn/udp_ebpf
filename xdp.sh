@@ -85,6 +85,17 @@ start() {
     if [ -n "$NEW_PID" ]; then
         echo -e "${GREEN}SUCCESS: Pipeline started (PID: $NEW_PID)${NC}"
         echo -e "${GREEN}Log file: $LOG_FILE${NC}"
+        
+        # Load IP allowlist after successful pipeline start
+        echo -e "${BLUE}Loading IP allowlist...${NC}"
+        cd src
+        if sudo python3 load_ip_allowlist.py ip_allowlist.json > /dev/null 2>&1; then
+            echo -e "${GREEN}IP allowlist loaded successfully${NC}"
+        else
+            echo -e "${YELLOW}Warning: Failed to load IP allowlist${NC}"
+        fi
+        cd ..
+        
         sleep 1
         fix_terminal
     else
