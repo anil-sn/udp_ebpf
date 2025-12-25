@@ -397,7 +397,81 @@ stats() {
     # Stats map
     echo -e "\n${YELLOW}Packet Statistics:${NC}"
     if sudo bpftool map show name stats_map > /dev/null 2>&1; then
-        sudo bpftool map dump name stats_map 2>/dev/null || echo "No statistics available yet"
+        # Parse the JSON stats and make them human-readable
+        STATS_JSON=$(sudo bpftool map dump name stats_map 2>/dev/null)
+        if [ -n "$STATS_JSON" ]; then
+            # Extract totals from the first stats_map (ID 537)
+            TOTAL_RX=$(echo "$STATS_JSON" | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 0) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
+            TOTAL_PROCESSED=$(echo "$STATS_JSON" | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 1) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
+            TOTAL_PASSED=$(echo "$STATS_JSON" | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 2) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
+            TOTAL_DROPPED=$(echo "$STATS_JSON" | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 4) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
+            TOTAL_VXLAN=$(echo "$STATS_JSON" | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 5) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
+            TOTAL_NAT=$(echo "$STATS_JSON" | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 6) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
+            TOTAL_BYTES=$(echo "$STATS_JSON" | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 8) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
+            
+            # Format numbers with commas for readability
+            TOTAL_RX_FMT=$(printf "%'d" "$TOTAL_RX" 2>/dev/null || echo "$TOTAL_RX")
+            TOTAL_PROCESSED_FMT=$(printf "%'d" "$TOTAL_PROCESSED" 2>/dev/null || echo "$TOTAL_PROCESSED")
+            TOTAL_PASSED_FMT=$(printf "%'d" "$TOTAL_PASSED" 2>/dev/null || echo "$TOTAL_PASSED")
+            TOTAL_DROPPED_FMT=$(printf "%'d" "$TOTAL_DROPPED" 2>/dev/null || echo "$TOTAL_DROPPED")
+            TOTAL_VXLAN_FMT=$(printf "%'d" "$TOTAL_VXLAN" 2>/dev/null || echo "$TOTAL_VXLAN")
+            TOTAL_NAT_FMT=$(printf "%'d" "$TOTAL_NAT" 2>/dev/null || echo "$TOTAL_NAT")
+            
+            # Format bytes in human readable format
+            if [ "$TOTAL_BYTES" -gt 0 ]; then
+                if [ "$TOTAL_BYTES" -gt 1073741824 ]; then
+                    BYTES_FMT=$(echo "$TOTAL_BYTES" | awk '{printf "%.2f GB", $1/1073741824}')
+                elif [ "$TOTAL_BYTES" -gt 1048576 ]; then
+                    BYTES_FMT=$(echo "$TOTAL_BYTES" | awk '{printf "%.2f MB", $1/1048576}')
+                elif [ "$TOTAL_BYTES" -gt 1024 ]; then
+                    BYTES_FMT=$(echo "$TOTAL_BYTES" | awk '{printf "%.2f KB", $1/1024}')
+                else
+                    BYTES_FMT="${TOTAL_BYTES} bytes"
+                fi
+            else
+                BYTES_FMT="0 bytes"
+            fi
+            
+            # Calculate drop rate
+            if [ "$TOTAL_RX" -gt 0 ]; then
+                DROP_RATE=$(echo "$TOTAL_DROPPED $TOTAL_RX" | awk '{printf "%.3f%%", ($1/$2)*100}')
+            else
+                DROP_RATE="0.000%"
+            fi
+            
+            echo "┌─────────────────────────────────────────┐"
+            echo "│             Packet Counters             │"
+            echo "├─────────────────────────────────────────┤"
+            echo "│ Total Received:        $TOTAL_RX_FMT"
+            echo "│ Total Processed:       $TOTAL_PROCESSED_FMT"
+            echo "│ Total Passed:          $TOTAL_PASSED_FMT"
+            echo "│ Total Dropped:         $TOTAL_DROPPED_FMT ($DROP_RATE)"
+            echo "│ VXLAN Processed:       $TOTAL_VXLAN_FMT"
+            echo "│ NAT Applied:           $TOTAL_NAT_FMT"
+            echo "│ Total Bytes:           $BYTES_FMT"
+            echo "└─────────────────────────────────────────┘"
+            
+            # Show per-CPU breakdown for active CPUs
+            echo -e "\n${YELLOW}Per-CPU Breakdown:${NC}"
+            echo "CPU | RX Packets  | Processed   | Dropped     | VXLAN"
+            echo "----+-------------+-------------+-------------+--------"
+            for cpu in 0 1 2 3; do
+                CPU_RX=$(echo "$STATS_JSON" | jq -r "first(.[] | select(.name == \"stats_map\")) | .elements[] | select(.key == 0) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
+                CPU_PROC=$(echo "$STATS_JSON" | jq -r "first(.[] | select(.name == \"stats_map\")) | .elements[] | select(.key == 1) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
+                CPU_DROP=$(echo "$STATS_JSON" | jq -r "first(.[] | select(.name == \"stats_map\")) | .elements[] | select(.key == 4) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
+                CPU_VXLAN=$(echo "$STATS_JSON" | jq -r "first(.[] | select(.name == \"stats_map\")) | .elements[] | select(.key == 5) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
+                
+                if [ "$CPU_RX" -gt 0 ]; then
+                    printf " %d  | %11s | %11s | %11s | %s\n" "$cpu" \
+                        "$(printf "%'d" "$CPU_RX" 2>/dev/null || echo "$CPU_RX")" \
+                        "$(printf "%'d" "$CPU_PROC" 2>/dev/null || echo "$CPU_PROC")" \
+                        "$(printf "%'d" "$CPU_DROP" 2>/dev/null || echo "$CPU_DROP")" \
+                        "$(printf "%'d" "$CPU_VXLAN" 2>/dev/null || echo "$CPU_VXLAN")"
+                fi
+            done
+        else
+            echo "No statistics available yet"
+        fi
     else
         echo "Stats map not found"
     fi
