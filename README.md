@@ -30,9 +30,17 @@ cd src && make clean && make all && cd ..
 # Start XDP pipeline
 ./xdp.sh start
 
-# Run tests
+# Run all tests
 cd tests/
 sudo ./run_tests.sh all
+
+# Run specific test categories
+python -m pytest test_xdp_functions.py -v    # Core functionality tests
+python -m pytest test_security.py -v         # Security tests  
+python -m pytest test_stress_load.py -v      # Load/performance tests
+
+# Run tests with coverage
+python -m pytest --cov=../src --cov-report=html
 
 # Monitor performance
 ./xdp.sh monitor
@@ -162,6 +170,9 @@ ebpf/
 │   └── README.md                  # Source code documentation
 ├── tests/                         # Professional test framework
 │   ├── run_tests.sh               # Main test runner
+│   ├── test_xdp_functions.py      # Core XDP function tests
+│   ├── test_security.py           # Security and vulnerability tests
+│   ├── test_stress_load.py        # Load and performance tests
 │   ├── config/                    # Configuration validation
 │   │   └── validate_config.sh     # Environment checks
 │   ├── utils/                     # Testing utilities
@@ -177,11 +188,20 @@ ebpf/
 │   │   ├── system_monitor.py      # Real-time monitoring
 │   │   └── performance_report.py  # HTML report generation
 │   └── reports/                   # Test results and reports
+├── .github/workflows/             # CI/CD automation
+│   └── ci-cd.yml                  # GitHub Actions workflow
+├── systemd/                       # SystemD service files
+│   └── xdp-pipeline.service       # Production service configuration
+├── k8s/                          # Kubernetes deployment
+│   └── xdp-pipeline-daemonset.yaml # K8s DaemonSet configuration
 ├── setup_venv.sh                  # Virtual environment setup (uv)
+├── ci_cd_pipeline.sh              # CI/CD automation script
 ├── xdp.sh                         # Simple control script
 ├── xdp_pipeline.sh                # Advanced control script
 ├── optimize_system.sh             # Performance tuning
+├── Dockerfile                     # Container deployment
 ├── DEPLOYMENT.md                  # Deployment documentation
+├── PROJECT_REVIEW.md              # Comprehensive project analysis
 └── README.md                      # Project documentation
 ```
 

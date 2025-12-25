@@ -18,6 +18,16 @@ sudo ./run_tests.sh all
 ./run_tests.sh unit        # Basic functionality
 sudo ./run_tests.sh integration  # Full pipeline test
 sudo ./run_tests.sh performance  # Performance test
+
+
+# Run all tests
+./run_simple_tests.sh all
+
+# Test specific components
+./run_simple_tests.sh basic       # Core functionality
+./run_simple_tests.sh performance # Load testing
+./run_simple_tests.sh packets     # Packet tools
+./run_simple_tests.sh stats       # Statistics
 ```
 
 ## Test Structure
