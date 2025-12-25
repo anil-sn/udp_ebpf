@@ -251,9 +251,6 @@ cleanup_bpf() {
     sudo rm -f /sys/fs/bpf/vxlan_interface_map 2>/dev/null || true
     sudo rm -f /sys/fs/bpf/vxlan_ip_allowlist 2>/dev/null || true
     sudo rm -f /sys/fs/bpf/vxlan_packet_ringbuf 2>/dev/null || true
-            fi
-        done
-    fi
     
     # Remove pinned BPF objects
     if [ -d "/sys/fs/bpf" ]; then

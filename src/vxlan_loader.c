@@ -438,7 +438,9 @@ static int load_bpf_program()
     struct bpf_map *ringbuf_map = bpf_object__find_map_by_name(bpf_obj, "packet_ringbuf");
     
     /* Create pinning directory if it doesn't exist */
-    system("mkdir -p /sys/fs/bpf");
+    if (system("mkdir -p /sys/fs/bpf") != 0) {
+        fprintf(stderr, "Warning: Failed to create /sys/fs/bpf directory\n");
+    }
     
     /* Pin all maps */
     if (stats_map && bpf_map__pin(stats_map, "/sys/fs/bpf/vxlan_stats_map")) {
