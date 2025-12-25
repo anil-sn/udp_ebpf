@@ -820,12 +820,6 @@ static int init_workers(const char* target_interface) {
     printf("[+] All %d workers initialized successfully\n", num_workers);
     return 0;
 }
-    }
-    
-    printf("[+] %d worker threads initialized for %s (ifindex %d)\n", 
-           num_workers, target_interface, ifindex);
-    return 0;
-}
 
 /*
  * Performance monitoring thread
