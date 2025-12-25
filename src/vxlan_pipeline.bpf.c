@@ -472,7 +472,7 @@ static __always_inline void *parse_vxlan(void *data, void *data_end,
 /*
  * Apply NAT Translation - Destination Port Based (DNAT Logic)
  * Matches packets by destination port and applies DNAT transformation
- * Config: SOURCE_PORT="19480" means "match packets going TO port 19480"
+ * Config: SOURCE_PORT="31765" means "match packets going TO port 31765"
  */
 static __always_inline int apply_nat(struct iphdr *iph, struct udphdr *udph)
 {
@@ -492,8 +492,8 @@ static __always_inline int apply_nat(struct iphdr *iph, struct udphdr *udph)
     __u16 old_port = udph->dest;
     
     /* Apply DNAT transformation */
-    iph->daddr = nat->target_ip;           /* e.g., 10.2.41.17 from analysis */
-    udph->dest = bpf_htons(nat->target_port);  /* e.g., 8081 from analysis */
+    iph->daddr = nat->target_ip;           /* e.g., 172.30.82.95 from configuration */
+    udph->dest = bpf_htons(nat->target_port);  /* e.g., 8081 from configuration */
     
     /* Incremental IP checksum update (much faster than full recalculation) */
     __u32 sum = (~bpf_ntohs(iph->check)) & 0xFFFF;

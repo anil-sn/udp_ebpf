@@ -6,7 +6,7 @@
     {
         "org_name": "TempEntry",
         "org_id": "1",
-        "ips": ["172.30.83.192"]
+        "ips": ["172.30.83.192", "172.30.82.157", "172.30.74.144"]
     },
     {
       "org_name": "ALLBAND COMMUNICATIONS COOP",

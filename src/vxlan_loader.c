@@ -113,11 +113,11 @@ struct config {
 };
 
 static struct config cfg = {
-    .interface = "ens4",
-    .target_interface = "ens5", 
-    .nat_target_ip = "10.2.41.17",
+    .interface = "ens5",
+    .target_interface = "ens6", 
+    .nat_target_ip = "172.30.82.95",
     .nat_target_port = 8081,
-    .nat_source_port = 42844,
+    .nat_source_port = 31765,
     .stats_interval = 5,
     .verbose = 0,
 };
