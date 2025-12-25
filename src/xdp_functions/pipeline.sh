@@ -101,8 +101,14 @@ start_pipeline() {
             print_color "red" "✗ Stats map: Missing"
         fi
         
-        # Start packet injector for userspace packet processing
+        # TEMPORARY FIX: Disable packet_injector to test single XDP program
+        print_color "yellow" "TESTING: Temporarily disabling packet_injector to prevent duplicates"
         print_color "blue" "Starting packet injector..."
+        print_color "yellow" "⚠️  DISABLED FOR TESTING - packet_injector skipped to prevent duplicate XDP programs"
+        print_color "yellow" "This tests if vxlan_loader alone can handle the pipeline"
+        
+        # Comment out packet_injector startup for testing
+        if false; then  # Disabled for testing
         if [ -f "vxlan_pipeline.bpf.o" ]; then
             # CRITICAL: packet_injector is REQUIRED for userspace packet processing
             # It handles packets forwarded from XDP via ring buffer mechanism
@@ -130,6 +136,7 @@ start_pipeline() {
         else
             print_color "yellow" "Warning: vxlan_pipeline.bpf.o not found, skipping packet injector"
         fi
+        fi  # End of disabled section
         
         sleep 1
         fix_terminal

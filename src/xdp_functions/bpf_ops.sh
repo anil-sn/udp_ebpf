@@ -1,17 +1,22 @@
 #!/bin/bash
 # XDP Pipeline - BPF Operations
 
-# Check if BPF program is loaded
+# Check if BPF program is loaded - FIXED: Strip newlines from count
 check_bpf_program() {
     local prog_name="${1:-vxlan_pipeline_main}"
     local count=$(sudo bpftool prog list 2>/dev/null | grep -c "$prog_name" || echo "0")
+    # Fix: Remove any newlines or whitespace that could cause bash comparison errors
+    count=$(echo "$count" | tr -d '\n\r' | tr -d ' ')
     echo "$count"
 }
 
-# Check for existing XDP programs and prevent start if found - ADDED
+# Check for existing XDP programs and prevent start if found - FIXED: Better error handling
 check_existing_xdp_programs() {
     local existing_count=$(check_bpf_program "vxlan_pipeline_main")
-    if [ "$existing_count" -gt 0 ]; then
+    # Fix: Ensure count is a clean integer
+    existing_count=$(echo "$existing_count" | tr -d '\n\r' | tr -d ' ')
+    
+    if [ -n "$existing_count" ] && [ "$existing_count" -gt 0 ] 2>/dev/null; then
         print_color "red" "ERROR: $existing_count existing XDP programs detected!"
         print_color "yellow" "Found programs:"
         sudo bpftool prog list 2>/dev/null | grep "vxlan_pipeline_main"
@@ -238,9 +243,11 @@ cleanup_bpf() {
     # Wait for kernel cleanup and garbage collection
     sleep 3
     
-    # Verify cleanup worked
+    # Verify cleanup worked - FIXED: Clean integer comparison
     local remaining=$(sudo bpftool prog list 2>/dev/null | grep -c "vxlan_pipeline_main" 2>/dev/null || echo "0")
-    if [ "$remaining" -gt 0 ]; then
+    remaining=$(echo "$remaining" | tr -d '\n\r' | tr -d ' ')  # Remove newlines and spaces
+    
+    if [ -n "$remaining" ] && [ "$remaining" -gt 0 ] 2>/dev/null; then
         print_color "red" "Warning: $remaining XDP programs still loaded"
         print_color "yellow" "Manual cleanup may be needed: sudo bpftool prog list | grep vxlan"
     else
