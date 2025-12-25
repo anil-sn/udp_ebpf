@@ -58,6 +58,10 @@ start_pipeline() {
             print_color "yellow" "Warning: ip_allowlist.json not found"
         fi
         
+        # Allow time for vxlan_loader to fully initialize NAT rules and maps
+        print_color "blue" "Waiting for BPF map initialization..."
+        sleep 3
+        
         # Validate critical BPF maps
         print_color "blue" "Validating BPF maps..."
         
@@ -65,8 +69,13 @@ start_pipeline() {
         local nat_entries=$(count_bpf_map_entries "nat_map")
         if [ "$nat_entries" -gt 0 ]; then
             print_color "green" "✓ NAT map: $nat_entries rules loaded"
+            # Show the NAT rule details for debugging
+            get_nat_rules | head -3
         else
             print_color "red" "✗ NAT map: Empty or missing"
+            # Debug: Show available BPF maps for troubleshooting
+            print_color "yellow" "Debug: Available BPF maps with 'nat' in name:"
+            sudo bpftool map list 2>/dev/null | grep nat || echo "  No nat maps found"
         fi
         
         # Check IP allowlist
@@ -75,6 +84,9 @@ start_pipeline() {
             print_color "green" "✓ IP allowlist: $ip_entries IPs loaded"
         else
             print_color "red" "✗ IP allowlist: Empty or missing"
+            # Debug: Show available BPF maps for troubleshooting
+            print_color "yellow" "Debug: Available BPF maps with 'allowlist' in name:"
+            sudo bpftool map list 2>/dev/null | grep allowlist || echo "  No allowlist maps found"
         fi
         
         # Check stats map
@@ -87,15 +99,15 @@ start_pipeline() {
         # Start packet injector for userspace packet processing
         print_color "blue" "Starting packet injector..."
         if [ -f "vxlan_pipeline.bpf.o" ]; then
-            # TEMPORARILY DISABLED: packet_injector creates duplicate XDP programs
-            print_color "yellow" "⚠ Skipping packet_injector to prevent duplicate XDP programs"
-            print_color "yellow" "  Architecture needs fix: only vxlan_loader should load XDP program"
+            # CRITICAL: packet_injector is REQUIRED for userspace packet processing
+            # It handles packets forwarded from XDP via ring buffer mechanism
+            print_color "blue" "Note: packet_injector provides essential userspace packet processing"
             
-            # TODO: Fix packet_injector to access existing BPF maps instead of loading new program
-            # nohup sudo ./packet_injector vxlan_pipeline.bpf.o "$TARGET_INTERFACE" \
-            #     </dev/null >"/tmp/packet_injector.log" 2>&1 &
+            # Start packet_injector - it's a separate component from vxlan_loader
+            nohup sudo ./packet_injector vxlan_pipeline.bpf.o "$TARGET_INTERFACE" \
+                </dev/null >"/tmp/packet_injector.log" 2>&1 &
             
-            print_color "green" "✓ Packet injector skipped (preventing duplicates)"
+            print_color "green" "✓ Packet injector started"
             
             # Wait a moment for packet_injector startup
             sleep 2
@@ -103,7 +115,7 @@ start_pipeline() {
             # Verify packet_injector startup
             if pgrep -f "packet_injector" >/dev/null; then
                 local injector_pid=$(pgrep -f "packet_injector" | head -1)
-                print_color "green" "✓ Packet injector started (PID: $injector_pid)"
+                print_color "green" "✓ Packet injector confirmed (PID: $injector_pid)"
                 print_color "green" "Log file: /tmp/packet_injector.log"
             else
                 print_color "yellow" "Warning: Packet injector failed to start"
