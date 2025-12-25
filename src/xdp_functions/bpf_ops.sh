@@ -8,6 +8,21 @@ check_bpf_program() {
     echo "$count"
 }
 
+# Check for existing XDP programs and prevent start if found - ADDED
+check_existing_xdp_programs() {
+    local existing_count=$(check_bpf_program "vxlan_pipeline_main")
+    if [ "$existing_count" -gt 0 ]; then
+        print_color "red" "ERROR: $existing_count existing XDP programs detected!"
+        print_color "yellow" "Found programs:"
+        sudo bpftool prog list 2>/dev/null | grep "vxlan_pipeline_main"
+        print_color "yellow" ""
+        print_color "yellow" "Please run './xdp.sh stop' or './xdp.sh clean' first to remove existing programs"
+        print_color "yellow" "This prevents duplicate XDP programs and BPF map conflicts"
+        return 1
+    fi
+    return 0
+}
+
 # Get BPF map information
 get_bpf_map_info() {
     local map_name="$1"
@@ -186,13 +201,30 @@ get_xdp_attachment() {
     sudo bpftool net list 2>/dev/null | grep -E "^xdp:" | grep "$iface"
 }
 
-# Clean up BPF maps and programs
+# Clean up BPF maps and programs - ENHANCED to remove all XDP programs
 cleanup_bpf() {
     print_color "yellow" "Cleaning up BPF resources..."
     
-    # Detach XDP from interfaces
+    # Kill processes first to stop new activity
+    sudo pkill -KILL -f "vxlan_loader" 2>/dev/null || true
+    sudo pkill -KILL -f "packet_injector" 2>/dev/null || true
+    
+    # Detach XDP from ALL interfaces (not just target ones)
     sudo ip link set "$INTERFACE" xdp off 2>/dev/null || true
     sudo ip link set "$TARGET_INTERFACE" xdp off 2>/dev/null || true
+    
+    # CRITICAL FIX: Force remove ALL vxlan_pipeline_main programs by ID
+    local prog_ids=$(sudo bpftool prog list 2>/dev/null | grep "vxlan_pipeline_main" | awk '{print $1}' | tr -d ':')
+    if [ -n "$prog_ids" ]; then
+        echo "$prog_ids" | while read -r prog_id; do
+            if [ -n "$prog_id" ]; then
+                print_color "yellow" "Force removing XDP program ID: $prog_id"
+                sudo bpftool prog detach xdp id "$prog_id" dev "$INTERFACE" 2>/dev/null || true
+                sudo bpftool prog detach xdp id "$prog_id" dev "$TARGET_INTERFACE" 2>/dev/null || true
+                # Program will auto-cleanup when no longer referenced
+            fi
+        done
+    fi
     
     # Remove pinned BPF objects
     if [ -d "/sys/fs/bpf" ]; then
@@ -203,12 +235,17 @@ cleanup_bpf() {
         sudo find /sys/fs/bpf -name "*packet_ringbuf*" -delete 2>/dev/null || true
     fi
     
-    # Kill any remaining processes
-    sudo pkill -KILL -f "vxlan_loader" 2>/dev/null || true
-    sudo pkill -KILL -f "packet_injector" 2>/dev/null || true
+    # Wait for kernel cleanup and garbage collection
+    sleep 3
     
-    # Wait for kernel cleanup
-    sleep 2
+    # Verify cleanup worked
+    local remaining=$(sudo bpftool prog list 2>/dev/null | grep -c "vxlan_pipeline_main" 2>/dev/null || echo "0")
+    if [ "$remaining" -gt 0 ]; then
+        print_color "red" "Warning: $remaining XDP programs still loaded"
+        print_color "yellow" "Manual cleanup may be needed: sudo bpftool prog list | grep vxlan"
+    else
+        print_color "green" "✓ All XDP programs successfully removed"
+    fi
     
     print_color "green" "✓ BPF resources cleaned up"
 }
