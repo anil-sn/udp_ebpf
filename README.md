@@ -51,41 +51,129 @@ python -m pytest --cov=../src --cov-report=html
 
 ## ⚙️ Configuration
 
-### Environment-Based Configuration (Recommended)
+### Environment-Based Configuration (.env)
 
-The pipeline uses a `.env` file for configuration management:
+The pipeline uses a `.env` file for comprehensive configuration management. Each field controls specific aspects of packet processing and system behavior.
 
 ```bash
-# Copy example configuration
+# Copy and customize configuration
 cp .env.example .env
-
-# Edit configuration
 nano .env
+```
 
-# Validate configuration
+#### 📡 Network Interface Configuration
+```bash
+INTERFACE="ens5"                # Primary interface to attach XDP program
+TARGET_INTERFACE="ens6"         # Target interface for packet forwarding
+```
+
+**Significance:**
+- **`INTERFACE`**: Where XDP program attaches to intercept incoming VXLAN packets
+- **`TARGET_INTERFACE`**: Where processed packets are injected (typically bridged interface)
+- **Critical**: Must match your VM's actual network interfaces
+
+**AWS Setup Example:**
+```bash
+ens5: Ingress interface (VXLAN traffic arrives here)
+ens6: Egress interface (processed packets exit here, bridged to br0)
+```
+
+#### 🔄 NAT Configuration
+```bash
+NAT_IP="172.30.82.95"          # Target IP address for NAT translation
+NAT_PORT="8081"                # Target port for NAT translation  
+SOURCE_PORT="31765"            # Destination port to match for DNAT
+```
+
+**Significance:**
+- **`SOURCE_PORT`**: Inner UDP destination port to match in VXLAN packets
+- **`NAT_IP`**: New destination IP after NAT translation
+- **`NAT_PORT`**: New destination port after NAT translation
+
+**NAT Rule Example:**
+```bash
+# Before NAT (original inner packet):
+172.30.82.157:31065 → 172.30.74.144:31765
+
+# After NAT (your rule):
+172.30.82.157:31065 → 172.30.82.95:8081
+```
+
+#### 📦 VXLAN Configuration
+```bash
+VXLAN_PORT="4789"              # Standard VXLAN UDP port
+TARGET_VNI="1"                 # AWS Traffic Mirror VNI (always 1)
+```
+
+**Significance:**
+- **`VXLAN_PORT`**: UDP port for VXLAN encapsulation (RFC 7348 standard)
+- **`TARGET_VNI`**: VXLAN Network Identifier to process (AWS Traffic Mirror uses VNI 1)
+
+#### ⚡ Performance Configuration
+```bash
+STATS_INTERVAL="5"             # Statistics display interval (seconds)
+TARGET_PPS="85000"             # Target packet processing rate
+```
+
+**Significance:**
+- **`STATS_INTERVAL`**: How often stats are displayed in monitoring mode
+- **`TARGET_PPS`**: Performance target - determines worker thread allocation and memory pool sizing
+
+#### 🛠️ System Configuration
+```bash
+LOG_FILE="/tmp/vxlan_loader.log"    # Log file location
+DEBUG_LEVEL="0"                     # Debug level (0=none, 1=error, 2=info, 3=debug)
+XDP_MODE="auto"                     # XDP attachment mode: auto, driver, generic
+```
+
+**Debug Levels:**
+- **`0`**: Production mode (minimal logging)
+- **`1`**: Error messages only
+- **`2`**: Info level (recommended for monitoring)
+- **`3`**: Full debug tracing (for end-to-end testing)
+
+**XDP Modes:**
+- **`auto`**: Tries native first, falls back to generic (recommended)
+- **`generic`**: Forces generic XDP (required for AWS ENA)
+- **`driver`**: Native XDP (not supported on AWS ENA)
+
+#### 📊 Monitoring Configuration
+```bash
+MONITOR_REFRESH_RATE="2"       # Monitor refresh rate (seconds)
+PERFORMANCE_THRESHOLD="60000"  # Performance warning threshold (PPS)
+ENABLE_COLORS="true"           # Enable colored terminal output
+```
+
+**Significance:**
+- **`MONITOR_REFRESH_RATE`**: Real-time monitoring update frequency
+- **`PERFORMANCE_THRESHOLD`**: Warns if performance drops below threshold
+- **`ENABLE_COLORS`**: Enhances readability with colored output
+
+#### 🎯 Configuration Validation
+
+Validate your configuration:
+```bash
 cd tests && ./validate_config.sh && cd ..
 ```
 
-#### Sample `.env` Configuration:
+#### 📋 Complete Sample Configuration
 ```bash
-# Network Interface Configuration
-INTERFACE="ens4"                # Primary interface for XDP attachment
-TARGET_INTERFACE="ens5"         # Target interface for packet forwarding
-
-# NAT Configuration  
-NAT_IP="10.2.41.17"            # Target IP for NAT translation
-NAT_PORT="8081"                # Target port for NAT translation
-SOURCE_PORT="42844"            # Source port to match for NAT
-
-# Performance Configuration
-STATS_INTERVAL="5"             # Statistics display interval
-TARGET_PPS="85000"             # Target packet processing rate
-PERFORMANCE_THRESHOLD="60000"  # Performance warning threshold
-
-# System Configuration
-LOG_FILE="/tmp/vxlan_loader.log"  # Log file location
-ENABLE_COLORS="true"              # Enable colored output
-DEBUG_LEVEL="0"                   # Debug verbosity (0-3)
+# VXLAN Pipeline Environment Configuration
+INTERFACE="ens5"
+TARGET_INTERFACE="ens6"
+NAT_IP="172.30.82.95"
+NAT_PORT="8081"
+SOURCE_PORT="31765"
+VXLAN_PORT="4789"
+TARGET_VNI="1"
+STATS_INTERVAL="5"
+TARGET_PPS="85000"
+LOG_FILE="/tmp/vxlan_loader.log"
+DEBUG_LEVEL="0"
+XDP_MODE="auto"
+MONITOR_REFRESH_RATE="2"
+PERFORMANCE_THRESHOLD="60000"
+ENABLE_COLORS="true"
 ```
 
 ### Legacy Configuration
@@ -367,6 +455,9 @@ sudo apt-get install -y \
     make \
     libbpf-dev \
     linux-headers-$(uname -r) \
+    linux-tools-$(uname -r) \
+    linux-tools-common \
+    linux-tools-generic \
     pkg-config
 ```
 
@@ -377,7 +468,24 @@ sudo yum install -y \
     clang \
     make \
     libbpf-devel \
-    kernel-devel-$(uname -r)
+    kernel-devel-$(uname -r) \
+    bpftool
+```
+
+**BPF Tools and Debugging:**
+```bash
+# Essential BPF management tools
+sudo apt-get install -y \
+    linux-tools-$(uname -r) \
+    linux-tools-common \
+    linux-tools-generic
+
+# Verify bpftool installation
+bpftool --version
+which bpftool
+
+# Alternative: AWS-specific tools (if needed)
+sudo apt-get install -y linux-aws-tools-$(uname -r)
 ```
 
 **Performance Optimization Dependencies:**
