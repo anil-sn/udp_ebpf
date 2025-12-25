@@ -376,7 +376,7 @@ monitor() {
     done
 }
 
-# Stats function to display BPF maps and program statistics
+# Stats function to display basic packet statistics only
 stats() {
     echo -e "${GREEN}XDP VXLAN Pipeline Statistics${NC}"
     echo "=============================="
@@ -390,46 +390,28 @@ stats() {
     
     echo -e "${GREEN}✓ XDP Programs: $XDP_PROGS loaded${NC}"
     
-    # Show program details
-    echo -e "\n${YELLOW}Program Details:${NC}"
-    sudo bpftool prog list | grep -A1 -B1 "vxlan_pipeline_main" | head -10
-    
-    # Stats map
+    # Basic packet statistics only
     echo -e "\n${YELLOW}Packet Statistics:${NC}"
     if sudo bpftool map show name stats_map > /dev/null 2>&1; then
-        # Parse the JSON stats and make them human-readable
         STATS_JSON=$(sudo bpftool map dump name stats_map 2>/dev/null)
         if [ -n "$STATS_JSON" ]; then
-            # Extract totals from the first stats_map (ID 537)
+            # Extract totals
             TOTAL_RX=$(echo "$STATS_JSON" | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 0) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
             TOTAL_PROCESSED=$(echo "$STATS_JSON" | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 1) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
-            TOTAL_PASSED=$(echo "$STATS_JSON" | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 2) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
             TOTAL_DROPPED=$(echo "$STATS_JSON" | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 4) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
             TOTAL_VXLAN=$(echo "$STATS_JSON" | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 5) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
             TOTAL_NAT=$(echo "$STATS_JSON" | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 6) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
             TOTAL_BYTES=$(echo "$STATS_JSON" | jq -r 'first(.[] | select(.name == "stats_map")) | .elements[] | select(.key == 8) | .values | map(.value) | add // 0' 2>/dev/null || echo "0")
             
-            # Format numbers with commas for readability
-            TOTAL_RX_FMT=$(printf "%'d" "$TOTAL_RX" 2>/dev/null || echo "$TOTAL_RX")
-            TOTAL_PROCESSED_FMT=$(printf "%'d" "$TOTAL_PROCESSED" 2>/dev/null || echo "$TOTAL_PROCESSED")
-            TOTAL_PASSED_FMT=$(printf "%'d" "$TOTAL_PASSED" 2>/dev/null || echo "$TOTAL_PASSED")
-            TOTAL_DROPPED_FMT=$(printf "%'d" "$TOTAL_DROPPED" 2>/dev/null || echo "$TOTAL_DROPPED")
-            TOTAL_VXLAN_FMT=$(printf "%'d" "$TOTAL_VXLAN" 2>/dev/null || echo "$TOTAL_VXLAN")
-            TOTAL_NAT_FMT=$(printf "%'d" "$TOTAL_NAT" 2>/dev/null || echo "$TOTAL_NAT")
-            
-            # Format bytes in human readable format
-            if [ "$TOTAL_BYTES" -gt 0 ]; then
-                if [ "$TOTAL_BYTES" -gt 1073741824 ]; then
-                    BYTES_FMT=$(echo "$TOTAL_BYTES" | awk '{printf "%.2f GB", $1/1073741824}')
-                elif [ "$TOTAL_BYTES" -gt 1048576 ]; then
-                    BYTES_FMT=$(echo "$TOTAL_BYTES" | awk '{printf "%.2f MB", $1/1048576}')
-                elif [ "$TOTAL_BYTES" -gt 1024 ]; then
-                    BYTES_FMT=$(echo "$TOTAL_BYTES" | awk '{printf "%.2f KB", $1/1024}')
-                else
-                    BYTES_FMT="${TOTAL_BYTES} bytes"
-                fi
+            # Format bytes
+            if [ "$TOTAL_BYTES" -gt 1073741824 ]; then
+                BYTES_FMT=$(echo "$TOTAL_BYTES" | awk '{printf "%.2f GB", $1/1073741824}')
+            elif [ "$TOTAL_BYTES" -gt 1048576 ]; then
+                BYTES_FMT=$(echo "$TOTAL_BYTES" | awk '{printf "%.2f MB", $1/1048576}')
+            elif [ "$TOTAL_BYTES" -gt 1024 ]; then
+                BYTES_FMT=$(echo "$TOTAL_BYTES" | awk '{printf "%.2f KB", $1/1024}')
             else
-                BYTES_FMT="0 bytes"
+                BYTES_FMT="${TOTAL_BYTES} bytes"
             fi
             
             # Calculate drop rate
@@ -442,33 +424,13 @@ stats() {
             echo "┌─────────────────────────────────────────┐"
             echo "│             Packet Counters             │"
             echo "├─────────────────────────────────────────┤"
-            echo "│ Total Received:        $TOTAL_RX_FMT"
-            echo "│ Total Processed:       $TOTAL_PROCESSED_FMT"
-            echo "│ Total Passed:          $TOTAL_PASSED_FMT"
-            echo "│ Total Dropped:         $TOTAL_DROPPED_FMT ($DROP_RATE)"
-            echo "│ VXLAN Processed:       $TOTAL_VXLAN_FMT"
-            echo "│ NAT Applied:           $TOTAL_NAT_FMT"
+            echo "│ Total Received:        $(printf "%'d" "$TOTAL_RX" 2>/dev/null || echo "$TOTAL_RX")"
+            echo "│ Total Processed:       $(printf "%'d" "$TOTAL_PROCESSED" 2>/dev/null || echo "$TOTAL_PROCESSED")"
+            echo "│ Total Dropped:         $(printf "%'d" "$TOTAL_DROPPED" 2>/dev/null || echo "$TOTAL_DROPPED") ($DROP_RATE)"
+            echo "│ VXLAN Processed:       $(printf "%'d" "$TOTAL_VXLAN" 2>/dev/null || echo "$TOTAL_VXLAN")"
+            echo "│ NAT Applied:           $(printf "%'d" "$TOTAL_NAT" 2>/dev/null || echo "$TOTAL_NAT")"
             echo "│ Total Bytes:           $BYTES_FMT"
             echo "└─────────────────────────────────────────┘"
-            
-            # Show per-CPU breakdown for active CPUs
-            echo -e "\n${YELLOW}Per-CPU Breakdown:${NC}"
-            echo "CPU | RX Packets  | Processed   | Dropped     | VXLAN"
-            echo "----+-------------+-------------+-------------+--------"
-            for cpu in 0 1 2 3; do
-                CPU_RX=$(echo "$STATS_JSON" | jq -r "first(.[] | select(.name == \"stats_map\")) | .elements[] | select(.key == 0) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
-                CPU_PROC=$(echo "$STATS_JSON" | jq -r "first(.[] | select(.name == \"stats_map\")) | .elements[] | select(.key == 1) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
-                CPU_DROP=$(echo "$STATS_JSON" | jq -r "first(.[] | select(.name == \"stats_map\")) | .elements[] | select(.key == 4) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
-                CPU_VXLAN=$(echo "$STATS_JSON" | jq -r "first(.[] | select(.name == \"stats_map\")) | .elements[] | select(.key == 5) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
-                
-                if [ "$CPU_RX" -gt 0 ]; then
-                    printf " %d  | %11s | %11s | %11s | %s\n" "$cpu" \
-                        "$(printf "%'d" "$CPU_RX" 2>/dev/null || echo "$CPU_RX")" \
-                        "$(printf "%'d" "$CPU_PROC" 2>/dev/null || echo "$CPU_PROC")" \
-                        "$(printf "%'d" "$CPU_DROP" 2>/dev/null || echo "$CPU_DROP")" \
-                        "$(printf "%'d" "$CPU_VXLAN" 2>/dev/null || echo "$CPU_VXLAN")"
-                fi
-            done
         else
             echo "No statistics available yet"
         fi
@@ -476,25 +438,128 @@ stats() {
         echo "Stats map not found"
     fi
     
-    # NAT map
-    echo -e "\n${YELLOW}NAT Rules:${NC}"
-    if sudo bpftool map show name nat_map > /dev/null 2>&1; then
-        NAT_COUNT=$(sudo bpftool map dump name nat_map 2>/dev/null | grep -c "key" || echo "0")
-        echo "Active NAT rules: $NAT_COUNT"
-        if [ "$NAT_COUNT" -gt "0" ]; then
-            sudo bpftool map dump name nat_map | head -5
-        fi
+    # Process status
+    echo -e "\n${YELLOW}Process Status:${NC}"
+    if pgrep -f "vxlan_loader" > /dev/null; then
+        VXLAN_PIDS=$(pgrep -f "vxlan_loader" | tr '\n' ' ')
+        echo -e "${GREEN}✓ vxlan_loader: Running (PID: ${VXLAN_PIDS%% })${NC}"
     else
-        echo "NAT map not found"
+        echo -e "${RED}✗ vxlan_loader: Not running${NC}"
     fi
     
-    # IP allowlist
-    echo -e "\n${YELLOW}IP Allowlist:${NC}"
+    if pgrep -f "packet_injector" > /dev/null; then
+        INJECTOR_PIDS=$(pgrep -f "packet_injector" | tr '\n' ' ')
+        echo -e "${GREEN}✓ packet_injector: Running (PID: ${INJECTOR_PIDS%% })${NC}"
+    else
+        echo -e "${RED}✗ packet_injector: Not running${NC}"
+    fi
+}
+
+# Comprehensive info function with all eBPF details
+info() {
+    echo -e "${GREEN}XDP VXLAN Pipeline - Comprehensive Information${NC}"
+    echo "================================================="
+    
+    # XDP Programs
+    echo -e "\n${YELLOW}=== XDP PROGRAM DETAILS ===${NC}"
+    XDP_PROGS=$(sudo bpftool prog list 2>/dev/null | grep -c "vxlan_pipeline_main" || echo "0")
+    if [ "$XDP_PROGS" -gt "0" ]; then
+        echo -e "${GREEN}✓ XDP Programs: $XDP_PROGS loaded${NC}"
+        sudo bpftool prog list | grep -A3 -B1 "vxlan_pipeline_main"
+    else
+        echo -e "${RED}✗ No XDP programs loaded${NC}"
+    fi
+    
+    # Network attachment
+    echo -e "\n${YELLOW}=== NETWORK ATTACHMENT ===${NC}"
+    sudo bpftool net list
+    
+    # All BPF Maps
+    echo -e "\n${YELLOW}=== BPF MAPS OVERVIEW ===${NC}"
+    echo "All pipeline-related maps:"
+    sudo bpftool map list | grep -E "(nat_map|stats_map|ip_allowlist|redirect_map|interface_map)"
+    
+    # NAT Rules (Full)
+    echo -e "\n${YELLOW}=== NAT CONFIGURATION (FULL) ===${NC}"
+    if sudo bpftool map show name nat_map > /dev/null 2>&1; then
+        NAT_COUNT=$(sudo bpftool map dump name nat_map 2>/dev/null | grep -c "key" || echo "0")
+        echo "Total NAT rules: $NAT_COUNT"
+        if [ "$NAT_COUNT" -gt "0" ]; then
+            echo "Complete NAT map dump:"
+            sudo bpftool map dump name nat_map
+        else
+            echo "No NAT rules configured"
+        fi
+    else
+        echo -e "${RED}NAT map not found${NC}"
+    fi
+    
+    # IP Allowlist (Full)
+    echo -e "\n${YELLOW}=== IP ALLOWLIST (FULL) ===${NC}"
     if sudo bpftool map show name ip_allowlist > /dev/null 2>&1; then
         IP_COUNT=$(sudo bpftool map dump name ip_allowlist 2>/dev/null | grep -c "key" || echo "0")
-        echo "Allowed IPs: $IP_COUNT"
+        echo "Total allowed IPs: $IP_COUNT"
+        if [ "$IP_COUNT" -gt "0" ]; then
+            echo "Complete IP allowlist dump:"
+            sudo bpftool map dump name ip_allowlist | head -50  # Limit to first 50 for readability
+            if [ "$IP_COUNT" -gt "50" ]; then
+                echo "... (showing first 50 of $IP_COUNT total IPs)"
+            fi
+        else
+            echo "No IPs in allowlist"
+        fi
     else
-        echo "IP allowlist map not found"
+        echo -e "${RED}IP allowlist map not found${NC}"
+    fi
+    
+    # Statistics Map (Full)
+    echo -e "\n${YELLOW}=== STATISTICS MAP (FULL) ===${NC}"
+    if sudo bpftool map show name stats_map > /dev/null 2>&1; then
+        echo "Complete statistics map dump:"
+        sudo bpftool map dump name stats_map
+    else
+        echo -e "${RED}Statistics map not found${NC}"
+    fi
+    
+    # Other Maps
+    echo -e "\n${YELLOW}=== OTHER PIPELINE MAPS ===${NC}"
+    
+    # Redirect map
+    if sudo bpftool map show name redirect_map > /dev/null 2>&1; then
+        echo "Redirect map:"
+        sudo bpftool map dump name redirect_map
+    fi
+    
+    # Interface map
+    if sudo bpftool map show name interface_map > /dev/null 2>&1; then
+        echo "Interface map:"
+        sudo bpftool map dump name interface_map
+    fi
+    
+    # Per-CPU breakdown
+    echo -e "\n${YELLOW}=== PER-CPU BREAKDOWN ===${NC}"
+    if sudo bpftool map show name stats_map > /dev/null 2>&1; then
+        STATS_JSON=$(sudo bpftool map dump name stats_map 2>/dev/null)
+        if [ -n "$STATS_JSON" ]; then
+            echo "CPU | RX Packets  | Processed   | Dropped     | VXLAN       | NAT Applied"
+            echo "----+-------------+-------------+-------------+-------------+------------"
+            for cpu in 0 1 2 3 4 5 6 7; do
+                CPU_RX=$(echo "$STATS_JSON" | jq -r "first(.[] | select(.name == \"stats_map\")) | .elements[] | select(.key == 0) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
+                CPU_PROC=$(echo "$STATS_JSON" | jq -r "first(.[] | select(.name == \"stats_map\")) | .elements[] | select(.key == 1) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
+                CPU_DROP=$(echo "$STATS_JSON" | jq -r "first(.[] | select(.name == \"stats_map\")) | .elements[] | select(.key == 4) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
+                CPU_VXLAN=$(echo "$STATS_JSON" | jq -r "first(.[] | select(.name == \"stats_map\")) | .elements[] | select(.key == 5) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
+                CPU_NAT=$(echo "$STATS_JSON" | jq -r "first(.[] | select(.name == \"stats_map\")) | .elements[] | select(.key == 6) | .values[] | select(.cpu == $cpu) | .value // 0" 2>/dev/null || echo "0")
+                
+                if [ "$CPU_RX" -gt 0 ] || [ "$CPU_PROC" -gt 0 ] || [ "$CPU_DROP" -gt 0 ] || [ "$CPU_VXLAN" -gt 0 ] || [ "$CPU_NAT" -gt 0 ]; then
+                    printf " %d  | %11s | %11s | %11s | %11s | %s\n" "$cpu" \
+                        "$(printf "%'d" "$CPU_RX" 2>/dev/null || echo "$CPU_RX")" \
+                        "$(printf "%'d" "$CPU_PROC" 2>/dev/null || echo "$CPU_PROC")" \
+                        "$(printf "%'d" "$CPU_DROP" 2>/dev/null || echo "$CPU_DROP")" \
+                        "$(printf "%'d" "$CPU_VXLAN" 2>/dev/null || echo "$CPU_VXLAN")" \
+                        "$(printf "%'d" "$CPU_NAT" 2>/dev/null || echo "$CPU_NAT")"
+                fi
+            done
+        fi
     fi
     
     # Interface statistics
@@ -693,9 +758,10 @@ case "${1:-status}" in
     "stop") stop ;;
     "status") status ;;
     "stats") stats ;;
+    "info") info ;;
     "test") test ;;
     "monitor") monitor ;;
     "clean") clean ;;
     "restart") stop; sleep 1; start ;;
-    *) echo "Usage: $0 [start|stop|status|stats|test|monitor|clean|restart]" ;;
+    *) echo "Usage: $0 [start|stop|status|stats|info|test|monitor|clean|restart]" ;;
 esac
