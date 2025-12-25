@@ -51,14 +51,17 @@ def main():
     
     interface = sys.argv[1]
     
-    # The exact packet from your hex dump
+    # Create packet matching .env configuration:
+    # SOURCE_PORT="31765" - inner source port should be 31765
+    # Inner IP 172.30.82.157 is already in allowlist
     hex_dump = """
   0x0000:  0a63 c28f 07ed 0ae5 1661 b06d 0800 4500
   0x0010:  02de 0000 0000 fe11 bbc6 ac1e 53c0 ac1e
   0x0020:  524b ffee 12b5 02ca 0000 0800 0000 0000
   0x0030:  0100 0a2c e332 fbb9 0a20 5587 cbdd 0800
   0x0040:  4500 02ac 0dea 4000 4011 34ed ac1e 529d
-  0x0050:  ac1e 4a90 4c18 7c15 0298 4bce 000a 0290
+  0x0050:  ac1e 4a90 7c05 4c18 0298 4bce 000a 0290
+"""
   0x0060:  694b f476 45d3 a350 0000 2070 0002 002c
   0x0070:  0100 0009 0096 0004 0097 0004 0008 0004
   0x0080:  000c 0004 0007 0002 000b 0002 0004 0001
@@ -122,6 +125,10 @@ def main():
         if pkt.haslayer(VXLAN):
             vxlan_layer = pkt[VXLAN]
             print(f"   └─ VXLAN VNI: {vxlan_layer.vni}")
+            # Check inner packet
+            if vxlan_layer.payload and vxlan_layer.payload.haslayer(IP):
+                inner_ip = vxlan_layer.payload[IP]
+                print(f"   └─ Inner IP: {inner_ip.src} → {inner_ip.dst}")
     except:
         print("   └─ Raw packet (could not parse with Scapy)")
     
