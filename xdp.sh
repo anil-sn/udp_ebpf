@@ -376,6 +376,85 @@ monitor() {
     done
 }
 
+# Stats function to display BPF maps and program statistics
+stats() {
+    echo -e "${GREEN}XDP VXLAN Pipeline Statistics${NC}"
+    echo "=============================="
+    
+    # Check if programs are loaded
+    XDP_PROGS=$(sudo bpftool prog list 2>/dev/null | grep -c "vxlan_pipeline_main" || echo "0")
+    if [ "$XDP_PROGS" -eq "0" ]; then
+        echo -e "${RED}✗ No XDP programs loaded${NC}"
+        return 1
+    fi
+    
+    echo -e "${GREEN}✓ XDP Programs: $XDP_PROGS loaded${NC}"
+    
+    # Show program details
+    echo -e "\n${YELLOW}Program Details:${NC}"
+    sudo bpftool prog list | grep -A1 -B1 "vxlan_pipeline_main" | head -10
+    
+    # Stats map
+    echo -e "\n${YELLOW}Packet Statistics:${NC}"
+    if sudo bpftool map show name stats_map > /dev/null 2>&1; then
+        sudo bpftool map dump name stats_map 2>/dev/null || echo "No statistics available yet"
+    else
+        echo "Stats map not found"
+    fi
+    
+    # NAT map
+    echo -e "\n${YELLOW}NAT Rules:${NC}"
+    if sudo bpftool map show name nat_map > /dev/null 2>&1; then
+        NAT_COUNT=$(sudo bpftool map dump name nat_map 2>/dev/null | grep -c "key" || echo "0")
+        echo "Active NAT rules: $NAT_COUNT"
+        if [ "$NAT_COUNT" -gt "0" ]; then
+            sudo bpftool map dump name nat_map | head -5
+        fi
+    else
+        echo "NAT map not found"
+    fi
+    
+    # IP allowlist
+    echo -e "\n${YELLOW}IP Allowlist:${NC}"
+    if sudo bpftool map show name ip_allowlist > /dev/null 2>&1; then
+        IP_COUNT=$(sudo bpftool map dump name ip_allowlist 2>/dev/null | grep -c "key" || echo "0")
+        echo "Allowed IPs: $IP_COUNT"
+    else
+        echo "IP allowlist map not found"
+    fi
+    
+    # Interface statistics
+    echo -e "\n${YELLOW}Interface Statistics ($INTERFACE):${NC}"
+    if [ -f "/sys/class/net/$INTERFACE/statistics/rx_packets" ]; then
+        RX_PACKETS=$(cat /sys/class/net/$INTERFACE/statistics/rx_packets 2>/dev/null || echo "0")
+        TX_PACKETS=$(cat /sys/class/net/$INTERFACE/statistics/tx_packets 2>/dev/null || echo "0")
+        RX_BYTES=$(cat /sys/class/net/$INTERFACE/statistics/rx_bytes 2>/dev/null || echo "0")
+        TX_BYTES=$(cat /sys/class/net/$INTERFACE/statistics/tx_bytes 2>/dev/null || echo "0")
+        
+        echo "RX: $RX_PACKETS packets ($RX_BYTES bytes)"
+        echo "TX: $TX_PACKETS packets ($TX_BYTES bytes)"
+    else
+        echo "Interface statistics not available"
+    fi
+    
+    # Process status
+    echo -e "\n${YELLOW}Process Status:${NC}"
+    LOADER_PID=$(pgrep -f "vxlan_loader" 2>/dev/null || echo "")
+    INJECTOR_PID=$(pgrep -f "packet_injector" 2>/dev/null || echo "")
+    
+    if [ -n "$LOADER_PID" ]; then
+        echo -e "${GREEN}✓ vxlan_loader: Running (PID: $LOADER_PID)${NC}"
+    else
+        echo -e "${RED}✗ vxlan_loader: Not running${NC}"
+    fi
+    
+    if [ -n "$INJECTOR_PID" ]; then
+        echo -e "${GREEN}✓ packet_injector: Running (PID: $INJECTOR_PID)${NC}"
+    else
+        echo -e "${YELLOW}◦ packet_injector: Not running${NC}"
+    fi
+}
+
 # Ensure terminal is fixed on exit
 trap fix_terminal EXIT
 
@@ -383,8 +462,9 @@ case "${1:-status}" in
     "start") start ;;
     "stop") stop ;;
     "status") status ;;
+    "stats") stats ;;
     "monitor") monitor ;;
     "clean") clean ;;
     "restart") stop; sleep 1; start ;;
-    *) echo "Usage: $0 [start|stop|status|monitor|clean|restart]" ;;
+    *) echo "Usage: $0 [start|stop|status|stats|monitor|clean|restart]" ;;
 esac
