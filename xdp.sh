@@ -530,14 +530,15 @@ info() {
     
     # Try each NAT map to find one with data
     for map_id in $(sudo bpftool map list 2>/dev/null | grep "nat_map" | awk '{print $1}' | tr -d ':'); do
-        NAT_DATA=$(sudo bpftool map dump id "$map_id" 2>/dev/null)
+        NAT_DATA=$(sudo bpftool map dump id "$map_id" -j 2>/dev/null)
         if [ -n "$NAT_DATA" ]; then
-            # Check if this map has actual entries
-            HAS_ENTRIES=$(echo "$NAT_DATA" | grep -q '"elements".*\[' && echo "true" || echo "false")
+            # Check if this map has actual entries using jq
+            HAS_ENTRIES=$(echo "$NAT_DATA" | jq -r 'if (type == "array" and length > 0 and .[0].elements != null and (.[0].elements | length) > 0) then "true" else "false" end' 2>/dev/null)
             if [ "$HAS_ENTRIES" = "true" ]; then
                 NAT_FOUND=true
                 
-                # Extract entries using simpler method
+                # Extract NAT rules using jq
+                NAT_RULES=$(echo "$NAT_DATA" | jq -r '.[0].elements[] | [.key.src_port, .value.target_ip, .value.target_port] | @csv' 2>/dev/null)
                 NAT_COUNT=$(echo "$NAT_DATA" | grep -o '"src_port":[0-9]*' | wc -l)
                 
                 if [ "$NAT_COUNT" -gt 0 ]; then
@@ -573,10 +574,10 @@ info() {
     
     # IP Allowlist Table
     echo -e "\n${YELLOW}=== IP ALLOWLIST ===${NC}"
-    IP_DATA=$(sudo bpftool map dump name ip_allowlist 2>/dev/null)
+    IP_DATA=$(sudo bpftool map dump name ip_allowlist -j 2>/dev/null)
     
     if [ -n "$IP_DATA" ]; then
-        # Extract IP entries from any map that has elements
+        # Extract IP entries from any map that has elements using jq
         IP_ENTRIES=$(echo "$IP_DATA" | jq -r '.[] | select(.elements != null and (.elements | length) > 0) | .elements[].key' 2>/dev/null)
         
         if [ -n "$IP_ENTRIES" ]; then
@@ -651,10 +652,10 @@ info() {
     
     # Try each stats map to find one with data
     for map_id in $(sudo bpftool map list 2>/dev/null | grep "stats_map" | awk '{print $1}' | tr -d ':'); do
-        STATS_DATA=$(sudo bpftool map dump id "$map_id" 2>/dev/null)
+        STATS_DATA=$(sudo bpftool map dump id "$map_id" -j 2>/dev/null)
         if [ -n "$STATS_DATA" ]; then
-            # Check if this map has actual entries with non-zero values
-            HAS_DATA=$(echo "$STATS_DATA" | grep -q '"value":[1-9]' && echo "true" || echo "false")
+            # Check if this map has actual entries with non-zero values using jq
+            HAS_DATA=$(echo "$STATS_DATA" | jq -r 'if (type == "array" and length > 0 and .[0].elements != null) then (.[0].elements | map(.values[] | .value) | map(select(. > 0)) | length > 0) else false end' 2>/dev/null)
             if [ "$HAS_DATA" = "true" ]; then
                 STATS_FOUND=true
                 
