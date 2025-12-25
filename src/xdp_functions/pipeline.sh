@@ -101,10 +101,11 @@ start_pipeline() {
         if [ -f "vxlan_pipeline.bpf.o" ]; then
             # CRITICAL: packet_injector is REQUIRED for userspace packet processing
             # It handles packets forwarded from XDP via ring buffer mechanism
+            # NOTE: packet_injector should NOT load XDP program (vxlan_loader already did)
             print_color "blue" "Note: packet_injector provides essential userspace packet processing"
             
-            # Start packet_injector - it's a separate component from vxlan_loader
-            nohup sudo ./packet_injector vxlan_pipeline.bpf.o "$TARGET_INTERFACE" \
+            # Start packet_injector - FIXED: Remove .bpf.o to prevent duplicate XDP program loading
+            nohup sudo ./packet_injector "$TARGET_INTERFACE" \
                 </dev/null >"/tmp/packet_injector.log" 2>&1 &
             
             print_color "green" "✓ Packet injector started"
