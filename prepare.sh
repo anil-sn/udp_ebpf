@@ -77,81 +77,62 @@ install_dependencies() {
             sudo apt-get install -y git llvm libelf-dev libpcap-dev pkg-config m4 zlib1g-dev libcap-dev
             log "Extended XDP development packages installed"
             
-            # BPF tools - Enhanced installation for AWS kernels
-            if ! command -v bpftool >/dev/null 2>&1; then
-                info "Installing bpftool..."
+            # BPF tools - Build from source for reliability (AWS kernels often need this)
+            if ! command -v bpftool >/dev/null 2>&1 || bpftool version 2>&1 | grep -q "WARNING.*not found"; then
+                info "Installing bpftool from source..."
                 
-                # Try AWS-specific kernel tools first
-                if uname -r | grep -q aws; then
-                    info "Detected AWS kernel, installing AWS-specific tools..."
-                    sudo apt-get install -y linux-tools-$(uname -r) linux-cloud-tools-$(uname -r) || {
-                        warn "AWS-specific tools failed, trying generic packages..."
-                        sudo apt-get install -y linux-tools-aws linux-cloud-tools-aws || {
-                            warn "AWS tools failed, trying generic linux-tools..."
-                            sudo apt-get install -y linux-tools-common linux-tools-generic || {
-                                sudo apt-get install -y bpftool || {
-                                    warn "Could not install bpftool via package manager"
-                                }
-                            }
-                        }
-                    }
-                else
-                    # Non-AWS systems
-                    sudo apt-get install -y linux-tools-$(uname -r) linux-tools-common linux-tools-generic || {
-                        sudo apt-get install -y bpftool || {
-                            warn "Could not install bpftool via package manager"
-                        }
-                    }
-                fi
+                # Install build dependencies
+                sudo apt-get install -y build-essential libssl-dev binutils-dev libcap-dev git
+                log "Build dependencies installed"
                 
-                # Verify bpftool installation
-                if command -v bpftool >/dev/null 2>&1; then
-                    log "bpftool installed successfully"
-                    info "bpftool version: $(bpftool version 2>/dev/null | head -1 || echo 'installed')"
-                else
-                    warn "bpftool installation may have failed - attempting source build..."
+                # Build bpftool from source
+                local bpftool_dir="/tmp/bpftool"
+                [ -d "$bpftool_dir" ] && rm -rf "$bpftool_dir"
+                
+                info "Cloning bpftool repository..."
+                cd /tmp
+                if git clone --recurse-submodules https://github.com/libbpf/bpftool.git; then
+                    cd bpftool/src
                     
-                    # Install additional dependencies for bpftool source build
-                    sudo apt-get install -y libssl-dev binutils-dev libcap-dev
-                    
-                    # Build bpftool from source (more reliable)
-                    local bpftool_dir="/tmp/bpftool-source"
-                    [ -d "$bpftool_dir" ] && rm -rf "$bpftool_dir"
-                    
-                    info "Cloning bpftool source repository..."
-                    if git clone --recurse-submodules https://github.com/libbpf/bpftool.git "$bpftool_dir"; then
-                        cd "$bpftool_dir/src"
+                    info "Building bpftool from source (this may take a few minutes)..."
+                    if make -j$(nproc) && sudo make install; then
+                        log "bpftool built and installed successfully"
                         
-                        info "Building bpftool from source..."
-                        if make -j$(nproc) && sudo make install; then
-                            log "bpftool built and installed from source"
+                        # Verify installation
+                        if [ -f "/usr/local/sbin/bpftool" ]; then
+                            log "bpftool installed at /usr/local/sbin/bpftool"
                             
-                            # Fix PATH to prioritize /usr/local/sbin
+                            # Update PATH immediately for current session
+                            export PATH="/usr/local/sbin:$PATH"
+                            
+                            # Update shell profile for future sessions
                             if ! grep -q "/usr/local/sbin.*PATH" ~/.bashrc 2>/dev/null; then
                                 echo 'export PATH="/usr/local/sbin:$PATH"' >> ~/.bashrc
-                                export PATH="/usr/local/sbin:$PATH"
-                                info "Updated PATH to prioritize /usr/local/sbin"
+                                info "Updated ~/.bashrc to prioritize /usr/local/sbin"
                             fi
                             
-                            # Verify the source-built version works
-                            if /usr/local/sbin/bpftool version >/dev/null 2>&1; then
-                                log "Source-built bpftool verified working"
-                                info "bpftool version: $(/usr/local/sbin/bpftool version 2>/dev/null | head -1)"
-                            else
-                                warn "Source-built bpftool may have issues"
-                            fi
+                            # Create symlink for broader compatibility
+                            sudo ln -sf /usr/local/sbin/bpftool /usr/local/bin/bpftool
+                            
+                            # Verify the new version works
+                            local bpftool_version=$(/usr/local/sbin/bpftool version 2>/dev/null | head -1)
+                            log "bpftool version: $bpftool_version"
+                            info "bpftool features: $(bpftool version 2>/dev/null | grep features | cut -d: -f2)"
                         else
-                            error "Failed to build bpftool from source"
+                            error "bpftool installation failed - binary not found"
                         fi
-                        
-                        cd "$PROJECT_ROOT"
-                        rm -rf "$bpftool_dir"
                     else
-                        error "Failed to clone bpftool repository"
+                        error "Failed to build bpftool from source"
                     fi
+                    
+                    cd "$PROJECT_ROOT"
+                    rm -rf "$bpftool_dir"
+                else
+                    error "Failed to clone bpftool repository"
                 fi
             else
-                log "bpftool already available"
+                log "bpftool already available and working"
+                info "bpftool version: $(bpftool version 2>/dev/null | head -1 || echo 'installed')"
             fi
             
             # Python development

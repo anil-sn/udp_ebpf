@@ -61,8 +61,9 @@ run_end_to_end_test() {
         # High traffic mode - minimal captures, focus on statistics
         print_color "blue" "High-traffic mode: Limited packet captures, statistical analysis"
         
-        # Short targeted captures
-        timeout 10 sudo tcpdump -i "$INTERFACE" "udp port 4789" -c 10 -w "$test_dir/sample_vxlan.pcap" >/dev/null 2>&1 &
+        # XDP intercepts VXLAN before tcpdump can see it, so capture any UDP traffic as reference
+        print_color "yellow" "  Note: XDP processes VXLAN before tcpdump - capturing sample UDP traffic"
+        timeout 5 sudo tcpdump -i "$INTERFACE" "udp" -c 5 -w "$test_dir/sample_vxlan.pcap" >/dev/null 2>&1 &
         local vxlan_pid=$!
         
         timeout 10 sudo tcpdump -i "$TARGET_INTERFACE" -c 10 -w "$test_dir/sample_egress.pcap" >/dev/null 2>&1 &
@@ -83,10 +84,21 @@ run_end_to_end_test() {
         local monitoring_duration=20
     fi
     
-    # Enhanced BPF trace capture with better filtering
+    # Enhanced BPF trace capture with better filtering and fallbacks
     timeout $monitoring_duration bash -c "
-        sudo cat /sys/kernel/debug/tracing/trace_pipe 2>/dev/null | \
-        grep -E '(vxlan|xdp|bpf_trace_printk)' > '$test_dir/bpf_trace.log' 2>/dev/null
+        # Try to capture BPF traces with fallback options
+        if [ -r /sys/kernel/debug/tracing/trace_pipe ]; then
+            sudo cat /sys/kernel/debug/tracing/trace_pipe 2>/dev/null | \
+            grep -E '(vxlan|xdp|bpf_trace_printk|tracepoint)' > '$test_dir/bpf_trace.log' 2>/dev/null
+        else
+            # Fallback: capture any available trace data or mark as unavailable
+            echo 'BPF trace_pipe not accessible - trace logging disabled' > '$test_dir/bpf_trace.log'
+            # Try alternative tracing methods
+            if command -v bpftool >/dev/null 2>&1; then
+                echo 'Available BPF programs:' >> '$test_dir/bpf_trace.log'
+                bpftool prog list 2>/dev/null | grep -E '(xdp|vxlan)' >> '$test_dir/bpf_trace.log' 2>/dev/null || true
+            fi
+        fi
     " &
     local trace_pid=$!
     
@@ -158,25 +170,35 @@ run_end_to_end_test() {
     echo ""
     print_color "yellow" "Stopping captures and analyzing results..."
     
-    # Stop all captures gracefully
-    kill $vxlan_pid 2>/dev/null || true
-    kill $egress_pid 2>/dev/null || true
-    kill $trace_pid 2>/dev/null || true
+    # Stop all captures with timeout to prevent hanging
+    {
+        kill $vxlan_pid 2>/dev/null || true
+        kill $egress_pid 2>/dev/null || true
+        kill $trace_pid 2>/dev/null || true
+    } &
     
-    # Wait for captures to finish
-    wait $vxlan_pid 2>/dev/null || true
-    wait $egress_pid 2>/dev/null || true
-    wait $trace_pid 2>/dev/null || true
+    # Wait briefly for graceful termination, then force kill if needed
+    sleep 2
+    {
+        kill -9 $vxlan_pid 2>/dev/null || true
+        kill -9 $egress_pid 2>/dev/null || true  
+        kill -9 $trace_pid 2>/dev/null || true
+    } &>/dev/null
     
-    # Get final statistics
+    # Brief wait for cleanup
+    sleep 1
+    
+    # Get final statistics with timeout protection
     echo "Capturing final statistics..."
-    show_statistics > "$test_dir/stats_after.txt" 2>/dev/null
+    timeout 5 bash -c "show_statistics > '$test_dir/stats_after.txt' 2>/dev/null" || {
+        echo "Statistics collection timed out" > "$test_dir/stats_after.txt"
+    }
     
-    # Calculate comprehensive deltas
-    local final_rx=$(get_statistics "total")
-    local final_vxlan=$(get_statistics "vxlan")
-    local final_nat=$(get_statistics "nat")
-    local final_bytes=$(get_statistics "bytes")
+    # Calculate comprehensive deltas with error checking
+    local final_rx=$(timeout 3 bash -c "get_statistics 'total'" 2>/dev/null || echo "$baseline_rx")
+    local final_vxlan=$(timeout 3 bash -c "get_statistics 'vxlan'" 2>/dev/null || echo "$baseline_vxlan")
+    local final_nat=$(timeout 3 bash -c "get_statistics 'nat'" 2>/dev/null || echo "$baseline_nat")
+    local final_bytes=$(timeout 3 bash -c "get_statistics 'bytes'" 2>/dev/null || echo "$baseline_bytes")
     
     local total_new_rx=$((final_rx - baseline_rx))
     local total_new_vxlan=$((final_vxlan - baseline_vxlan))
@@ -225,7 +247,7 @@ run_end_to_end_test() {
     
     # Check all possible capture files
     local capture_files=(
-        "sample_vxlan.pcap:Sample VXLAN"
+        "sample_vxlan.pcap:Sample VXLAN (XDP may intercept before tcpdump)"
         "sample_egress.pcap:Sample Egress" 
         "ingress_udp.pcap:Ingress UDP"
         "egress.pcap:Egress Traffic"
@@ -237,29 +259,69 @@ run_end_to_end_test() {
         local desc="${file_info##*:}"
         
         if [ -f "$test_dir/$file" ]; then
-            local count=$(tcpdump -r "$test_dir/$file" 2>/dev/null | wc -l || echo "0")
+            # Fixed packet counting with proper error handling and output sanitization
+            local count_raw=$(tcpdump -r "$test_dir/$file" 2>/dev/null | wc -l 2>/dev/null)
+            local count=$(echo "$count_raw" | tr -d '\n\r\t ' | grep -o '^[0-9]*' | head -1)
+            # Ensure count is a valid number, default to 0
+            if [ -z "$count" ] || ! [[ "$count" =~ ^[0-9]+$ ]]; then
+                count="0"
+            fi
             echo "  $desc: $count packets"
             total_captured=$((total_captured + count))
             
             # Basic packet analysis
             if [ "$count" -gt 0 ]; then
-                local first_packet=$(tcpdump -r "$test_dir/$file" -c 1 -n 2>/dev/null | head -1 || echo "")
+                local first_packet=$(tcpdump -r "$test_dir/$file" -c 1 -n 2>/dev/null | head -1 2>/dev/null || echo "")
                 if [ -n "$first_packet" ]; then
                     echo "    Sample: ${first_packet:0:80}..."
                 fi
+            elif [[ "$file" == *"vxlan"* ]]; then
+                echo "    ℹ Empty VXLAN capture is normal - XDP processes packets before tcpdump"
             fi
         fi
     done
     
-    # Show trace log summary
+    # Show trace log summary with enhanced diagnostics
     if [ -f "$test_dir/bpf_trace.log" ]; then
-        local trace_lines=$(wc -l < "$test_dir/bpf_trace.log" 2>/dev/null || echo "0")
+        local trace_lines=$(wc -l < "$test_dir/bpf_trace.log" 2>/dev/null | tr -d '\n' || echo "0")
+        # Ensure trace_lines is a valid number
+        if ! [[ "$trace_lines" =~ ^[0-9]+$ ]]; then
+            trace_lines="0"
+        fi
         echo "  BPF trace logs:  $trace_lines lines captured"
         
         if [ "$trace_lines" -gt 0 ]; then
             echo "    Recent entries:"
             tail -3 "$test_dir/bpf_trace.log" 2>/dev/null | sed 's/^/      /' || true
+        else
+            # Provide diagnostic information for empty trace logs
+            if grep -q "not accessible" "$test_dir/bpf_trace.log" 2>/dev/null; then
+                echo "    ⚠ BPF kernel tracing not available (debugfs not mounted or no permissions)"
+                echo "    Note: This is normal on some systems and doesn't affect functionality"
+            else
+                echo "    ℹ No BPF debug traces captured (programs may not use bpf_trace_printk)"
+                echo "    Note: XDP programs often work silently without debug output"
+            fi
         fi
+    else
+        echo "  BPF trace logs:  No trace file generated"
+    fi
+    
+    # VXLAN Processing Verification (since XDP intercepts before tcpdump)
+    echo ""
+    echo "VXLAN Processing Verification:"
+    local vxlan_processed_delta=$((vxlan_after - vxlan_before))
+    local nat_applied_delta=$((nat_after - nat_before))
+    
+    if [ "$vxlan_processed_delta" -gt 0 ]; then
+        print_color "green" "  ✓ VXLAN packets processed: $vxlan_processed_delta"
+        echo "    This confirms XDP is successfully intercepting and processing VXLAN traffic"
+    else
+        print_color "yellow" "  ⚠ No VXLAN packet increment detected during test"
+    fi
+    
+    if [ "$nat_applied_delta" -gt 0 ]; then
+        print_color "green" "  ✓ NAT translations applied: $nat_applied_delta"
     fi
     
     # Performance assessment
@@ -330,7 +392,7 @@ run_end_to_end_test() {
         fi
     done
     
-    echo "  • bpf_trace.log     - Kernel BPF debug traces"
+    echo "  • bpf_trace.log     - Kernel BPF debug traces (may be empty for production programs)"
     echo "  • stats_before.txt  - Statistics before test"
     echo "  • stats_after.txt   - Statistics after test"
     echo ""
@@ -346,7 +408,7 @@ run_end_to_end_test() {
     done
     echo "  # Compare statistics:"
     echo "  diff $test_dir/stats_before.txt $test_dir/stats_after.txt"
-    echo "  # View traces:"
+    echo "  # View traces (note: may be empty if programs don't use debug output):"
     echo "  cat $test_dir/bpf_trace.log"
 }
 

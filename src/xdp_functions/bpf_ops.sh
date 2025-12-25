@@ -43,7 +43,7 @@ dump_bpf_map() {
     esac
 }
 
-# Count entries in BPF map
+# Count entries in BPF map - Fixed to handle multiple maps with same name
 count_bpf_map_entries() {
     local map_name="$1"
     
@@ -57,8 +57,9 @@ count_bpf_map_entries() {
     
     # Check if jq is available for proper JSON parsing
     if command -v jq >/dev/null 2>&1; then
-        local count=$(echo "$map_data" | jq -r 'if (type == "array" and length > 0 and .[0].elements != null) then (.[0].elements | length) else 0 end' 2>/dev/null || echo "0")
-        echo "$count"
+        # Count entries across ALL maps with this name (sum all non-empty maps)
+        local total_count=$(echo "$map_data" | jq -r 'if (type == "array") then [.[] | select(.elements != null and (.elements | length) > 0) | .elements | length] | add // 0 else 0 end' 2>/dev/null || echo "0")
+        echo "$total_count"
     else
         # Fallback to counting "key" occurrences
         local count=$(echo "$map_data" | grep -c '"key":' 2>/dev/null || echo "0")
@@ -74,12 +75,14 @@ get_nat_rules() {
         return 1
     fi
     
-    # Parse JSON output using jq if available
+    # Parse JSON output using jq if available - fixed to handle multiple maps
     if command -v jq >/dev/null 2>&1; then
-        local has_entries=$(echo "$nat_data" | jq -r 'if (type == "array" and length > 0 and .[0].elements != null and (.[0].elements | length) > 0) then "true" else "false" end' 2>/dev/null)
+        # Check if any map has entries (handle multiple maps with same name)
+        local has_entries=$(echo "$nat_data" | jq -r 'if (type == "array") then ([.[] | select(.elements != null and (.elements | length) > 0)] | length > 0) else false end' 2>/dev/null)
         
         if [ "$has_entries" = "true" ]; then
-            echo "$nat_data" | jq -r '.[0].elements[] | "\(.key.src_port) -> \(int_to_ip(.value.target_ip)):\(.value.target_port)"'
+            # Get entries from all maps that have data
+            echo "$nat_data" | jq -r '.[] | select(.elements != null and (.elements | length) > 0) | .elements[] | "\(.key.src_port) -> \(int_to_ip(.value.target_ip)):\(.value.target_port)"' 2>/dev/null
         fi
     else
         # Fallback to text parsing - extract individual components

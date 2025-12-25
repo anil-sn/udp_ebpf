@@ -286,8 +286,8 @@ show_detailed_info() {
             echo "│   IP Address    │                   Status                       │"
             echo "├─────────────────┼────────────────────────────────────────────────┤"
             
-            # Show first 10 IPs to keep output manageable
-            local ip_entries=$(echo "$ip_data" | jq -r 'if (type == "array" and length > 0 and .[0].elements != null) then [.[0].elements[].key] else [] end | .[]' 2>/dev/null | head -10)
+            # Show first 15 IPs to keep output manageable - handle multiple maps
+            local ip_entries=$(echo "$ip_data" | jq -r 'if (type == "array") then [.[] | select(.elements != null and (.elements | length) > 0) | .elements[].key] else [] end | .[:15] | .[]' 2>/dev/null)
             
             if [ -n "$ip_entries" ]; then
                 echo "$ip_entries" | while read -r ip_int; do
@@ -297,8 +297,8 @@ show_detailed_info() {
                     fi
                 done
                 
-                if [ "$ip_count" -gt 10 ]; then
-                    printf "│       ...       │              ... (%d more IPs)                │\n" $((ip_count - 10))
+                if [ "$ip_count" -gt 15 ]; then
+                    printf "│       ...       │              ... (%d more IPs)                │\n" $((ip_count - 15))
                 fi
             fi
             echo "└─────────────────┴────────────────────────────────────────────────┘"
