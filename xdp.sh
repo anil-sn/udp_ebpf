@@ -45,6 +45,14 @@ case "$CMD" in
     "monitor") 
         monitor_pipeline "$@"
         ;;
+    "scale")
+        if [ "$1" = "max-performance" ]; then
+            print_color "blue" "Configuring XDP pipeline for maximum performance..."
+            "$SCRIPT_DIR/xdp_functions/dynamic_scaling.sh" max-performance
+        else
+            "$SCRIPT_DIR/xdp_functions/dynamic_scaling.sh" "$@"
+        fi
+        ;;
     "clean") 
         cleanup_pipeline "$@"
         ;;

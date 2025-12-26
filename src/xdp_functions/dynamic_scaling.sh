@@ -156,7 +156,7 @@ optimize_interrupt_affinity() {
 # Start multiple packet injector instances for multi-core utilization
 start_multicore_injectors() {
     local cpu_count="$1"
-    local injector_binary="../packet_injector"
+    local injector_binary="./packet_injector"
     
     # Check if packet_injector exists
     if [ ! -f "$injector_binary" ]; then
@@ -164,16 +164,32 @@ start_multicore_injectors() {
         return 1
     fi
     
-    print_color "blue" "Starting $cpu_count packet_injector instances..."
+    # Kill existing injectors first
+    pkill -f "packet_injector" 2>/dev/null || true
+    sleep 0.5
+    
+    print_color "blue" "Starting $cpu_count packet_injector instances with CPU affinity..."
     
     # Start one injector per CPU core
     for ((cpu=0; cpu<cpu_count; cpu++)); do
         # Start injector with CPU affinity
         taskset -c "$cpu" "$injector_binary" &
         local pid=$!
-        print_color "green" "✓ Started packet_injector PID $pid on CPU $cpu"
+        
+        # Verify process started and has correct affinity
+        sleep 0.1
+        if kill -0 "$pid" 2>/dev/null; then
+            local actual_affinity=$(taskset -p "$pid" 2>/dev/null | grep -o 'ffinity mask: [0-9a-f]*' | awk '{print $3}')
+            print_color "green" "✓ Started packet_injector PID $pid on CPU $cpu (mask: $actual_affinity)"
+        else
+            print_color "red" "✗ Failed to start packet_injector on CPU $cpu"
+        fi
         sleep 0.1  # Small delay between starts
     done
+    
+    # Show final count
+    local running_injectors=$(pgrep -f "packet_injector" | wc -l)
+    print_color "blue" "Total packet_injector instances running: $running_injectors"
 }
 
 # Set process affinity for XDP components
@@ -198,18 +214,21 @@ optimize_process_affinity() {
     fi
     
     if [ -n "$injector_pids" ]; then
-        # Distribute packet_injector processes across remaining CPUs
-        local start_cpu=$((queue_count / 2))
-        local cpu="$start_cpu"
+        # Distribute packet_injector processes evenly across all CPUs
+        local cpu=0
+        local injector_count=0
         for pid in $injector_pids; do
             if sudo taskset -cp "$cpu" "$pid" >/dev/null 2>&1; then
                 print_color "green" "✓ packet_injector PID $pid → CPU $cpu"
+            else
+                print_color "yellow" "⚠ Failed to set CPU affinity for PID $pid"
             fi
             cpu=$(((cpu + 1) % queue_count))
-            if [ "$cpu" -ge "$queue_count" ]; then
-                cpu="$start_cpu"
-            fi
+            ((injector_count++))
         done
+        print_color "blue" "Optimized $injector_count packet_injector processes across $queue_count CPUs"
+    else
+        print_color "yellow" "No packet_injector processes found for affinity optimization"
     fi
 }
 
@@ -270,6 +289,36 @@ show_scaling_status() {
         local affinity=$(cat "/proc/irq/$irq/smp_affinity" 2>/dev/null || echo "unknown")
         printf "  IRQ %-3s: CPU mask %s\n" "$irq" "$affinity"
     done
+    
+    # Show process CPU affinity
+    echo ""
+    echo "Process CPU Affinity:"
+    
+    # Show vxlan_loader affinity
+    local vxlan_pids=$(pgrep -f "vxlan_loader" 2>/dev/null)
+    if [ -n "$vxlan_pids" ]; then
+        echo "  vxlan_loader processes:"
+        for pid in $vxlan_pids; do
+            local affinity=$(taskset -p "$pid" 2>/dev/null | grep -o 'ffinity mask: [0-9a-f]*' | awk '{print $3}')
+            printf "    PID %-6s: CPU mask %s\n" "$pid" "$affinity"
+        done
+    else
+        echo "  vxlan_loader: No processes running"
+    fi
+    
+    # Show packet_injector affinity  
+    local injector_pids=$(pgrep -f "packet_injector" 2>/dev/null)
+    if [ -n "$injector_pids" ]; then
+        echo "  packet_injector processes:"
+        for pid in $injector_pids; do
+            local affinity=$(taskset -p "$pid" 2>/dev/null | grep -o 'ffinity mask: [0-9a-f]*' | awk '{print $3}')
+            printf "    PID %-6s: CPU mask %s\n" "$pid" "$affinity"
+        done
+        local injector_count=$(echo "$injector_pids" | wc -w)
+        printf "  Total packet_injector instances: %d\n" "$injector_count"
+    else
+        echo "  packet_injector: No processes running"
+    fi
 }
 
 # Command line interface
@@ -320,15 +369,27 @@ case "${1:-status}" in
         print_color "blue" "Configuring for maximum performance..."
         # Scale to maximum queues
         if [ "$CURRENT_QUEUES" -lt "$MAX_QUEUES" ]; then
-            sudo ethtool -L "$INTERFACE" combined "$MAX_QUEUES"
-            CURRENT_QUEUES="$MAX_QUEUES"
+            print_color "yellow" "Scaling network queues: $CURRENT_QUEUES → $MAX_QUEUES"
+            if sudo ethtool -L "$INTERFACE" combined "$MAX_QUEUES" 2>/dev/null; then
+                CURRENT_QUEUES="$MAX_QUEUES"
+                print_color "green" "✓ Scaled to $MAX_QUEUES queues"
+            else
+                print_color "yellow" "⚠ Queue scaling failed, continuing with $CURRENT_QUEUES queues"
+            fi
+        else
+            print_color "green" "✓ Already using maximum queues ($MAX_QUEUES)"
         fi
-        # Optimize affinity
+        
+        # Optimize IRQ affinity
         optimize_interrupt_affinity "$CURRENT_QUEUES"
+        
         # Start multi-core injectors
-        pkill -f "packet_injector" 2>/dev/null || true
-        sleep 1
         start_multicore_injectors "$CURRENT_QUEUES"
+        
+        # Optimize any existing processes
+        optimize_process_affinity "$CURRENT_QUEUES"
+        
+        print_color "green" "✓ Maximum performance configuration complete!"
         ;;
     "help")
         echo "Dynamic XDP Scaling Usage:"
