@@ -742,15 +742,23 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         /* 
          * CRITICAL: Update packet lengths RIGHT BEFORE ring buffer copy
          * to ensure the updated packet is sent to userspace
+         * 
+         * DEBUG: Add comprehensive logging and validation
          */
         struct ethhdr *eth = (struct ethhdr *)data;
         struct iphdr *iph = (struct iphdr *)(data + 14);
+        
+        /* Debug: Always increment counter to confirm execution */
+        update_stat(STAT_REDIRECTED, 1);
         
         /* Ensure we can access headers safely */
         if ((void *)iph + 20 <= data_end) {
             /* Calculate new lengths after VXLAN decapsulation */
             __u32 packet_size = (char *)data_end - (char *)data;
             __u32 new_ip_len = packet_size - 14;  /* Remove Ethernet header */
+            
+            /* Debug: Track original values for verification */
+            __u16 old_ip_len = bpf_ntohs(iph->tot_len);
             
             /* Force IP length update */
             iph->tot_len = bpf_htons((__u16)new_ip_len);
@@ -780,8 +788,11 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
                 }
             }
             
-            /* Increment debug counter */
+            /* Always increment debug counter to confirm execution */
             update_stat(STAT_IP_LEN_UPDATED, 1);
+        } else {
+            /* Track bounds checking failures */
+            update_stat(STAT_ERRORS, 1);
         }
         
         /* Calculate packet length AFTER length updates */
