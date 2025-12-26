@@ -684,9 +684,41 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         update_stat(STAT_ERRORS, 1);
         return XDP_DROP;
     }
-    
-    /* Force egress via target interface using correct L2 addressing */
+
+    /* 
+     * CRITICAL: Update inner IP header total length after VXLAN decapsulation
+     * 
+     * The inner IP header's tot_len field still reflects the original inner packet size,
+     * but after bpf_xdp_adjust_head(), the packet is now smaller due to removed VXLAN overhead.
+     * We must update tot_len to match the new actual packet size to prevent malformed packets.
+     */
     struct ethhdr *eth = (struct ethhdr *)data;
+    if ((void *)(eth + 1) + sizeof(struct iphdr) <= data_end) {
+        struct iphdr *iph = (struct iphdr *)(eth + 1);
+        
+        /* Calculate new packet size after VXLAN stripping */
+        __u32 new_packet_size = (char *)data_end - (char *)data;
+        __u32 new_ip_total_len = new_packet_size - sizeof(struct ethhdr);
+        
+        /* Validate the new size is reasonable */
+        if (new_ip_total_len >= IP_HEADER_MIN_SIZE && new_ip_total_len <= MAX_PACKET_SIZE) {
+            /* Store old value for checksum update */
+            __u16 old_tot_len = iph->tot_len;
+            
+            /* Update IP total length to match actual packet size */
+            iph->tot_len = bpf_htons((__u16)new_ip_total_len);
+            
+            /* Incrementally update IP checksum for the tot_len field change */
+            __u32 checksum = (~bpf_ntohs(iph->check)) & 0xFFFF;
+            checksum -= bpf_ntohs(old_tot_len);
+            checksum += bpf_ntohs(iph->tot_len);
+            checksum = (checksum & 0xFFFF) + (checksum >> 16);
+            checksum = (checksum & 0xFFFF) + (checksum >> 16);
+            iph->check = bpf_htons(~checksum);
+        }
+    }
+
+    /* Force egress via target interface using correct L2 addressing */
     if ((void *)(eth + 1) <= data_end) {
         /* Get target interface configuration */
         __u32 if_key = 0;
