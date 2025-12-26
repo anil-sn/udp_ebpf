@@ -16,23 +16,49 @@
 /* =================================================================== */
 
 /* BPF System Constants */
+#ifndef BPF_MAP_TYPE_ARRAY
 #define BPF_MAP_TYPE_ARRAY              2
+#endif
+#ifndef BPF_MAP_TYPE_HASH
 #define BPF_MAP_TYPE_HASH               1
+#endif
+#ifndef BPF_MAP_TYPE_PERCPU_ARRAY
 #define BPF_MAP_TYPE_PERCPU_ARRAY       6
+#endif
+#ifndef BPF_MAP_TYPE_RINGBUF
 #define BPF_MAP_TYPE_RINGBUF            27
+#endif
+#ifndef BPF_F_NO_PREALLOC
 #define BPF_F_NO_PREALLOC              0x01UL
+#endif
 
 /* XDP Action Codes */
+#ifndef XDP_ABORTED
 #define XDP_ABORTED                     0
+#endif
+#ifndef XDP_DROP
 #define XDP_DROP                        1
+#endif
+#ifndef XDP_PASS
 #define XDP_PASS                        2
+#endif
+#ifndef XDP_TX
 #define XDP_TX                          3
+#endif
+#ifndef XDP_REDIRECT
 #define XDP_REDIRECT                    4
+#endif
 
 /* Network Protocol Definitions */
+#ifndef ETH_P_IP
 #define ETH_P_IP                        0x0800
+#endif
+#ifndef IPPROTO_UDP
 #define IPPROTO_UDP                     17
+#endif
+#ifndef ETH_HLEN
 #define ETH_HLEN                        14
+#endif
 
 /* VXLAN Protocol (RFC 7348) */
 #define VXLAN_PORT                      4789        /* Standard VXLAN UDP port */
