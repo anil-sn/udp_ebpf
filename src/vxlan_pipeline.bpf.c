@@ -1388,13 +1388,13 @@ static __always_inline int forward_packet(void *data, void *data_end,
     
     /* Verifier-friendly bounds checking with compile-time constants */
     if (temp_len > PACKET_DATA_MAX_SIZE) {
-        /* Truncate to ring buffer capacity to prevent buffer overflow */
+        /* Truncate to ring buffer capacity - this is normal for large packets */
         temp_len = PACKET_DATA_MAX_SIZE;
-        update_stat(STAT_ERRORS, 1);  /* Track truncation events */
+        /* Don't count truncation as error - it's expected behavior for large packets */
     }
     
     /* Ensure temp_len is within valid range for ring buffer */
-    if (temp_len == 0 || temp_len > PACKET_DATA_MAX_SIZE) {
+    if (temp_len == 0) {
         update_stat(STAT_ERRORS, 1);
         return XDP_DROP;
     }
@@ -1414,21 +1414,23 @@ static __always_inline int forward_packet(void *data, void *data_end,
             
             /* Verify source data is accessible */
             if ((char *)data + temp_len <= (char *)data_end) {
-                /* Use loop unrolling for better verifier analysis */
+                /* Bounded copy with explicit length validation */
                 __u32 copy_len = temp_len;
                 if (copy_len > PACKET_DATA_MAX_SIZE) {
                     copy_len = PACKET_DATA_MAX_SIZE;
                 }
                 
-                /* Bounded copy with explicit length validation */
+                /* Perform the copy - don't treat truncation as error */
                 long ret = bpf_probe_read_kernel(event->data, copy_len & (PACKET_DATA_MAX_SIZE - 1), data);
                 if (ret < 0) {
+                    /* Only count actual copy failures as errors */
                     event->len = 0;  /* Mark as failed copy */
                     update_stat(STAT_ERRORS, 1);
                 }
             } else {
                 event->len = 0;  /* Mark as failed - insufficient data */
                 update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
+                update_stat(STAT_ERRORS, 1);
             }
         }
         
