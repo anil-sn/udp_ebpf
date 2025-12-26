@@ -174,6 +174,11 @@ enum stats_index {
     STAT_ERRORS = 7,             /* Packets dropped due to parsing or validation errors */
     STAT_BYTES_PROCESSED = 8,    /* Total bytes processed (for throughput calculation) */
     STAT_IP_LEN_UPDATED = 9,     /* Packets where IP total length was updated after VXLAN stripping */
+    STAT_UDP_LEN_UPDATED = 10,   /* Packets where UDP length was updated */
+    STAT_IP_CHECKSUM_UPDATED = 11, /* Packets where IP checksum was recalculated */
+    STAT_BOUNDS_CHECK_FAILED = 12, /* Packets that failed bounds checking */
+    STAT_RINGBUF_SUBMITTED = 13, /* Packets successfully submitted to ring buffer */
+    STAT_PACKET_SIZE_DEBUG = 14, /* Debug: packet sizes after decapsulation */
 };
 
 /*
@@ -537,6 +542,7 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     
     /* Basic packet validation */
     if (data + sizeof(struct ethhdr) > data_end) {
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
     
@@ -545,6 +551,7 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     /* Parse outer Ethernet header */
     struct ethhdr *outer_eth = data;
     if ((void *)(outer_eth + 1) > data_end) {
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
     
@@ -556,6 +563,7 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     /* Parse outer IP header */
     struct iphdr *outer_iph = (struct iphdr *)(outer_eth + 1);
     if ((void *)(outer_iph + 1) > data_end) {
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
     
@@ -567,12 +575,14 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     /* Validate IP header length */
     int ip_hdr_len = outer_iph->ihl * 4;
     if (ip_hdr_len < IP_HEADER_MIN_SIZE || ip_hdr_len > IP_HEADER_MAX_SIZE) {
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
     
     /* Parse outer UDP header */
     struct udphdr *outer_udph = (struct udphdr *)((char *)outer_iph + ip_hdr_len);
     if ((void *)(outer_udph + 1) > data_end) {
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
     
@@ -594,6 +604,7 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     struct ethhdr *inner_eth = (struct ethhdr *)inner_data;
     if ((void *)(inner_eth + 1) > data_end) {
         update_stat(STAT_ERRORS, 1);
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
     
@@ -606,6 +617,7 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     struct iphdr *inner_iph = (struct iphdr *)(inner_eth + 1);
     if ((void *)(inner_iph + 1) > data_end) {
         update_stat(STAT_ERRORS, 1);
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
     
@@ -626,6 +638,7 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     /* Validate inner IP header */
     int inner_ip_hdr_len = inner_iph->ihl * 4;
     if (inner_ip_hdr_len < IP_HEADER_MIN_SIZE || inner_ip_hdr_len > IP_HEADER_MAX_SIZE) {
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
     
@@ -633,6 +646,7 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     struct udphdr *inner_udph = (struct udphdr *)((char *)inner_iph + inner_ip_hdr_len);
     if ((void *)(inner_udph + 1) > data_end) {
         update_stat(STAT_ERRORS, 1);
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
     
@@ -662,6 +676,7 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         inner_packet_size <= 0 || inner_packet_size > MAX_PACKET_SIZE ||
         total_packet_size <= outer_headers_size) {
         update_stat(STAT_ERRORS, 1);
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
     
@@ -675,6 +690,7 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     /* Use bpf_xdp_adjust_head to remove outer headers */
     if (bpf_xdp_adjust_head(ctx, outer_headers_size) < 0) {
         update_stat(STAT_ERRORS, 1);
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
     
@@ -685,6 +701,7 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     /* Validate new packet boundaries */
     if (data + sizeof(struct ethhdr) > data_end) {
         update_stat(STAT_ERRORS, 1);
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
 
@@ -745,13 +762,11 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
          * DEBUG: Force execution and comprehensive tracking
          */
         
-        /* ALWAYS increment debug counter first to prove code execution */
-        update_stat(STAT_IP_LEN_UPDATED, 1); /* Force increment to prove code path */
-        
         /* Get inner Ethernet header (data already points to inner frame after adjust_head) */
         struct ethhdr *inner_eth = (struct ethhdr *)data;
         if ((void *)(inner_eth + 1) > data_end) {
             update_stat(STAT_ERRORS, 1);
+            update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
             goto skip_length_updates;
         }
         
@@ -759,6 +774,7 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         struct iphdr *inner_iph = (struct iphdr *)(inner_eth + 1);
         if ((void *)(inner_iph + 1) > data_end) {
             update_stat(STAT_ERRORS, 1);
+            update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
             goto skip_length_updates;
         }
         
@@ -766,15 +782,26 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         __u32 decap_packet_len = data_end - data;  // Actual packet size after decapsulation
         __u32 decap_ip_len = decap_packet_len - ETH_HLEN;  // IP packet length after decap
         
+        /* DEBUG: Track packet size for analysis */
+        update_stat(STAT_PACKET_SIZE_DEBUG, decap_packet_len);
+        
         /* Validate decapsulated length makes sense (1486 = max after ETH header removal) */
         if (decap_packet_len < ETH_HLEN + sizeof(struct iphdr) || 
             decap_ip_len < sizeof(struct iphdr) || decap_ip_len > 1486) {
             update_stat(STAT_ERRORS, 1);
+            update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
             goto skip_length_updates;
         }
         
         /* Update IP total length to match actual decapsulated packet */
+        __u16 old_ip_len = bpf_ntohs(inner_iph->tot_len);  /* DEBUG: Save old value */
         inner_iph->tot_len = bpf_htons((__u16)decap_ip_len);
+        __u16 new_ip_len = bpf_ntohs(inner_iph->tot_len);  /* DEBUG: Verify new value */
+        
+        /* DEBUG: Verify IP length was actually changed */
+        if (old_ip_len != new_ip_len) {
+            update_stat(STAT_IP_LEN_UPDATED, 1); /* Count actual changes */
+        }
         
         /* Update UDP length if this is a UDP packet */
         if (inner_iph->protocol == IPPROTO_UDP) {
@@ -790,8 +817,15 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
                 
                 /* Validate UDP length is reasonable */
                 if (decap_udp_len >= sizeof(struct udphdr) && decap_udp_len <= 1466) {
+                    __u16 old_udp_len = bpf_ntohs(inner_udph->len);  /* DEBUG: Save old value */
                     inner_udph->len = bpf_htons((__u16)decap_udp_len);
                     inner_udph->check = 0;  /* Zero UDP checksum for performance */
+                    __u16 new_udp_len = bpf_ntohs(inner_udph->len);  /* DEBUG: Verify new value */
+                    
+                    /* DEBUG: Track UDP length updates */
+                    if (old_udp_len != new_udp_len) {
+                        update_stat(STAT_UDP_LEN_UPDATED, 1);
+                    }
                 }
             }
         }
@@ -817,6 +851,9 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
             sum = (sum & 0xFFFF) + (sum >> 16);
         }
         inner_iph->check = bpf_htons(~sum);
+        
+        /* DEBUG: Track checksum updates */
+        update_stat(STAT_IP_CHECKSUM_UPDATED, 1);
         
         skip_length_updates:;  /* Add semicolon to make it a null statement */
         
@@ -846,6 +883,9 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
             
             /* Submit to userspace */
             bpf_ringbuf_submit(event, 0);
+            
+            /* DEBUG: Track successful ring buffer submissions */
+            update_stat(STAT_RINGBUF_SUBMITTED, 1);
         }
         
         /* Drop from ens5 - userspace will reinject to ens6 */
