@@ -373,4 +373,20 @@ show_detailed_info() {
     fi
     
     echo "└─────────────────┴─────────────┴─────────────────┴────────────────────────┘"
+    
+    # Dynamic Scaling Status
+    echo ""
+    print_color "yellow" "=== DYNAMIC SCALING STATUS ==="
+    
+    # Source the dynamic scaling script to get scaling status
+    if [ -f "$SCRIPT_DIR/xdp_functions/dynamic_scaling.sh" ]; then
+        local scaling_status=$("$SCRIPT_DIR/xdp_functions/dynamic_scaling.sh" status 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$scaling_status" ]; then
+            echo "$scaling_status"
+        else
+            echo "Dynamic scaling information not available"
+        fi
+    else
+        echo "Dynamic scaling module not found"
+    fi
 }

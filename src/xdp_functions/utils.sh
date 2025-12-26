@@ -135,16 +135,23 @@ XDP VXLAN Pipeline Control
 Usage: ./xdp.sh [COMMAND] [OPTIONS]
 
 Commands:
-  start       Start the XDP pipeline
-  stop        Stop the XDP pipeline
-  restart     Restart the XDP pipeline
-  status      Show pipeline status
-  stats       Show detailed statistics
-  info        Show comprehensive information
-  monitor     Real-time monitoring
-  test        Run end-to-end tests
-  clean       Clean up everything
-  help        Show this help
+  start           Start the XDP pipeline
+  stop            Stop the XDP pipeline
+  restart         Restart the XDP pipeline
+  status          Show pipeline status
+  stats           Show detailed statistics
+  info            Show comprehensive information
+  monitor         Real-time monitoring
+  test            Run end-to-end tests
+  scale           Dynamic scaling operations:
+                    status - Show scaling status
+                    max-performance - Configure for maximum performance
+                    scale-up - Add one queue manually
+                    scale-down - Remove one queue manually
+                    optimize - Optimize CPU affinity
+                    start-injectors [N] - Start N injector instances
+  clean           Clean up everything
+  help            Show this help
 
 Configuration:
   Edit .env file or set environment variables:
