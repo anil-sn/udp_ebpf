@@ -179,6 +179,11 @@ Commands:
   stats           Show comprehensive statistics dashboard
   info            Show comprehensive information
   monitor         Real-time monitoring
+  pps             Interface PPS monitoring:
+                    both - Monitor both incoming and target interfaces (default)
+                    incoming - Monitor only incoming interface (ens5)
+                    target - Monitor only target interface (ens6)
+                    Usage: ./xdp.sh pps [both|incoming|target] [interval] [duration]
   test            Run end-to-end tests
   scale           Dynamic scaling operations:
                     status - Show scaling status
@@ -198,6 +203,9 @@ Configuration:
 Examples:
   ./xdp.sh start          # Start pipeline
   ./xdp.sh monitor        # Real-time monitoring
+  ./xdp.sh pps both       # Monitor PPS on both interfaces  
+  ./xdp.sh pps incoming 2 # Monitor incoming interface every 2s
+  ./xdp.sh pps target 1 30 # Monitor target interface for 30s
   ./xdp.sh test           # Run tests
   ./xdp.sh clean          # Clean up everything
 EOF

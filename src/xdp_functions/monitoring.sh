@@ -256,10 +256,8 @@ show_compact_statistics() {
         printf "NAT Efficiency:      %5.1f%% (port-based routing)\n" "$nat_efficiency"
         echo "========================================"
         
-        # Optional: Log detailed statistics to file if LOG_FILE is set
-        if [ -n "${LOG_FILE:-}" ]; then
-            log_statistics "$stats_json"
-        fi
+        # Skip verbose logging during normal operations to conserve disk space
+        # Only log errors and alerts in log_statistics function if needed
         
         echo ""
         
@@ -476,36 +474,29 @@ log_statistics() {
     local stats_json="$1"
     local log_file="${LOG_FILE:-/tmp/vxlan_pipeline.log}"
     
-    # Extract key metrics
-    local total_packets=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 0) | .formatted.values[].value] | add // 0')
-    local vxlan_packets=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 1) | .formatted.values[].value] | add // 0')
+    # Only log errors and critical alerts to prevent disk space issues
     local errors=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 7) | .formatted.values[].value] | add // 0')
-    local forwarded=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 5) | .formatted.values[].value] | add // 0')
-    local redirected=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 6) | .formatted.values[].value] | add // 0')
+    local total_packets=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 0) | .formatted.values[].value] | add // 0')
     
-    # Calculate success rate
-    local success_rate=0
-    if [ "$total_packets" -gt 0 ]; then
-        success_rate=$(echo "$forwarded $redirected $total_packets" | awk '{printf "%.2f", (($1+$2)/$3)*100}')
-    fi
-    
-    # Structured log entry
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    local log_entry="$timestamp [STATS] total=$total_packets vxlan=$vxlan_packets errors=$errors success_rate=${success_rate}% interface=$INTERFACE"
     
-    echo "$log_entry" >> "$log_file"
-    
-    # Also log performance alerts
-    if [ "$errors" -gt 100 ]; then
-        echo "$timestamp [ALERT] High error count detected: $errors errors" >> "$log_file"
+    # Only log significant errors (threshold: >1000 errors)
+    if [ "$errors" -gt 1000 ]; then
+        echo "$timestamp [ERROR] High error count: $errors errors" >> "$log_file"
     fi
     
-    local error_rate=0
+    # Log critical error rates (threshold: >5%)
     if [ "$total_packets" -gt 0 ]; then
-        error_rate=$(echo "$errors $total_packets" | awk '{printf "%.3f", ($1/$2)*100}')
-        if (( $(echo "$error_rate > 1.0" | bc -l 2>/dev/null || echo 0) )); then
-            echo "$timestamp [ALERT] High error rate: ${error_rate}%" >> "$log_file"
+        local error_rate=$(echo "$errors $total_packets" | awk '{printf "%.3f", ($1/$2)*100}')
+        if (( $(echo "$error_rate > 5.0" | bc -l 2>/dev/null || echo 0) )); then
+            echo "$timestamp [CRITICAL] High error rate: ${error_rate}%" >> "$log_file"
         fi
+    fi
+    
+    # Rotate log if it gets too large (>10MB)
+    if [ -f "$log_file" ] && [ $(stat -f%z "$log_file" 2>/dev/null || stat -c%s "$log_file" 2>/dev/null || echo 0) -gt 10485760 ]; then
+        mv "$log_file" "${log_file}.old"
+        echo "$timestamp [INFO] Log rotated due to size" > "$log_file"
     fi
 }
 

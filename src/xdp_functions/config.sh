@@ -40,7 +40,7 @@ load_default_config() {
     NAT_PORT="${NAT_PORT:-8081}"
     SOURCE_PORT="${SOURCE_PORT:-31765}"
     STATS_INTERVAL="${STATS_INTERVAL:-5}"
-    LOG_FILE="${LOG_FILE:-/tmp/vxlan_loader.log}"
+    LOG_FILE="${LOG_FILE:-}"  # Disable logging by default to prevent memory bloat
     TARGET_PPS="${TARGET_PPS:-85000}"
     PERFORMANCE_THRESHOLD="${PERFORMANCE_THRESHOLD:-60000}"
     DEBUG_LEVEL="${DEBUG_LEVEL:-0}"
