@@ -450,34 +450,41 @@ static __always_inline int apply_nat(struct iphdr *iph, struct udphdr *udph, voi
     
     /* 
      * UDP checksum recalculation:
-     * Using eBPF helper with simplified bounds checking
+     * Using eBPF helper with verifier-safe bounds checking
      */
     udph->check = 0;
     
-    /* Get UDP length with bounds check */
+    /* Get UDP length with explicit bounds */
     __u16 udp_len = bpf_ntohs(udph->len);
-    if (udp_len >= 8 && udp_len <= 1500 && (void *)udph + udp_len <= data_end) {
-        /* Create pseudo-header */
-        struct {
-            __be32 saddr;
-            __be32 daddr;
-            __u8 zero;
-            __u8 protocol;
-            __be16 len;
-        } __attribute__((packed)) pseudo = {
-            .saddr = iph->saddr,
-            .daddr = iph->daddr,
-            .zero = 0,
-            .protocol = IPPROTO_UDP,
-            .len = bpf_htons(udp_len)
-        };
+    
+    /* Conservative bounds checking to satisfy verifier */
+    if (udp_len >= 8 && udp_len <= 64) {  /* Very conservative limit */
+        /* Calculate available space without pointer arithmetic */
+        __u32 available_bytes = (char *)data_end - (char *)udph;
         
-        /* Calculate checksum with proper alignment */
-        __u16 aligned_len = (udp_len + 3) & ~3;
-        if ((void *)udph + aligned_len <= data_end) {
-            __s64 csum = bpf_csum_diff(0, 0, (__be32 *)&pseudo, sizeof(pseudo), 0);
-            csum = bpf_csum_diff(0, 0, (__be32 *)udph, aligned_len, csum);
-            udph->check = csum ? (__u16)csum : 0xFFFF;
+        if (available_bytes >= udp_len) {
+            /* Create pseudo-header */
+            struct {
+                __be32 saddr;
+                __be32 daddr;
+                __u8 zero;
+                __u8 protocol;
+                __be16 len;
+            } __attribute__((packed)) pseudo = {
+                .saddr = iph->saddr,
+                .daddr = iph->daddr,
+                .zero = 0,
+                .protocol = IPPROTO_UDP,
+                .len = bpf_htons(udp_len)
+            };
+            
+            /* Calculate checksum with proper alignment */
+            __u16 aligned_len = (udp_len + 3) & ~3;
+            if (aligned_len <= 64 && available_bytes >= aligned_len) {
+                __s64 csum = bpf_csum_diff(0, 0, (__be32 *)&pseudo, sizeof(pseudo), 0);
+                csum = bpf_csum_diff(0, 0, (__be32 *)udph, aligned_len, csum);
+                udph->check = csum ? (__u16)csum : 0xFFFF;
+            }
         }
     }
     
