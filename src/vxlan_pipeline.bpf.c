@@ -1243,39 +1243,37 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     }
     
     /* 
-     * EVIDENCE-BASED LENGTH DEBUGGING
-     * ===============================
-     * Capture exact values to understand why 1500 appears in IP header
+     * CRITICAL DEBUGGING: Check if packet_len parameter is accurate
+     * ============================================================
      */
+    __u32 actual_packet_size = (char *)data_end - (char *)data;
+    __u16 expected_ip_len;
+    
+    if (actual_packet_size != packet_len) {
+        /* Parameter mismatch - use actual measured size */
+        expected_ip_len = actual_packet_size - ETH_HLEN;
+        update_stat(STAT_ERRORS, 1);  /* Count parameter mismatches */
+    } else {
+        /* Parameter is correct */
+        expected_ip_len = temp_len;
+    }
+    
+    /* EVIDENCE-BASED LENGTH DEBUGGING */
     old_len = bpf_ntohs(ip_hdr->tot_len);  /* Current IP length from header */
-    __u32 expected_ip_len = temp_len;      /* Our calculated correct length */
     
     /* EVIDENCE COLLECTION: Store exact values we're seeing */
     /* High 16 bits = old_len, Low 16 bits = expected_ip_len */
     update_stat(STAT_PACKET_SIZE_DEBUG, (old_len << 16) | (expected_ip_len & 0xFFFF));
     
-    /* Calculate the CORRECT IP length based on actual packet size */
-    __u16 expected_ip_len = packet_len - sizeof(struct ethhdr);
+    /* Calculate the CORRECT IP length based on verification */
     old_len = bpf_ntohs(ip_hdr->tot_len);
-    
-    /* Evidence Collection: Track the exact values we see */
-    update_stat(STAT_PACKET_SIZE_DEBUG, (old_len << 16) | (expected_ip_len & 0xFFFF));
     
     /* EVIDENCE: Count 1500 occurrences */
     if (old_len == 1500) {
         update_stat(STAT_ERRORS, 1);  /* Detection counter */
     }
     
-    /* CRITICAL INSIGHT: Maybe packet_len is wrong? Let's verify... */
-    __u32 actual_packet_size = (char *)data_end - (char *)data;
-    if (actual_packet_size != packet_len) {
-        /* AHA! The packet_len parameter might be stale/incorrect */
-        expected_ip_len = actual_packet_size - sizeof(struct ethhdr);
-        /* Use the REAL measured packet size instead */
-        update_stat(STAT_ERRORS, 1);  /* Count size mismatches */
-    }
-    
-    /* Update IP length field */
+    /* Update IP length field with verified value */
     ip_hdr->tot_len = bpf_htons(expected_ip_len);
     ip_hdr->check = 0;  /* Clear checksum */
     
