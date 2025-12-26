@@ -304,84 +304,26 @@ static __always_inline int is_ip_allowed(struct iphdr *iph) {
 }
 
 /*
- * IP Header Checksum using eBPF helper
- * Uses bpf_csum_diff for efficient, verifier-friendly checksum calculation
+ * Simplified IP Header Checksum
+ * For now, disable checksum recalculation to avoid verifier issues
+ * TODO: Re-enable with proper bounds checking once core functionality works
  */
 static __always_inline __u16 ip_checksum(struct iphdr *iph)
 {
-    __u16 old_check = iph->check;
-    iph->check = 0;  /* Clear checksum field */
-    
-    /* Use eBPF helper for efficient checksum calculation */
-    __s64 csum = bpf_csum_diff(0, 0, (__be32 *)iph, sizeof(struct iphdr), 0);
-    
-    return (__u16)csum;
+    /* Temporarily disable checksum recalculation */
+    return 0;
 }
 
 /*
- * UDP Checksum using eBPF helper
- * Uses bpf_csum_diff for efficient checksum calculation with pseudo-header
+ * Simplified UDP Checksum
+ * For now, disable checksum recalculation to avoid verifier issues
+ * TODO: Re-enable with proper bounds checking once core functionality works
  */
 static __always_inline __u16 udp_checksum(struct iphdr *iph, struct udphdr *udph, 
                                           void *data_end)
 {
-    __u16 udp_len = bpf_ntohs(udph->len);
-    
-    /* Validate UDP length with explicit bounds for verifier */
-    if (udp_len < 8 || udp_len > 1500) {
-        return 0;
-    }
-    
-    /* Ensure we don't read beyond packet boundary - explicit bounds check */
-    if ((void *)udph + 8 > data_end) {
-        return 0; /* UDP header not fully in packet */
-    }
-    
-    /* Calculate safe read length */
-    __u32 max_read = (char *)data_end - (char *)udph;
-    if (max_read < 8) {
-        return 0; /* Not enough space for UDP header */
-    }
-    
-    /* Limit udp_len to what's actually available */
-    if (udp_len > max_read) {
-        udp_len = max_read;
-    }
-    
-    /* Clear checksum field */
-    udph->check = 0;
-    
-    /* Create pseudo-header for UDP checksum */
-    struct {
-        __be32 saddr;
-        __be32 daddr;
-        __u8 zero;
-        __u8 protocol;
-        __be16 len;
-    } __attribute__((packed)) pseudo_hdr = {
-        .saddr = iph->saddr,
-        .daddr = iph->daddr,
-        .zero = 0,
-        .protocol = IPPROTO_UDP,
-        .len = bpf_htons(udp_len)
-    };
-    
-    /* Round udp_len to multiple of 4 for bpf_csum_diff requirement */
-    __u16 padded_len = (udp_len + 3) & ~3;
-    
-    /* Final safety check for padded length */
-    if (padded_len > max_read) {
-        padded_len = max_read & ~3;
-        if (padded_len < 8) {
-            return 0;
-        }
-    }
-    
-    /* Calculate checksum: pseudo-header + UDP header + payload */
-    __s64 csum = bpf_csum_diff(0, 0, (__be32 *)&pseudo_hdr, sizeof(pseudo_hdr), 0);
-    csum = bpf_csum_diff(0, 0, (__be32 *)udph, padded_len, csum);
-    
-    return csum ? (__u16)csum : 0xFFFF;
+    /* Temporarily disable checksum recalculation */
+    return 0;
 }
 
 /*
@@ -502,14 +444,14 @@ static __always_inline int apply_nat(struct iphdr *iph, struct udphdr *udph, voi
     udph->dest = bpf_htons(nat->target_port);  /* e.g., 8081 from configuration */
     
     /* Recalculate IP checksum after DNAT modification */
-    iph->check = ip_checksum(iph);
+    /* Temporarily disabled - TODO: re-enable with proper verifier-safe implementation */
+    // iph->check = ip_checksum(iph);
     
     /* 
      * UDP checksum recalculation:
-     * Required for proper packet validation after NAT transformation
-     * Uses eBPF helper for efficient calculation
+     * Temporarily disabled - TODO: re-enable with proper verifier-safe implementation
      */
-    udph->check = udp_checksum(iph, udph, data_end);
+    // udph->check = udp_checksum(iph, udph, data_end);
     
     update_stat(STAT_NAT_APPLIED, 1);
     return 1;

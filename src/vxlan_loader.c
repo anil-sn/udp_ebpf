@@ -149,6 +149,7 @@ static void cleanup()
     
     if (bpf_obj) {
         bpf_object__close(bpf_obj);
+        bpf_obj = NULL; /* Prevent double free */
     }
     
     /* Final flush */
@@ -529,6 +530,7 @@ static int load_bpf_program()
     if (err) {
         fprintf(stderr, "Failed to load eBPF program: %s\n", strerror(-err));
         bpf_object__close(bpf_obj);
+        bpf_obj = NULL;
         return -1;
     }
     
@@ -540,6 +542,7 @@ static int load_bpf_program()
         if (!prog) {
             fprintf(stderr, "Failed to find XDP program\n");
             bpf_object__close(bpf_obj);
+            bpf_obj = NULL;
             return -1;
         }
     }
@@ -548,6 +551,7 @@ static int load_bpf_program()
     if (prog_fd < 0) {
         fprintf(stderr, "Failed to get program fd\n");
         bpf_object__close(bpf_obj);
+        bpf_obj = NULL;
         return -1;
     }
     
@@ -560,6 +564,7 @@ static int load_bpf_program()
     if (stats_map_fd < 0 || nat_map_fd < 0 || redirect_map_fd < 0 || interface_map_fd < 0) {
         fprintf(stderr, "Failed to find required maps\n");
         bpf_object__close(bpf_obj);
+        bpf_obj = NULL;
         return -1;
     }
     
