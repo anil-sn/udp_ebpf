@@ -156,6 +156,7 @@ enum stats_index {
     STAT_BOUNDS_CHECK_FAILED = 12, /* Packets that failed bounds checking */
     STAT_RINGBUF_SUBMITTED = 13, /* Packets successfully submitted to ring buffer */
     STAT_PACKET_SIZE_DEBUG = 14, /* Debug: packet sizes after decapsulation */
+    STAT_LENGTH_CORRECTIONS = 15, /* Packets where truncated lengths were corrected */
 };
 
 /*
@@ -1180,20 +1181,15 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     }
     
     /* 
-     * PHASE 3: CRITICAL LENGTH RECALCULATION (PACKET INTEGRITY CORE)
-     * ==============================================================
-     * This is the heart of packet length tracking. After VXLAN decapsulation:
-     * - Total packet size reduced by outer headers (Eth+IP+UDP+VXLAN = ~48 bytes)
-     * - Inner IP tot_len field must be updated to reflect new packet size
-     * - UDP length must be recalculated for UDP inner packets
+     * CRITICAL FIX: After decapsulation, packet_len is the TOTAL inner packet size
+     * The IP length should be the ORIGINAL truncated length (e.g., 1500) corrected
+     * to the actual available data size, NOT packet_len - ETH_HLEN
      * 
-     * CALCULATION VERIFICATION:
-     * packet_len = current total packet size (from data_end - data)
-     * temp_len = packet_len - 14 = IP packet size (excluding Ethernet)
-     * 
-     * Example: 2852-byte VXLAN packet → 2804-byte inner packet
-     * - packet_len = 2804
-     * - temp_len = 2804 - 14 = 2790 (correct IP total length)
+     * CORRECT CALCULATION:
+     * - packet_len = total inner packet after decapsulation (e.g., 1514)
+     * - Inner Ethernet header = 14 bytes
+     * - Available IP data = packet_len - 14 = 1500 bytes
+     * - This 1500 is the CORRECT IP total length (matches original)
      */
     
     /* Prevent integer underflow in length calculation */
@@ -1202,14 +1198,14 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
         return -1;  /* Packet too small to contain IP data */
     }
     
-    temp_len = packet_len - ETH_HLEN;  /* Calculate IP packet length */
+    /* The IP total length should be the actual available IP packet size */
+    __u16 actual_ip_len = packet_len - ETH_HLEN;
     
     /* EVIDENCE: Capture the input values for analysis */
-    /* This will help us see if packet_len is wrong (e.g., 1500 when it should be 1486) */
-    update_stat(STAT_BYTES_PROCESSED, (packet_len << 16) | (temp_len & 0xFFFF));
+    update_stat(STAT_BYTES_PROCESSED, (packet_len << 16) | (actual_ip_len & 0xFFFF));
     
     /* Additional safety check for 16-bit field overflow */
-    if (temp_len > 65535) {
+    if (actual_ip_len > 65535) {
         /* IP tot_len is 16-bit field, cannot exceed 65535 */
         update_stat(STAT_ERRORS, 1);
         return -1;  /* Packet too large for IP header field */
@@ -1218,8 +1214,6 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     /* 
      * COMPREHENSIVE LENGTH VALIDATION (SECURITY + FUNCTIONALITY)
      * =========================================================
-     * Validate that calculated lengths make sense and support large packets
-     * MAX_PACKET_SIZE (9000) supports jumbo frames and AWS Traffic Mirror
      */
     if (packet_len < ETH_HLEN + sizeof(struct iphdr)) {
         /* SECURITY: Packet too small to contain IP header */
@@ -1228,34 +1222,27 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
         return -1;  /* Critical failure - cannot proceed */
     }
     
-    if (temp_len < sizeof(struct iphdr)) {
+    if (actual_ip_len < sizeof(struct iphdr)) {
         /* SECURITY: IP length too small */
         update_stat(STAT_ERRORS, 1);
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return -1;  /* Critical failure - cannot proceed */
     }
     
-    /* Relax the maximum size check - allow up to 65535 for large packets */
-    if (temp_len > 65535) {
-        /* This should have been caught earlier, but handle gracefully */
-        update_stat(STAT_ERRORS, 1);
-        return -1;  /* Cannot fit in 16-bit field */
-    }
-    
     /* 
-     * CRITICAL DEBUGGING: Check if packet_len parameter is accurate
-     * ============================================================
+     * CRITICAL DEBUGGING: Verify packet_len parameter accuracy
+     * =======================================================
      */
-    __u32 actual_packet_size = (char *)data_end - (char *)data;
+    __u32 measured_packet_size = (char *)data_end - (char *)data;
     __u16 expected_ip_len;
     
-    if (actual_packet_size != packet_len) {
-        /* Parameter mismatch - use actual measured size */
-        expected_ip_len = actual_packet_size - ETH_HLEN;
-        update_stat(STAT_ERRORS, 1);  /* Count parameter mismatches */
+    if (measured_packet_size != packet_len) {
+        /* Parameter mismatch - use measured size */
+        expected_ip_len = measured_packet_size - ETH_HLEN;
+        /* Note: Using measured size instead of parameter */
     } else {
-        /* Parameter is correct */
-        expected_ip_len = temp_len;
+        /* Parameter is correct - use calculated value */
+        expected_ip_len = actual_ip_len;
     }
     
     /* EVIDENCE-BASED LENGTH DEBUGGING */
@@ -1265,21 +1252,13 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     /* High 16 bits = old_len, Low 16 bits = expected_ip_len */
     update_stat(STAT_PACKET_SIZE_DEBUG, (old_len << 16) | (expected_ip_len & 0xFFFF));
     
-    /* Calculate the CORRECT IP length based on verification */
-    old_len = bpf_ntohs(ip_hdr->tot_len);
-    
-    /* EVIDENCE: Count 1500 occurrences */
-    if (old_len == 1500) {
-        update_stat(STAT_ERRORS, 1);  /* Detection counter */
-    }
-    
     /* Update IP length field with verified value */
     ip_hdr->tot_len = bpf_htons(expected_ip_len);
     ip_hdr->check = 0;  /* Clear checksum */
     
-    /* EVIDENCE: Detect the specific 1500→1486 pattern */
+    /* EVIDENCE: Detect the specific 1500→1486 pattern for monitoring */
     if (old_len == 1500) {
-        update_stat(STAT_ERRORS, 1);  /* Count occurrences of the bug pattern */
+        update_stat(STAT_LENGTH_CORRECTIONS, 1);  /* Count truncation fixes */
     }
     
     update_stat(STAT_IP_LEN_UPDATED, 1);
@@ -1443,16 +1422,17 @@ static __always_inline int forward_packet(void *data, void *data_end,
                     /* CRITICAL FIX: Update IP length in ring buffer copy */
                     if (copy_len >= sizeof(struct ethhdr) + sizeof(struct iphdr)) {
                         struct iphdr *ring_ip = (struct iphdr *)(event->data + sizeof(struct ethhdr));
-                        __u16 correct_ip_len = temp_len - sizeof(struct ethhdr);
-                        ring_ip->tot_len = bpf_htons(correct_ip_len);
+                        /* Use actual available IP packet size */
+                        __u16 ring_ip_len = temp_len;  /* temp_len = total packet - ETH_HLEN */
+                        ring_ip->tot_len = bpf_htons(ring_ip_len);
                         ring_ip->check = 0;  /* Clear checksum */
                         
                         /* Also fix UDP length in ring buffer if UDP packet */
                         if (ring_ip->protocol == IPPROTO_UDP && 
                             copy_len >= sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr)) {
                             struct udphdr *ring_udp = (struct udphdr *)((char *)ring_ip + (ring_ip->ihl * 4));
-                            __u16 correct_udp_len = correct_ip_len - (ring_ip->ihl * 4);
-                            ring_udp->len = bpf_htons(correct_udp_len);
+                            __u16 ring_udp_len = ring_ip_len - (ring_ip->ihl * 4);
+                            ring_udp->len = bpf_htons(ring_udp_len);
                             ring_udp->check = 0;  /* Clear checksum */
                         }
                     }
