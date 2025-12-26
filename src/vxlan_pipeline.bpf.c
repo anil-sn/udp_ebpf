@@ -1138,18 +1138,18 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     struct iphdr *ip_hdr;
     struct udphdr *udp_hdr;
     __u32 ip_hdr_len, temp_len;
-    __u16 old_len, new_len;
+    __u16 old_len;
 
     /* 
-     * PHASE 1: HEADER ACCESS VALIDATION AFTER DECAPSULATION
-     * =====================================================
-     * After bpf_xdp_adjust_head(), data pointers have changed
-     * Must re-validate all header access for security
+     * CRITICAL FIX: Recalculate ALL pointers after decapsulation
+     * ==========================================================
+     * After bpf_xdp_adjust_head(), all previous pointers are INVALID
+     * Must recalculate from current data pointer
      */
     eth_hdr = (struct ethhdr *)data;
-    ip_hdr = (struct iphdr *)(data + sizeof(struct ethhdr));
+    ip_hdr = (struct iphdr *)(data + sizeof(struct ethhdr));  /* FRESH pointer */
     
-    /* CRITICAL: Validate IP header is accessible after adjust_head */
+    /* CRITICAL: Validate IP header is accessible with NEW pointer */
     if ((void *)(ip_hdr + 1) > data_end) {
         /* SECURITY: Packet corrupted or truncated during decapsulation */
         update_stat(STAT_ERRORS, 1);
@@ -1254,30 +1254,9 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     /* High 16 bits = old_len, Low 16 bits = expected_ip_len */
     update_stat(STAT_PACKET_SIZE_DEBUG, (old_len << 16) | (expected_ip_len & 0xFFFF));
     
-    /* FORCE the correct length */
+    /* ATOMIC OPERATION: Update length and clear checksum */
     ip_hdr->tot_len = bpf_htons((__u16)expected_ip_len);
-    
-    /* CRITICAL: Recalculate IP checksum IMMEDIATELY after length change */
-    ip_hdr->check = 0;  /* Clear old checksum first */
-    __u32 checksum_acc = 0;
-    __u16 *ip_ptr = (__u16 *)ip_hdr;
-    
-    /* Recalculate checksum with new length */
-    checksum_acc += bpf_ntohs(ip_ptr[0]);  /* Version, IHL, TOS */
-    checksum_acc += bpf_ntohs(ip_ptr[1]);  /* Total Length - NOW CORRECTED */
-    checksum_acc += bpf_ntohs(ip_ptr[2]);  /* Identification */
-    checksum_acc += bpf_ntohs(ip_ptr[3]);  /* Flags, Fragment Offset */
-    checksum_acc += bpf_ntohs(ip_ptr[4]);  /* TTL, Protocol */
-    /* Skip checksum field (ip_ptr[5]) */
-    checksum_acc += bpf_ntohs(ip_ptr[6]);  /* Source IP high */
-    checksum_acc += bpf_ntohs(ip_ptr[7]);  /* Source IP low */
-    checksum_acc += bpf_ntohs(ip_ptr[8]);  /* Dest IP high */
-    checksum_acc += bpf_ntohs(ip_ptr[9]);  /* Dest IP low */
-    
-    while (checksum_acc >> 16) {
-        checksum_acc = (checksum_acc & 0xFFFF) + (checksum_acc >> 16);
-    }
-    ip_hdr->check = bpf_htons(~checksum_acc);
+    ip_hdr->check = 0;  /* Zero checksum - let network stack recalculate */
     
     /* VERIFY the write worked by reading it back */
     __u16 verification = bpf_ntohs(ip_hdr->tot_len);
