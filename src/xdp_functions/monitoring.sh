@@ -136,11 +136,6 @@ show_clean_statistics() {
             printf "🔧 Length Fixed:       %8s (truncation repair)\n" "$(format_number "$length_corrections")"
         fi
         
-        # Error summary (only show if significant)
-        if (( $(echo "$error_rate > 0.1" | bc -l 2>/dev/null || echo 0) )); then
-            printf "⚠️  Errors:             %8s (%s%%)\n" "$(format_number "$errors")" "$error_rate"
-        fi
-        
         printf "🌐 Throughput:         %8s Mbps\n" "$throughput_mbps"
         printf "%s\n" "$perf_status"
         echo "="*60
@@ -239,14 +234,6 @@ show_compact_statistics() {
         printf "Forwarded:             %8d (to target)\n" "$forwarded"
         printf "XDP Redirected:        %8d (kernel bypass)\n" "$redirected"
         printf "IP Length Updated:     %8d (header corrections)\n" "$ip_len_updated"
-        
-        # Enhanced error reporting
-        if [ "$errors" -gt 0 ]; then
-            local error_rate=$(echo "$errors $total_packets" | awk '{printf "%.3f", ($1/$2)*100}')
-            printf "Errors:                %8d (%s%% rate)\n" "$errors" "$error_rate"
-        else
-            printf "Errors:                %8d (clean operation)\n" "$errors"
-        fi
         
         echo "----------------------------------------"
         printf "Throughput:          %8.2f Mbps (estimated)\n" "$throughput_mbps"
@@ -438,24 +425,6 @@ show_statistics() {
         printf "└─ Ring Buffer Sent:   %10s\n" "$(format_number "$ringbuf_submitted")"
     else
         printf "└─ Ring Buffer Sent:   %10s\n" "0"
-    fi
-    
-    # Error Analysis (only show if errors exist)
-    if [ "$errors" -gt 0 ] || [ "$bounds_check_failed" -gt 0 ]; then
-        echo ""
-        print_color "yellow" "⚠️  ERROR ANALYSIS"
-        printf "├─ Total Errors:       %10s (%s%%)\n" "$(format_number "$errors")" "$error_rate"
-        if [ "$bounds_check_failed" -gt 0 ]; then
-            printf "├─ Bounds Failures:    %10s\n" "$(format_number "$bounds_check_failed")"
-        fi
-        
-        local error_impact="MINIMAL"
-        if (( $(echo "$error_rate > 1.0" | bc -l 2>/dev/null || echo 0) )); then
-            error_impact="HIGH"
-        elif (( $(echo "$error_rate > 0.1" | bc -l 2>/dev/null || echo 0) )); then
-            error_impact="MODERATE"
-        fi
-        printf "└─ Error Impact:       %s\n" "$error_impact"
     fi
     
     # Pipeline Status Summary
