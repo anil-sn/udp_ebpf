@@ -687,11 +687,11 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     }
 
     /* 
-     * CRITICAL: Update inner IP header total length after VXLAN decapsulation
+     * CRITICAL: Update inner IP and UDP header lengths after VXLAN decapsulation
      * 
-     * The inner IP header's tot_len field still reflects the original inner packet size,
-     * but after bpf_xdp_adjust_head(), the packet is now smaller due to removed VXLAN overhead.
-     * We must update tot_len to match the new actual packet size to prevent malformed packets.
+     * After bpf_xdp_adjust_head(), both IP total length and UDP length fields
+     * still reflect the original inner packet size. We must update both to match
+     * the new actual packet size to prevent malformed packets.
      */
     struct ethhdr *eth = (struct ethhdr *)data;
     if ((void *)(eth + 1) + sizeof(struct iphdr) <= data_end) {
@@ -732,8 +732,39 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
                 
                 iph->check = bpf_htons((~checksum) & 0xFFFF);
                 
+                /* Update UDP length if this is a UDP packet */
+                if (iph->protocol == IPPROTO_UDP) {
+                    struct udphdr *udph = (struct udphdr *)((char *)iph + (iph->ihl * 4));
+                    if ((void *)(udph + 1) <= data_end) {
+                        __u32 ip_header_len = iph->ihl * 4;
+                        __u32 new_udp_len = new_ip_total_len - ip_header_len;
+                        
+                        if (new_udp_len >= sizeof(struct udphdr)) {
+                            udph->len = bpf_htons((__u16)new_udp_len);
+                        }
+                    }
+                }
+                
                 /* Track IP length updates for monitoring */
                 update_stat(STAT_IP_LEN_UPDATED, 1);
+                
+                /* 
+                 * CRITICAL: Adjust packet buffer size to match updated headers
+                 * 
+                 * The packet buffer might still think it's the original size.
+                 * We need to shrink it to match the new IP total length.
+                 */
+                __u32 current_packet_size = (char *)data_end - (char *)data;
+                __u32 expected_packet_size = new_ip_total_len + ETH_HEADER_SIZE;
+                
+                if (current_packet_size > expected_packet_size) {
+                    int delta = current_packet_size - expected_packet_size;
+                    /* Shrink packet buffer from the tail */
+                    if (bpf_xdp_adjust_tail(ctx, -delta) == 0) {
+                        /* Refresh data_end pointer after tail adjustment */
+                        data_end = (void *)(long)ctx->data_end;
+                    }
+                }
             }
         }
         
