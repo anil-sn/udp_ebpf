@@ -1295,13 +1295,13 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
         
         /* Validate UDP header is accessible */
         if ((void *)(udp_hdr + 1) <= data_end) {
-            /* Prevent underflow in UDP length calculation */
-            if (temp_len <= ip_hdr_len) {
+            /* CRITICAL FIX: Use corrected IP length for UDP calculation */
+            if (expected_ip_len <= ip_hdr_len) {
                 update_stat(STAT_ERRORS, 1);
                 return -1;  /* Invalid: IP payload too small for UDP */
             }
             
-            __u32 udp_len = temp_len - ip_hdr_len;  /* Calculate UDP payload + header */
+            __u32 udp_len = expected_ip_len - ip_hdr_len;  /* Use CORRECTED IP length */
             __u32 remaining_bytes = (char *)data_end - (char *)udp_hdr;
             
             /* Additional safety: UDP length cannot exceed 16-bit field */
@@ -1443,9 +1443,18 @@ static __always_inline int forward_packet(void *data, void *data_end,
                     /* CRITICAL FIX: Update IP length in ring buffer copy */
                     if (copy_len >= sizeof(struct ethhdr) + sizeof(struct iphdr)) {
                         struct iphdr *ring_ip = (struct iphdr *)(event->data + sizeof(struct ethhdr));
-                        __u16 correct_len = temp_len - sizeof(struct ethhdr);
-                        ring_ip->tot_len = bpf_htons(correct_len);
+                        __u16 correct_ip_len = temp_len - sizeof(struct ethhdr);
+                        ring_ip->tot_len = bpf_htons(correct_ip_len);
                         ring_ip->check = 0;  /* Clear checksum */
+                        
+                        /* Also fix UDP length in ring buffer if UDP packet */
+                        if (ring_ip->protocol == IPPROTO_UDP && 
+                            copy_len >= sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr)) {
+                            struct udphdr *ring_udp = (struct udphdr *)((char *)ring_ip + (ring_ip->ihl * 4));
+                            __u16 correct_udp_len = correct_ip_len - (ring_ip->ihl * 4);
+                            ring_udp->len = bpf_htons(correct_udp_len);
+                            ring_udp->check = 0;  /* Clear checksum */
+                        }
                     }
                 }
             } else {
