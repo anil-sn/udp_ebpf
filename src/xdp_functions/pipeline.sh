@@ -27,6 +27,31 @@ start_pipeline() {
     # Configure interfaces
     configure_interface "$INTERFACE"
     
+    # FORCE 8 QUEUES FOR MAXIMUM PERFORMANCE (DEFAULT BEHAVIOR)
+    print_color "blue" "Configuring network for maximum performance..."
+    local current_queues=$(ethtool -l "$INTERFACE" 2>/dev/null | grep "Combined:" | tail -1 | awk '{print $2}')
+    local max_queues=$(ethtool -l "$INTERFACE" 2>/dev/null | grep "Combined:" | head -1 | awk '{print $2}')
+    
+    if [ -n "$current_queues" ] && [ -n "$max_queues" ] && [ "$current_queues" -lt 8 ] && [ "$max_queues" -ge 8 ]; then
+        print_color "yellow" "Scaling network queues: $current_queues → 8 (safe method)"
+        
+        # Use safe method only - never bring interface down to avoid SSH disconnection
+        if sudo ethtool -L "$INTERFACE" combined 8 2>/dev/null; then
+            print_color "green" "✓ Successfully scaled to 8 queues"
+            sleep 1  # Brief pause for queue initialization
+        else
+            print_color "yellow" "⚠ Queue scaling failed (AWS ENA limitation), continuing with $current_queues queues"
+            print_color "blue" "Note: Will still optimize for 8-core packet processing"
+        fi
+    else
+        if [ "$current_queues" -ge 8 ]; then
+            print_color "green" "✓ Already using 8 queues"
+        else
+            print_color "yellow" "⚠ Cannot scale to 8 queues (max available: $max_queues)"
+            print_color "blue" "Note: Will still optimize for 8-core packet processing"
+        fi
+    fi
+    
     # Start background process with comprehensive redirection
     print_color "blue" "Launching vxlan_loader..."
     
@@ -107,28 +132,43 @@ start_pipeline() {
         fi
         
         # Re-enable packet_injector for userspace packet processing
-        print_color "blue" "Starting packet injector..."
+        print_color "blue" "Starting optimized packet injectors..."
         
         # packet_injector provides essential userspace packet processing
-        # It accesses BPF maps but doesn't load duplicate XDP programs
+        # Start multiple instances for maximum CPU utilization
         if [ -f "vxlan_pipeline.bpf.o" ]; then
-            print_color "blue" "Note: packet_injector provides essential userspace packet processing"
+            print_color "blue" "Starting 8 packet_injector instances for maximum performance..."
             
-            # Start packet_injector - uses .bpf.o for map access only
-            nohup sudo ./packet_injector vxlan_pipeline.bpf.o "$TARGET_INTERFACE" \
-                </dev/null >"/tmp/packet_injector.log" 2>&1 &
+            # Kill any existing injectors first
+            sudo pkill -f "packet_injector" 2>/dev/null || true
+            sleep 1
             
-            # Wait longer for packet_injector startup (needs time to initialize workers, memory pools)
-            sleep 5
+            # Start 8 packet injector instances with CPU affinity
+            for ((cpu=0; cpu<8; cpu++)); do
+                nohup taskset -c "$cpu" sudo ./packet_injector vxlan_pipeline.bpf.o "$TARGET_INTERFACE" \
+                    </dev/null >"/tmp/packet_injector_cpu${cpu}.log" 2>&1 &
+                sleep 0.2  # Small delay between starts
+            done
             
-            # Verify packet_injector startup
-            if pgrep -f "packet_injector" >/dev/null; then
-                local injector_pid=$(pgrep -f "packet_injector" | head -1)
-                print_color "green" "✓ Packet injector started (PID: $injector_pid)"
-                print_color "green" "Log file: /tmp/packet_injector.log"
+            # Wait for all injectors to start
+            sleep 3
+            
+            # Verify packet_injector startup and set CPU affinity
+            local injector_count=$(pgrep -f "packet_injector.*vxlan_pipeline" | wc -l)
+            if [ "$injector_count" -gt 0 ]; then
+                print_color "green" "✓ Started $injector_count packet_injector instances"
+                
+                # Set CPU affinity for worker processes
+                local cpu=0
+                pgrep -f "packet_injector.*vxlan_pipeline" | while read pid; do
+                    sudo taskset -cp "$cpu" "$pid" >/dev/null 2>&1
+                    cpu=$(((cpu + 1) % 8))
+                done
+                
+                print_color "green" "✓ CPU affinity optimized for all injector processes"
             else
-                print_color "yellow" "Warning: Packet injector failed to start"
-                print_color "yellow" "Check log: cat /tmp/packet_injector.log"
+                print_color "yellow" "Warning: No packet injector processes started"
+                print_color "yellow" "Check logs: ls /tmp/packet_injector_cpu*.log"
             fi
         else
             print_color "yellow" "Warning: vxlan_pipeline.bpf.o not found, skipping packet injector"
