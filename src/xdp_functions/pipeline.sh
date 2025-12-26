@@ -84,6 +84,7 @@ start_pipeline() {
         fi
         
         # Check IP allowlist
+        print_color "blue" "Checking IP allowlist..."
         local ip_entries=$(count_bpf_map_entries "ip_allowlist")
         if [ "$ip_entries" -gt 0 ]; then
             print_color "green" "✓ IP allowlist: $ip_entries IPs loaded"
@@ -95,6 +96,7 @@ start_pipeline() {
         fi
         
         # Check stats map
+        print_color "blue" "Checking stats map..."
         if sudo bpftool map show name stats_map >/dev/null 2>&1; then
             print_color "green" "✓ Stats map: Available"
         else
