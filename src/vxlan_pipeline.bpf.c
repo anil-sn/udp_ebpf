@@ -379,77 +379,51 @@ static __always_inline __u16 ip_checksum(struct iphdr *iph)
 }
 
 /*
- * Calculate UDP Checksum with IPv4 Pseudo-Header
- * 
- * UDP checksum includes:
- * 1. IPv4 pseudo-header (source IP, dest IP, protocol, UDP length)
- * 2. UDP header (source port, dest port, length, checksum=0)
- * 3. UDP payload data
+ * UDP Checksum using eBPF helper
+ * Uses bpf_csum_diff for efficient checksum calculation with pseudo-header
  */
 static __always_inline __u16 udp_checksum(struct iphdr *iph, struct udphdr *udph, 
                                           void *data_end)
 {
-    __u32 sum = 0;
     __u16 udp_len = bpf_ntohs(udph->len);
     
-    /* IPv4 pseudo-header */
-    sum += (iph->saddr >> 16) + (iph->saddr & 0xFFFF);   /* Source IP */
-    sum += (iph->daddr >> 16) + (iph->daddr & 0xFFFF);   /* Dest IP */
-    sum += bpf_htons(IPPROTO_UDP);                        /* Protocol */
-    sum += udph->len;                                     /* UDP length (already in network order) */
-    
-    /* UDP header (checksum field should be 0) */
-    sum += udph->source;                                  /* Source port */
-    sum += udph->dest;                                    /* Dest port */
-    sum += udph->len;                                     /* Length again */
-    /* Skip checksum field (should be 0) */
-    
-    /* 
-     * UDP payload checksum calculation
-     * Process payload in 16-bit chunks for complete checksum validation
-     */
-    __u8 *payload = (__u8 *)((void *)udph + sizeof(struct udphdr));
-    
-    /* Calculate payload length with bounds checking for BPF verifier */
+    /* Validate UDP length */
     if (udp_len < sizeof(struct udphdr)) {
-        return bpf_htons(0xFFFF); /* Invalid UDP length */
+        return 0;
     }
     
-    int payload_len = udp_len - sizeof(struct udphdr);
-    
-    /* Ensure payload_len is within reasonable bounds for verifier */
-    if (payload_len < 0) payload_len = 0;
-    if (payload_len > 1500) payload_len = 1500; /* Maximum reasonable payload */
-    
-    /* Bounds check for payload end */
-    if ((void *)payload + payload_len > data_end) {
-        payload_len = (char *)data_end - (char *)payload;
-        if (payload_len < 0) payload_len = 0;
-    }
-    
-    /* Process payload in 16-bit words */
-    for (int i = 0; i < payload_len; i += 2) {
-        if ((void *)payload + i + 1 >= data_end) break;
-        
-        __u16 word;
-        if (i + 1 < payload_len) {
-            /* Full 16-bit word */
-            word = (payload[i] << 8) | payload[i + 1];
-        } else {
-            /* Last byte (pad with zero) */
-            word = payload[i] << 8;
+    /* Calculate total UDP packet size (header + payload) */
+    void *udp_end = (void *)udph + udp_len;
+    if (udp_end > data_end) {
+        udp_len = (char *)data_end - (char *)udph;
+        if (udp_len < sizeof(struct udphdr)) {
+            return 0;
         }
-        sum += word;
     }
     
-    /* Fold carries */
-    while (sum >> 16) {
-        sum = (sum & 0xFFFF) + (sum >> 16);
-    }
+    /* Clear checksum field */
+    udph->check = 0;
     
-    /* Return one's complement (never return 0, use 0xFFFF instead) */
-    __u16 checksum = ~sum;
-    return bpf_htons(checksum ? checksum : 0xFFFF);
+    /* Create pseudo-header for UDP checksum */
+    struct {
+        __be32 saddr;
+        __be32 daddr;
+        __u8 zero;
+        __u8 protocol;
+        __be16 len;
+    } __attribute__((packed)) pseudo_hdr = {
+        .saddr = iph->saddr,
+        .daddr = iph->daddr,
+        .zero = 0,
+        .protocol = IPPROTO_UDP,
+        .len = bpf_htons(udp_len)
+    };
+    
+    /* Calculate checksum: pseudo-header + UDP header + payload */
+    __s64 csum = bpf_csum_diff(0, 0, (__be32 *)&pseudo_hdr, sizeof(pseudo_hdr), 0);
+    csum = bpf_csum_diff(0, 0, (__be32 *)udph, udp_len, csum);
+    
+    return csum ? (__u16)csum : 0xFFFF;
 }
 
 /*
@@ -570,15 +544,13 @@ static __always_inline int apply_nat(struct iphdr *iph, struct udphdr *udph, voi
     udph->dest = bpf_htons(nat->target_port);  /* e.g., 8081 from configuration */
     
     /* Recalculate IP checksum after DNAT modification */
-    iph->check = 0;  /* Clear before recalculation */
     iph->check = ip_checksum(iph);
     
     /* 
      * UDP checksum recalculation:
      * Required for proper packet validation after NAT transformation
-     * Performance impact: ~50ns per packet (acceptable for correctness)
+     * Uses eBPF helper for efficient calculation
      */
-    udph->check = 0;  /* Clear before recalculation */
     udph->check = udp_checksum(iph, udph, data_end);
     
     update_stat(STAT_NAT_APPLIED, 1);
