@@ -20,8 +20,8 @@ def build_exact_packet():
     flags_fragment = 0x4000  # Flags=0x2 (Don't fragment), Fragment=0
     ttl = 64                 # Time to Live
     protocol = 17            # UDP
-    checksum = 0x0d7f        # Header Checksum from Wireshark
-    src_ip = struct.pack('!I', 0x042531c1)  # 4.37.49.193
+    checksum = 0x0000        # Will recalculate with correct source IP
+    src_ip = struct.pack('!I', 0xac1e520d)  # 172.30.82.13 (actual sender)
     dst_ip = struct.pack('!I', 0xac1e525f)  # 172.30.82.95
     
     ip_header = struct.pack('!BBHHHBBH',
@@ -29,10 +29,30 @@ def build_exact_packet():
         flags_fragment, ttl, protocol, checksum
     ) + src_ip + dst_ip
     
-    # UDP Header (8 bytes)
+    # Calculate IP checksum
+    def calculate_checksum(header):
+        # Sum all 16-bit words
+        sum_val = 0
+        for i in range(0, len(header), 2):
+            word = (header[i] << 8) + header[i+1]
+            sum_val += word
+        # Add carry bits
+        while sum_val >> 16:
+            sum_val = (sum_val & 0xFFFF) + (sum_val >> 16)
+        # One's complement
+        return (~sum_val) & 0xFFFF
+    
+    # Recalculate checksum with correct source IP
+    checksum_val = calculate_checksum(ip_header)
+    ip_header = struct.pack('!BBHHHBBH',
+        version_ihl, dscp_ecn, total_length, identification,
+        flags_fragment, ttl, protocol, checksum_val
+    ) + src_ip + dst_ip
+    
+    # UDP Header (8 bytes) - Use port 1035 (confirmed working)
     src_port = 19458         # Source Port
-    dst_port = 8081          # Destination Port  
-    udp_length = 1341        # UDP Length
+    dst_port = 1035          # Port 1035 (TCP works, try UDP)
+    udp_length = 1341        # UDP Length  
     udp_checksum = 0x0000    # Checksum (zero-value)
     
     udp_header = struct.pack('!HHHH', src_port, dst_port, udp_length, udp_checksum)
