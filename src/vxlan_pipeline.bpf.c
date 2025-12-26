@@ -74,6 +74,8 @@ struct xdp_md {
 #define ETH_P_IP    0x0800
 #define IPPROTO_UDP 17
 #define ETH_HLEN    14
+#define ETH_HEADER_SIZE 14  // Alias for ETH_HLEN
+#define UDP_HEADER_SIZE 8   // Standard UDP header size
 
 // Network structure definitions
 struct ethhdr {
@@ -687,82 +689,91 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     }
 
     /* 
-     * CRITICAL: Update inner IP and UDP header lengths after VXLAN decapsulation
+     * CRITICAL: Update IP and UDP header lengths after VXLAN decapsulation
      * 
-     * After bpf_xdp_adjust_head(), both IP total length and UDP length fields
-     * still reflect the original inner packet size. We must update both to match
-     * the new actual packet size to prevent malformed packets.
+     * After bpf_xdp_adjust_head(), both IP and UDP length fields need updating
+     * to match the new packet boundaries after VXLAN overhead removal.
+     * 
+     * Expected packet structure after decapsulation:
+     * [Ethernet 14B][IP 20B][UDP 8B][Payload]
+     * 
+     * From Wireshark analysis:
+     * - Frame: 1500 bytes total
+     * - IP Total Length should be: 1500 - 14 = 1486 bytes
+     * - UDP Length should be: 1486 - 20 = 1466 bytes
      */
     struct ethhdr *eth = (struct ethhdr *)data;
     if ((void *)(eth + 1) + sizeof(struct iphdr) <= data_end) {
         struct iphdr *iph = (struct iphdr *)(eth + 1);
         
-        /* Calculate new IP packet size after VXLAN stripping */
-        __u32 total_packet_size = (char *)data_end - (char *)data;
-        __u32 new_ip_total_len = total_packet_size - ETH_HEADER_SIZE;
+        /* Calculate packet sizes after VXLAN stripping */
+        __u32 total_packet_size = (char *)data_end - (char *)data;  /* 1500 bytes */
+        __u32 new_ip_total_len = total_packet_size - ETH_HEADER_SIZE;  /* 1500 - 14 = 1486 */
         
         /* 
-         * Validate the new size is reasonable and fits in IP header tot_len field
+         * Validate the new IP size is reasonable and fits in IP header tot_len field
          * - Must be at least minimum IP header size (20 bytes)
-         * - Must not exceed maximum IP packet size (65535 bytes)
-         * - Should fit in 16-bit tot_len field
+         * - Must not exceed maximum IP packet size (65535 bytes) 
+         * - Should fit in reasonable MTU limits
          */
         if (new_ip_total_len >= IP_HEADER_MIN_SIZE && 
             new_ip_total_len <= 65535 && 
-            new_ip_total_len <= 1500) {  /* Reasonable MTU limit */
+            new_ip_total_len <= 1500) {  /* Standard MTU limit */
             
-            /* Store old value for incremental checksum update */
-            __u16 old_tot_len = iph->tot_len;
-            __u16 new_tot_len_net = bpf_htons((__u16)new_ip_total_len);
+            /* Store old values for incremental checksum updates */
+            __u16 old_ip_tot_len = iph->tot_len;
+            __u16 new_ip_tot_len_net = bpf_htons((__u16)new_ip_total_len);
             
-            /* Only update if the value actually changed */
-            if (old_tot_len != new_tot_len_net) {
-                /* Update IP total length to match actual packet size */
-                iph->tot_len = new_tot_len_net;
+            /* Update IP total length if it changed */
+            if (old_ip_tot_len != new_ip_tot_len_net) {
+                iph->tot_len = new_ip_tot_len_net;
                 
                 /* Incrementally update IP checksum for the tot_len field change */
-                __u32 checksum = (~bpf_ntohs(iph->check)) & 0xFFFF;
-                checksum -= bpf_ntohs(old_tot_len);
-                checksum += bpf_ntohs(new_tot_len_net);
+                __u32 ip_checksum = (~bpf_ntohs(iph->check)) & 0xFFFF;
+                ip_checksum -= bpf_ntohs(old_ip_tot_len);
+                ip_checksum += bpf_ntohs(new_ip_tot_len_net);
                 
                 /* Handle checksum carries properly */
-                while (checksum >> 16) {
-                    checksum = (checksum & 0xFFFF) + (checksum >> 16);
+                while (ip_checksum >> 16) {
+                    ip_checksum = (ip_checksum & 0xFFFF) + (ip_checksum >> 16);
                 }
                 
-                iph->check = bpf_htons((~checksum) & 0xFFFF);
-                
-                /* Update UDP length if this is a UDP packet */
-                if (iph->protocol == IPPROTO_UDP) {
-                    struct udphdr *udph = (struct udphdr *)((char *)iph + (iph->ihl * 4));
-                    if ((void *)(udph + 1) <= data_end) {
-                        __u32 ip_header_len = iph->ihl * 4;
-                        __u32 new_udp_len = new_ip_total_len - ip_header_len;
-                        
-                        if (new_udp_len >= sizeof(struct udphdr)) {
-                            udph->len = bpf_htons((__u16)new_udp_len);
-                        }
-                    }
-                }
+                iph->check = bpf_htons((~ip_checksum) & 0xFFFF);
                 
                 /* Track IP length updates for monitoring */
                 update_stat(STAT_IP_LEN_UPDATED, 1);
+            }
+            
+            /* 
+             * Update UDP length field if this is a UDP packet
+             * UDP Length = IP payload length = IP total length - IP header length
+             */
+            if (iph->protocol == IPPROTO_UDP) {
+                int ip_hdr_len = iph->ihl * 4;
                 
-                /* 
-                 * CRITICAL: Adjust packet buffer size to match updated headers
-                 * 
-                 * The packet buffer might still think it's the original size.
-                 * We need to shrink it to match the new IP total length.
-                 */
-                __u32 current_packet_size = (char *)data_end - (char *)data;
-                __u32 expected_packet_size = new_ip_total_len + ETH_HEADER_SIZE;
-                
-                if (current_packet_size > expected_packet_size) {
-                    int delta = current_packet_size - expected_packet_size;
-                    /* Shrink packet buffer from the tail */
-                    if (bpf_xdp_adjust_tail(ctx, -delta) == 0) {
-                        /* Refresh data_end pointer after tail adjustment */
-                        data_end = (void *)(long)ctx->data_end;
+                /* Ensure we can access UDP header safely */
+                struct udphdr *udph = (struct udphdr *)((char *)iph + ip_hdr_len);
+                if ((void *)(udph + 1) <= data_end) {
+                    
+                    /* Calculate UDP length: IP payload size */
+                    __u32 new_udp_len = new_ip_total_len - ip_hdr_len;  /* 1486 - 20 = 1466 */
+                    
+                    /* Validate UDP length is reasonable */
+                    if (new_udp_len >= UDP_HEADER_SIZE && new_udp_len <= 65535) {
+                        __u16 old_udp_len = udph->len;
+                        __u16 new_udp_len_net = bpf_htons((__u16)new_udp_len);
+                        
+                        /* Update UDP length if it changed */
+                        if (old_udp_len != new_udp_len_net) {
+                            udph->len = new_udp_len_net;
+                            
+                            /* 
+                             * Set UDP checksum to 0 (no checksum computed)
+                             * This is valid per RFC 768 and avoids complex pseudo-header
+                             * checksum recalculation in eBPF context
+                             */
+                            udph->check = 0;
+                        }
                     }
                 }
             }
