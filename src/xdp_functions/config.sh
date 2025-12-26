@@ -46,9 +46,13 @@ load_default_config() {
     DEBUG_LEVEL="${DEBUG_LEVEL:-0}"
     XDP_MODE="${XDP_MODE:-auto}"
     ENABLE_COLORS="${ENABLE_COLORS:-true}"
+    MAX_RETRIES="${MAX_RETRIES:-3}"
+    RETRY_DELAY="${RETRY_DELAY:-2}"
+    
+    print_color "yellow" "Using default configuration values"
 }
 
-# Validate configuration
+# Validate configuration with comprehensive checks
 validate_configuration() {
     local errors=()
     
@@ -56,27 +60,58 @@ validate_configuration() {
     [ -z "$INTERFACE" ] && errors+=("INTERFACE not set")
     [ -z "$TARGET_INTERFACE" ] && errors+=("TARGET_INTERFACE not set")
     
-    # Validate IP address
-    if ! [[ "$NAT_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        errors+=("Invalid NAT_IP: $NAT_IP")
-    fi
-    
-    # Validate ports
-    if [ "$NAT_PORT" -lt 1 ] || [ "$NAT_PORT" -gt 65535 ]; then
-        errors+=("Invalid NAT_PORT: $NAT_PORT")
-    fi
-    
-    if [ "$SOURCE_PORT" -lt 1 ] || [ "$SOURCE_PORT" -gt 65535 ]; then
-        errors+=("Invalid SOURCE_PORT: $SOURCE_PORT")
-    fi
-    
-    if [ ${#errors[@]} -gt 0 ]; then
-        print_color "red" "Configuration errors:"
-        for error in "${errors[@]}"; do
-            print_color "red" "  • $error"
+    # Validate IP address format
+    if ! [[ "$NAT_IP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        errors+=("Invalid NAT_IP format: $NAT_IP")
+    else
+        # Check IP address ranges (0-255)
+        IFS='.' read -ra ADDR <<< "$NAT_IP"
+        for octet in "${ADDR[@]}"; do
+            if [ "$octet" -lt 0 ] || [ "$octet" -gt 255 ]; then
+                errors+=("Invalid NAT_IP octet: $octet in $NAT_IP")
+                break
+            fi
         done
-        exit 1
     fi
+    
+    # Validate port ranges
+    if ! validate_numeric "$NAT_PORT" "NAT_PORT" || [ "$NAT_PORT" -lt 1 ] || [ "$NAT_PORT" -gt 65535 ]; then
+        errors+=("Invalid NAT_PORT: $NAT_PORT (must be 1-65535)")
+    fi
+    
+    if ! validate_numeric "$SOURCE_PORT" "SOURCE_PORT" || [ "$SOURCE_PORT" -lt 1 ] || [ "$SOURCE_PORT" -gt 65535 ]; then
+        errors+=("Invalid SOURCE_PORT: $SOURCE_PORT (must be 1-65535)")
+    fi
+    
+    # Validate numeric settings
+    if ! validate_numeric "$TARGET_PPS" "TARGET_PPS" || [ "$TARGET_PPS" -lt 1000 ]; then
+        errors+=("Invalid TARGET_PPS: $TARGET_PPS (must be >= 1000)")
+    fi
+    
+    if ! validate_numeric "$STATS_INTERVAL" "STATS_INTERVAL" || [ "$STATS_INTERVAL" -lt 1 ] || [ "$STATS_INTERVAL" -gt 60 ]; then
+        errors+=("Invalid STATS_INTERVAL: $STATS_INTERVAL (must be 1-60 seconds)")
+    fi
+    
+    # Check interfaces exist
+    if ! check_interface_exists "$INTERFACE" 2>/dev/null; then
+        errors+=("Input interface '$INTERFACE' not found")
+    fi
+    
+    if ! check_interface_exists "$TARGET_INTERFACE" 2>/dev/null; then
+        errors+=("Target interface '$TARGET_INTERFACE' not found")
+    fi
+    
+    # Report errors
+    if [ ${#errors[@]} -gt 0 ]; then
+        print_color "red" "Configuration validation failed:"
+        for error in "${errors[@]}"; do
+            print_color "red" "  - $error"
+        done
+        return 1
+    fi
+    
+    print_color "green" "Configuration validation passed"
+    return 0
 }
 
 # Show current configuration

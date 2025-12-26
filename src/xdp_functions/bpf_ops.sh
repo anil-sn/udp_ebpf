@@ -1,12 +1,19 @@
 #!/bin/bash
 # XDP Pipeline - BPF Operations
 
-# Check if BPF program is loaded - FIXED: Strip newlines from count
+# Check if BPF program is loaded with improved error handling
 check_bpf_program() {
     local prog_name="${1:-vxlan_pipeline_main}"
+    
+    # Validate bpftool availability
+    if ! check_command "bpftool"; then
+        echo "0"
+        return 1
+    fi
+    
     local count=$(sudo bpftool prog list 2>/dev/null | grep -c "$prog_name" || echo "0")
-    # Fix: Remove any newlines or whitespace that could cause bash comparison errors
-    count=$(echo "$count" | tr -d '\n\r' | tr -d ' ')
+    # Sanitize output
+    count=$(echo "$count" | tr -d '\n\r' | tr -d ' ' | grep -E '^[0-9]+$' || echo "0")
     echo "$count"
 }
 

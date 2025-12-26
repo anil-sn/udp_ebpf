@@ -41,7 +41,44 @@ check_root() {
 check_command() {
     local cmd="$1"
     if ! command -v "$cmd" >/dev/null 2>&1; then
-        echo "Required command not found: $cmd"
+        print_color "red" "ERROR: Required command not found: $cmd"
+        return 1
+    fi
+    return 0
+}
+
+# Retry mechanism for operations
+retry_operation() {
+    local max_attempts="${1:-3}"
+    local delay="${2:-2}"
+    local description="${3:-operation}"
+    shift 3
+    
+    local attempt=1
+    while [ $attempt -le $max_attempts ]; do
+        if "$@"; then
+            return 0
+        fi
+        
+        if [ $attempt -lt $max_attempts ]; then
+            print_color "yellow" "WARNING: $description failed (attempt $attempt/$max_attempts), retrying in ${delay}s..."
+            sleep "$delay"
+        else
+            print_color "red" "ERROR: $description failed after $max_attempts attempts"
+            return 1
+        fi
+        
+        ((attempt++))
+    done
+}
+
+# Validate numeric input
+validate_numeric() {
+    local value="$1"
+    local name="${2:-value}"
+    
+    if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+        print_color "red" "ERROR: Invalid $name: '$value' (must be numeric)"
         return 1
     fi
     return 0

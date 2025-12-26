@@ -1,17 +1,23 @@
 #!/bin/bash
 # XDP Pipeline - Main Control Functions
 
-# Start the pipeline
+# Start the pipeline with enhanced error handling
 start_pipeline() {
     fix_terminal
     
     print_color "blue" "Starting XDP VXLAN Pipeline..."
     
+    # Pre-flight checks
+    if ! validate_configuration; then
+        print_color "red" "ERROR: Configuration validation failed"
+        return 1
+    fi
+    
     # Check if already running
     if pgrep -f "vxlan_loader.*-i.*$INTERFACE" >/dev/null; then
         local pid=$(pgrep -f "vxlan_loader.*-i.*$INTERFACE" | head -1)
         print_color "red" "ERROR: Pipeline already running (PID: $pid)"
-        print_color "yellow" "Use './xdp.sh stop' first"
+        print_color "yellow" "INFO: Use './xdp.sh stop' first"
         return 1
     fi
     
@@ -20,12 +26,17 @@ start_pipeline() {
         return 1
     fi
     
-    # Clean orphans
+    # Clean orphans with retry mechanism
     print_color "yellow" "Cleaning any orphaned XDP programs..."
-    sudo ip link set "$INTERFACE" xdp off 2>/dev/null || true
+    if ! retry_operation 3 1 "XDP cleanup" sudo ip link set "$INTERFACE" xdp off; then
+        print_color "yellow" "WARNING: Could not clean XDP programs (may not exist)"
+    fi
     
-    # Configure interfaces
-    configure_interface "$INTERFACE"
+    # Configure interfaces with validation
+    if ! configure_interface "$INTERFACE"; then
+        print_color "red" "ERROR: Failed to configure interface $INTERFACE"
+        return 1
+    fi
     
     # FORCE 8 QUEUES FOR MAXIMUM PERFORMANCE (DEFAULT BEHAVIOR)
     print_color "blue" "Configuring network for maximum performance..."
@@ -275,6 +286,67 @@ cleanup_pipeline() {
         print_color "yellow" "Warning: $remaining BPF programs may still be loaded"
     fi
     
+    print_color "green" "Pipeline cleanup completed"
+}
+
+# Enhanced cleanup function with comprehensive resource cleanup  
+cleanup_pipeline() {
+    fix_terminal
+    
+    print_color "blue" "Performing comprehensive pipeline cleanup..."
+    
+    # Stop all processes first
+    stop_pipeline
+    
+    # Clean up BPF maps and programs
+    print_color "yellow" "Cleaning BPF resources..."
+    
+    # Remove pinned maps
+    local bpf_fs_maps=("/sys/fs/bpf/vxlan_stats_map" "/sys/fs/bpf/vxlan_nat_map" "/sys/fs/bpf/vxlan_redirect_map")
+    for map_path in "${bpf_fs_maps[@]}"; do
+        if [ -e "$map_path" ]; then
+            sudo rm -f "$map_path" && print_color "green" "  SUCCESS: Removed $map_path"
+        fi
+    done
+    
+    # Clean up log files
+    print_color "yellow" "Cleaning log files..."
+    if [ -f "$LOG_FILE" ]; then
+        sudo rm -f "$LOG_FILE" && print_color "green" "  SUCCESS: Removed log file: $LOG_FILE"
+    fi
+    
+    # Clean temporary test directories
+    print_color "yellow" "Cleaning temporary files..."
+    sudo rm -rf /tmp/xdp_test_* 2>/dev/null && print_color "green" "  SUCCESS: Removed test directories"
+    sudo rm -rf /tmp/vxlan_* 2>/dev/null && print_color "green" "  SUCCESS: Removed temporary files"
+    
+    # Reset interface configurations (optional)
+    if [ "${1:-}" = "--reset-interfaces" ]; then
+        print_color "yellow" "Resetting interface configurations..."
+        reset_interface_config "$INTERFACE"
+        reset_interface_config "$TARGET_INTERFACE"
+    fi
+    
+    print_color "green" "Comprehensive cleanup completed"
+}
+
+# Reset interface configuration to defaults
+reset_interface_config() {
+    local iface="$1"
+    
+    if ! check_interface_exists "$iface" 2>/dev/null; then
+        return 0
+    fi
+    
+    print_color "blue" "Resetting configuration for $iface..."
+    
+    # Reset MTU to default (1500)
+    sudo ip link set "$iface" mtu 1500 2>/dev/null && print_color "green" "  SUCCESS: Reset MTU to 1500"
+    
+    # Reset queue configuration to single queue
+    sudo ethtool -L "$iface" combined 1 2>/dev/null && print_color "green" "  SUCCESS: Reset to single queue"
+    
+    return 0
     # Clean up log files
     rm -f "$LOG_FILE" 2>/dev/null || true
     rm -f "/tmp/packet_injector.log" 2>/dev/null || true

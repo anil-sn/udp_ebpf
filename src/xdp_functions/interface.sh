@@ -1,11 +1,21 @@
 #!/bin/bash
 # XDP Pipeline - Network Interface Operations
 
-# Check if interface exists
+# Check if interface exists with improved validation
 check_interface_exists() {
     local iface="$1"
-    ip link show "$iface" >/dev/null 2>&1
-    return $?
+    
+    if [ -z "$iface" ]; then
+        print_color "red" "ERROR: Interface name cannot be empty"
+        return 1
+    fi
+    
+    if ! ip link show "$iface" >/dev/null 2>&1; then
+        print_color "red" "ERROR: Network interface '$iface' not found"
+        return 1
+    fi
+    
+    return 0
 }
 
 # Get interface statistics
@@ -28,25 +38,55 @@ get_interface_stats() {
     echo "$rx_packets:$tx_packets:$rx_bytes:$tx_bytes:$rx_dropped:$tx_dropped"
 }
 
-# Configure interface for XDP
+# Configure interface for XDP with enhanced validation
 configure_interface() {
     local iface="$1"
     
+    if ! check_interface_exists "$iface"; then
+        return 1
+    fi
+    
     print_color "blue" "Configuring interface $iface for XDP..."
     
-    # Set MTU for XDP compatibility
-    if sudo ip link set "$iface" mtu 3000 2>/dev/null; then
-        print_color "green" "  ✓ MTU set to 3000"
-    else
-        print_color "yellow" "  ⚠ Could not set MTU on $iface"
+    # Check if interface is up
+    if ! ip link show "$iface" | grep -q "state UP"; then
+        print_color "yellow" "WARNING: Interface $iface is down, attempting to bring up..."
+        if ! sudo ip link set "$iface" up; then
+            print_color "red" "ERROR: Failed to bring up interface $iface"
+            return 1
+        fi
+        sleep 2  # Allow interface to stabilize
     fi
     
-    # Configure queue count for AWS ENA
-    if sudo ethtool -L "$iface" combined 4 2>/dev/null; then
-        print_color "green" "  ✓ Queues configured (4 combined)"
+    # Set MTU for XDP compatibility (with validation)
+    local current_mtu=$(cat "/sys/class/net/$iface/mtu" 2>/dev/null || echo "0")
+    local target_mtu=3000
+    
+    if [ "$current_mtu" -ne "$target_mtu" ]; then
+        if sudo ip link set "$iface" mtu "$target_mtu" 2>/dev/null; then
+            print_color "green" "  SUCCESS: MTU updated: $current_mtu -> $target_mtu"
+        else
+            print_color "yellow" "  WARNING: Could not set MTU on $iface (current: $current_mtu)"
+        fi
     else
-        print_color "yellow" "  ⚠ Could not configure queues on $iface"
+        print_color "green" "  SUCCESS: MTU already optimal ($target_mtu)"
     fi
+    
+    # Configure queue count for AWS ENA (with current state check)
+    local current_queues=$(ethtool -l "$iface" 2>/dev/null | grep "Combined:" | tail -1 | awk '{print $2}' || echo "1")
+    local target_queues=4
+    
+    if [ -n "$current_queues" ] && [ "$current_queues" -ne "$target_queues" ]; then
+        if sudo ethtool -L "$iface" combined "$target_queues" 2>/dev/null; then
+            print_color "green" "  SUCCESS: Queue config updated: $current_queues -> $target_queues combined"
+        else
+            print_color "yellow" "  WARNING: Could not configure queues on $iface (keeping $current_queues)"
+        fi
+    else
+        print_color "green" "  SUCCESS: Queue configuration optimal ($current_queues queues)"
+    fi
+    
+    return 0
     
     # Disable offload features for better XDP performance
     sudo ethtool -K "$iface" gro off 2>/dev/null || true

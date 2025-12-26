@@ -10,7 +10,6 @@ source "$SCRIPT_DIR/xdp_functions/config.sh"
 source "$SCRIPT_DIR/xdp_functions/interface.sh"
 source "$SCRIPT_DIR/xdp_functions/bpf_ops.sh"
 source "$SCRIPT_DIR/xdp_functions/monitoring.sh"
-source "$SCRIPT_DIR/xdp_functions/testing.sh"
 source "$SCRIPT_DIR/xdp_functions/pipeline.sh"
 
 # Load configuration
@@ -34,26 +33,35 @@ case "$CMD" in
         show_pipeline_status "$@"
         ;;
     "stats") 
-        show_statistics "$@"
+        show_compact_statistics "$@"
+        ;;
+    "config") 
+        show_configuration "$@"
+        ;;
+    "maps") 
+        show_bpf_maps "$@"
+        ;;
+    "logs") 
+        show_logs "$@"
         ;;
     "info") 
         show_detailed_info "$@"
-        ;;
-    "test") 
-        run_end_to_end_test "$@"
         ;;
     "monitor") 
         monitor_pipeline "$@"
         ;;
     "scale")
-        if [ "$1" = "max-performance" ]; then
-            print_color "blue" "Configuring XDP pipeline for maximum performance..."
-            "$SCRIPT_DIR/xdp_functions/dynamic_scaling.sh" max-performance
+        source "$SCRIPT_DIR/xdp_functions/dynamic_scaling.sh"
+        if [ "${1:-}" = "max-performance" ]; then
+            echo "Configuring XDP pipeline for maximum performance..."
+            scale_performance "max-performance"
+        elif [ "${1:-}" = "monitor" ]; then
+            scale_performance "monitor"
         else
-            "$SCRIPT_DIR/xdp_functions/dynamic_scaling.sh" "$@"
+            scale_performance "balanced"
         fi
         ;;
-    "clean") 
+    "cleanup") 
         cleanup_pipeline "$@"
         ;;
     "restart") 
@@ -65,10 +73,56 @@ case "$CMD" in
         show_usage
         ;;
     *) 
-        print_color "red" "Unknown command: $CMD"
+        print_color "red" "ERROR: Unknown command: $CMD"
         echo ""
         show_usage
         exit 1
         ;;
 esac
+
+# Usage information
+show_usage() {
+    cat << EOF
+XDP VXLAN Pipeline Control
+
+USAGE:
+    ./xdp.sh <command> [options]
+
+COMMANDS:
+    start           Start the XDP VXLAN pipeline
+    stop            Stop the pipeline and clean up processes
+    restart         Stop and restart the pipeline
+    status          Show pipeline status and basic info
+    stats           Show real-time packet statistics (compact format)
+    config          Show current pipeline configuration
+    maps            Show detailed eBPF maps status and contents
+    logs            Show recent pipeline log entries
+                   Usage: logs [count] [filter]
+    info            Show detailed system and configuration info
+    monitor         Live traffic monitoring
+    cleanup         Comprehensive cleanup of all resources
+                   Use --reset-interfaces to reset network config
+    scale           Dynamic performance scaling
+                   Use 'max-performance' for maximum throughput
+    help            Show this help message
+
+EXAMPLES:
+    ./xdp.sh start                          # Start pipeline with default config
+    ./xdp.sh config                         # Show current configuration  
+    ./xdp.sh maps                           # Show eBPF maps with live data
+    ./xdp.sh logs 50 ALERT                  # Show last 50 log entries with alerts
+    ./xdp.sh stats                          # Show live statistics
+    ./xdp.sh cleanup --reset-interfaces     # Full cleanup + reset network
+    ./xdp.sh scale max-performance          # Scale for maximum performance
+
+CONFIGURATION:
+    Edit .env file in project root or use environment variables
+    
+FILES:
+    .env                           # Main configuration file
+    /tmp/vxlan_loader.log         # Runtime logs
+    
+For detailed information: ./xdp.sh info
+EOF
+}
 
