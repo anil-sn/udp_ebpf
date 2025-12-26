@@ -1254,8 +1254,24 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     update_stat(STAT_PACKET_SIZE_DEBUG, (old_len << 16) | (expected_ip_len & 0xFFFF));
     
     /* Update IP length field with verified value */
+    __u16 old_tot_len = ip_hdr->tot_len;
     ip_hdr->tot_len = bpf_htons(expected_ip_len);
-    ip_hdr->check = 0;  /* Clear checksum */
+    
+    /* Calculate new IP checksum using bpf_csum_diff helper */
+    __u32 checksum_diff = bpf_csum_diff((__be32 *)&old_tot_len, sizeof(old_tot_len),
+                                        (__be32 *)&ip_hdr->tot_len, sizeof(ip_hdr->tot_len), 0);
+    
+    /* Update the checksum field - if original was 0, calculate from scratch */
+    if (ip_hdr->check == 0) {
+        /* Need full checksum calculation - for now use checksum offloading */
+        ip_hdr->check = 0;  /* Hardware will calculate */
+    } else {
+        /* Incremental checksum update */
+        __u32 new_check = (__u32)bpf_ntohs(ip_hdr->check) + checksum_diff;
+        new_check = (new_check & 0xFFFF) + (new_check >> 16);
+        new_check = (new_check & 0xFFFF) + (new_check >> 16);
+        ip_hdr->check = bpf_htons((__u16)~new_check);
+    }
     
     /* EVIDENCE: Detect the specific 1500→1486 pattern for monitoring */
     if (old_len == 1500) {
@@ -1425,8 +1441,18 @@ static __always_inline int forward_packet(void *data, void *data_end,
                         struct iphdr *ring_ip = (struct iphdr *)(event->data + sizeof(struct ethhdr));
                         /* CORRECT FIX: Use available IP data size (total - Ethernet header) */
                         __u16 ring_ip_len = temp_len - ETH_HLEN;  /* Available IP data */
+                        __u16 old_ring_len = ring_ip->tot_len;
                         ring_ip->tot_len = bpf_htons(ring_ip_len);
-                        ring_ip->check = 0;  /* Clear checksum */
+                        
+                        /* Update checksum incrementally if it exists */
+                        if (ring_ip->check != 0) {
+                            __u32 checksum_diff = bpf_csum_diff((__be32 *)&old_ring_len, sizeof(old_ring_len),
+                                                               (__be32 *)&ring_ip->tot_len, sizeof(ring_ip->tot_len), 0);
+                            __u32 new_check = (__u32)bpf_ntohs(ring_ip->check) + checksum_diff;
+                            new_check = (new_check & 0xFFFF) + (new_check >> 16);
+                            new_check = (new_check & 0xFFFF) + (new_check >> 16);
+                            ring_ip->check = bpf_htons((__u16)~new_check);
+                        }
                         
                         /* Also fix UDP length in ring buffer if UDP packet */
                         if (ring_ip->protocol == IPPROTO_UDP && 
