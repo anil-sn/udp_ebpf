@@ -4,11 +4,23 @@
 
 set -euo pipefail
 
-# Configuration - modify these as needed
+# Load .env configuration if available
+if [[ -f ".env" ]]; then
+    echo "📁 Loading configuration from .env file..."
+    # Source .env file, filtering out comments and empty lines
+    set -a  # automatically export variables
+    source <(grep -v '^#' .env | grep -v '^$')
+    set +a
+else
+    echo "⚠️  No .env file found, using defaults"
+fi
+
+# Configuration - modify these as needed or use .env file
 SRC_IP="${SRC_IP:-172.30.82.13}"
-DST_IP="${DST_IP:-172.30.82.95}"
-DST_PORT="${DST_PORT:-1035}"
-INTERFACE="${INTERFACE:-ens6}"
+DST_IP="${NAT_IP:-172.30.82.95}"           # Use NAT_IP from .env
+DST_PORT="${SOURCE_PORT:-31765}"            # Use SOURCE_PORT from .env (the port VXLAN pipeline matches)
+NAT_TARGET_PORT="${NAT_PORT:-8081}"         # The port it gets translated TO
+INTERFACE="${TARGET_INTERFACE:-ens6}"       # Use TARGET_INTERFACE from .env
 
 validate_environment() {
     # Check if running as root (for iptables operations)
@@ -38,75 +50,92 @@ validate_environment() {
 
 setup_tracing() {
     validate_environment "start"
-    echo "🔍 Setting up packet flow tracing for $SRC_IP → $DST_IP:$DST_PORT"
+    echo "🔍 Setting up packet flow tracing for VXLAN pipeline:"
+    echo "   📥 Incoming: ANY → $DST_IP:$DST_PORT (matches SOURCE_PORT)" 
+    echo "   📤 Expected output: ANY → $DST_IP:$NAT_TARGET_PORT (NAT_PORT)"
     
     # Clear existing rules
     cleanup_tracing 2>/dev/null || true
     
-    # PREROUTING - Track incoming packets
-    iptables -t raw -I PREROUTING -s $SRC_IP -d $DST_IP -p udp --dport $DST_PORT \
-        -j LOG --log-prefix "PRE_ROUTING: " --log-level 6
+    # === INCOMING PACKET TRACING (to SOURCE_PORT) ===
+    # PREROUTING - Track incoming packets to SOURCE_PORT
+    iptables -t raw -I PREROUTING -d $DST_IP -p udp --dport $DST_PORT \
+        -j LOG --log-prefix "PRE_ROUTING_IN: " --log-level 6
     
-    # FORWARD - Track forwarded packets  
-    iptables -t filter -I FORWARD -s $SRC_IP -d $DST_IP -p udp --dport $DST_PORT \
-        -j LOG --log-prefix "FORWARD: " --log-level 6
+    # FORWARD - Track forwarded packets to SOURCE_PORT
+    iptables -t filter -I FORWARD -d $DST_IP -p udp --dport $DST_PORT \
+        -j LOG --log-prefix "FORWARD_IN: " --log-level 6
         
-    # INPUT - Track packets destined for local delivery
-    iptables -t filter -I INPUT -s $SRC_IP -d $DST_IP -p udp --dport $DST_PORT \
-        -j LOG --log-prefix "INPUT: " --log-level 6
+    # INPUT - Track packets destined for local delivery to SOURCE_PORT
+    iptables -t filter -I INPUT -d $DST_IP -p udp --dport $DST_PORT \
+        -j LOG --log-prefix "INPUT_IN: " --log-level 6
     
-    # OUTPUT - Track locally generated packets
-    iptables -t filter -I OUTPUT -s $SRC_IP -d $DST_IP -p udp --dport $DST_PORT \
-        -j LOG --log-prefix "OUTPUT: " --log-level 6
+    # === OUTGOING PACKET TRACING (to NAT_PORT) ===
+    # OUTPUT - Track locally generated packets to NAT_PORT
+    iptables -t filter -I OUTPUT -d $DST_IP -p udp --dport $NAT_TARGET_PORT \
+        -j LOG --log-prefix "OUTPUT_NAT: " --log-level 6
     
-    # POSTROUTING - Track outgoing packets
-    iptables -t nat -I POSTROUTING -s $SRC_IP -d $DST_IP -p udp --dport $DST_PORT \
-        -j LOG --log-prefix "POST_ROUTING: " --log-level 6
+    # POSTROUTING - Track outgoing packets to NAT_PORT
+    iptables -t nat -I POSTROUTING -d $DST_IP -p udp --dport $NAT_TARGET_PORT \
+        -j LOG --log-prefix "POST_ROUTING_NAT: " --log-level 6
     
-    # Track both directions
-    iptables -t raw -I PREROUTING -s $DST_IP -d $SRC_IP -p udp --sport $DST_PORT \
+    # FORWARD - Track forwarded packets to NAT_PORT  
+    iptables -t filter -I FORWARD -d $DST_IP -p udp --dport $NAT_TARGET_PORT \
+        -j LOG --log-prefix "FORWARD_NAT: " --log-level 6
+        
+    # === BIDIRECTIONAL TRACING ===
+    # Track return traffic from NAT_PORT
+    iptables -t raw -I PREROUTING -s $DST_IP -p udp --sport $NAT_TARGET_PORT \
         -j LOG --log-prefix "PRE_ROUTING_REPLY: " --log-level 6
         
-    # Additional debugging - track all traffic to/from these IPs
-    iptables -t raw -I PREROUTING -s $SRC_IP -d $DST_IP \
-        -j LOG --log-prefix "ALL_PRE_$SRC_IP->$DST_IP: " --log-level 6
+    # === COMPREHENSIVE DEBUGGING ===
+    # Track all traffic to/from the target IP (catch-all)
+    iptables -t raw -I PREROUTING -d $DST_IP \
+        -j LOG --log-prefix "ALL_TO_$DST_IP: " --log-level 6
         
-    iptables -t raw -I PREROUTING -s $DST_IP -d $SRC_IP \
-        -j LOG --log-prefix "ALL_PRE_$DST_IP->$SRC_IP: " --log-level 6
+    iptables -t raw -I PREROUTING -s $DST_IP \
+        -j LOG --log-prefix "ALL_FROM_$DST_IP: " --log-level 6
     
-    echo "✅ Tracing rules installed. Monitor with: sudo journalctl -f -k | grep -E '(PRE_ROUTING|POST_ROUTING|FORWARD|INPUT|OUTPUT)'"
+    echo "✅ VXLAN pipeline tracing rules installed!"
+    echo "📊 Monitor with: sudo journalctl -f -k | grep -E '(PRE_ROUTING|POST_ROUTING|FORWARD|INPUT|OUTPUT)'"
 }
 
 cleanup_tracing() {
     validate_environment "stop"
-    echo "🧹 Cleaning up tracing rules..."
+    echo "🧹 Cleaning up VXLAN pipeline tracing rules..."
     
     local failed_rules=0
     
-    # Remove all our LOG rules (safer than flush)
-    iptables -t raw -D PREROUTING -s $SRC_IP -d $DST_IP -p udp --dport $DST_PORT \
-        -j LOG --log-prefix "PRE_ROUTING: " --log-level 6 2>/dev/null || ((failed_rules++))
+    # Remove incoming packet rules (to SOURCE_PORT)
+    iptables -t raw -D PREROUTING -d $DST_IP -p udp --dport $DST_PORT \
+        -j LOG --log-prefix "PRE_ROUTING_IN: " --log-level 6 2>/dev/null || ((failed_rules++))
         
-    iptables -t filter -D FORWARD -s $SRC_IP -d $DST_IP -p udp --dport $DST_PORT \
-        -j LOG --log-prefix "FORWARD: " --log-level 6 2>/dev/null || ((failed_rules++))
+    iptables -t filter -D FORWARD -d $DST_IP -p udp --dport $DST_PORT \
+        -j LOG --log-prefix "FORWARD_IN: " --log-level 6 2>/dev/null || ((failed_rules++))
         
-    iptables -t filter -D INPUT -s $SRC_IP -d $DST_IP -p udp --dport $DST_PORT \
-        -j LOG --log-prefix "INPUT: " --log-level 6 2>/dev/null || ((failed_rules++))
+    iptables -t filter -D INPUT -d $DST_IP -p udp --dport $DST_PORT \
+        -j LOG --log-prefix "INPUT_IN: " --log-level 6 2>/dev/null || ((failed_rules++))
         
-    iptables -t filter -D OUTPUT -s $SRC_IP -d $DST_IP -p udp --dport $DST_PORT \
-        -j LOG --log-prefix "OUTPUT: " --log-level 6 2>/dev/null || ((failed_rules++))
+    # Remove outgoing packet rules (to NAT_PORT)
+    iptables -t filter -D OUTPUT -d $DST_IP -p udp --dport $NAT_TARGET_PORT \
+        -j LOG --log-prefix "OUTPUT_NAT: " --log-level 6 2>/dev/null || ((failed_rules++))
         
-    iptables -t nat -D POSTROUTING -s $SRC_IP -d $DST_IP -p udp --dport $DST_PORT \
-        -j LOG --log-prefix "POST_ROUTING: " --log-level 6 2>/dev/null || ((failed_rules++))
+    iptables -t nat -D POSTROUTING -d $DST_IP -p udp --dport $NAT_TARGET_PORT \
+        -j LOG --log-prefix "POST_ROUTING_NAT: " --log-level 6 2>/dev/null || ((failed_rules++))
         
-    iptables -t raw -D PREROUTING -s $DST_IP -d $SRC_IP -p udp --sport $DST_PORT \
+    iptables -t filter -D FORWARD -d $DST_IP -p udp --dport $NAT_TARGET_PORT \
+        -j LOG --log-prefix "FORWARD_NAT: " --log-level 6 2>/dev/null || ((failed_rules++))
+        
+    # Remove bidirectional rules
+    iptables -t raw -D PREROUTING -s $DST_IP -p udp --sport $NAT_TARGET_PORT \
         -j LOG --log-prefix "PRE_ROUTING_REPLY: " --log-level 6 2>/dev/null || ((failed_rules++))
         
-    iptables -t raw -D PREROUTING -s $SRC_IP -d $DST_IP \
-        -j LOG --log-prefix "ALL_PRE_$SRC_IP->$DST_IP: " --log-level 6 2>/dev/null || ((failed_rules++))
+    # Remove catch-all rules
+    iptables -t raw -D PREROUTING -d $DST_IP \
+        -j LOG --log-prefix "ALL_TO_$DST_IP: " --log-level 6 2>/dev/null || ((failed_rules++))
         
-    iptables -t raw -D PREROUTING -s $DST_IP -d $SRC_IP \
-        -j LOG --log-prefix "ALL_PRE_$DST_IP->$SRC_IP: " --log-level 6 2>/dev/null || ((failed_rules++))
+    iptables -t raw -D PREROUTING -s $DST_IP \
+        -j LOG --log-prefix "ALL_FROM_$DST_IP: " --log-level 6 2>/dev/null || ((failed_rules++))
     
     if [[ $failed_rules -eq 0 ]]; then
         echo "✅ All tracing rules removed successfully"
@@ -164,7 +193,8 @@ case "${1:-help}" in
         ;;
     "test")
         validate_environment "test"
-        echo "🧪 Sending test packet: $SRC_IP → $DST_IP:$DST_PORT"
+        echo "🧪 Sending VXLAN test packet: ANY → $DST_IP:$DST_PORT"
+        echo "   🔄 Expected NAT result: ANY → $DST_IP:$NAT_TARGET_PORT"
         python3 ./send_exact_packet.py
         ;;
     "route")
@@ -173,18 +203,29 @@ case "${1:-help}" in
     "help"|*)
         echo "Usage: sudo $0 {start|stop|show|monitor|test|route}"
         echo ""
+        echo "🎯 VXLAN Pipeline Packet Flow Debugger"
+        echo "======================================"
+        echo "Configuration loaded from .env file:"
+        echo "  📥 Monitors packets TO: $DST_IP:$DST_PORT (SOURCE_PORT)"
+        echo "  📤 Expects NAT output TO: $DST_IP:$NAT_TARGET_PORT (NAT_PORT)"
+        echo ""
         echo "Commands:"
-        echo "  start   - Install netfilter tracing rules"
+        echo "  start   - Install VXLAN pipeline tracing rules"
         echo "  stop    - Remove all tracing rules" 
-        echo "  show    - Show recent logs"
+        echo "  show    - Show recent netfilter logs"
         echo "  monitor - Real-time log monitoring"
-        echo "  test    - Send test packet"
+        echo "  test    - Send VXLAN test packet"
         echo "  route   - Analyze routing decisions"
         echo ""
-        echo "Workflow:"
-        echo "  1. sudo $0 start      # Install tracing"
+        echo "🚀 Workflow:"
+        echo "  1. sudo $0 start      # Install VXLAN tracing"
         echo "  2. sudo $0 monitor    # Monitor in terminal 1" 
-        echo "  3. sudo $0 test       # Send test in terminal 2"
+        echo "  3. sudo $0 test       # Send VXLAN test in terminal 2"
         echo "  4. sudo $0 stop       # Cleanup when done"
+        echo ""
+        echo "💡 Expected packet flow:"
+        echo "   📥 Input:  ANY → $DST_IP:$DST_PORT"
+        echo "   🔄 XDP NAT: Process via VXLAN pipeline" 
+        echo "   📤 Output: ANY → $DST_IP:$NAT_TARGET_PORT"
         ;;
 esac
