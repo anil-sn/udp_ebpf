@@ -999,11 +999,14 @@ static __always_inline int parse_inner_packet(void *data, void *data_end,
     update_stat(STAT_INNER_PACKETS, 1);
     update_stat(STAT_BYTES_PROCESSED, bpf_ntohs(ip_hdr->tot_len));
     
-    /* EARLY FILTERING: Check if IP is in allowlist for selective processing */
+    /* OPTIONAL FILTERING: Check if IP allowlist is configured and enforced */
+    /* For now, skip allowlist filtering to allow all traffic through */
+    /* TODO: Re-enable allowlist filtering when properly configured */
+    /*
     if (!is_ip_allowed(ip_hdr)) {
-        /* IP not in allowlist - drop packet to reduce processing load */
         return XDP_DROP;
     }
+    */
     
     /* Only process UDP inner packets */
     if (ip_hdr->protocol != IPPROTO_UDP) {
