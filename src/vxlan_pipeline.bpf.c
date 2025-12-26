@@ -449,40 +449,13 @@ static __always_inline int apply_nat(struct iphdr *iph, struct udphdr *udph, voi
     iph->check = (__u16)ip_csum;
     
     /* 
-     * UDP checksum recalculation:
-     * Using eBPF helper with verifier-safe fixed bounds checking
+     * UDP checksum: Set to 0 (no checksum computed)
+     * - Valid per RFC 768 for UDP
+     * - Kernel will calculate correct checksum when packet_injector sends via ens6
+     * - tx-checksum-ipv4 offloading handles this automatically
+     * - Eliminates BPF verifier complexity and prevents checksum-related drops
      */
     udph->check = 0;
-    
-    /* Get UDP length with explicit bounds */
-    __u16 udp_len = bpf_ntohs(udph->len);
-    
-    /* Very conservative bounds checking - use fixed maximum size */
-    if (udp_len >= 8 && udp_len <= 32) {
-        /* Check we have enough packet data for maximum possible UDP packet */
-        if ((void *)udph + 32 <= data_end) {
-            /* Create pseudo-header */
-            struct {
-                __be32 saddr;
-                __be32 daddr;
-                __u8 zero;
-                __u8 protocol;
-                __be16 len;
-            } __attribute__((packed)) pseudo = {
-                .saddr = iph->saddr,
-                .daddr = iph->daddr,
-                .zero = 0,
-                .protocol = IPPROTO_UDP,
-                .len = bpf_htons(udp_len)
-            };
-            
-            /* Calculate checksum with fixed aligned length to avoid pointer arithmetic */
-            __u16 aligned_len = 32;  /* Use fixed maximum size for verifier */
-            __s64 csum = bpf_csum_diff(0, 0, (__be32 *)&pseudo, sizeof(pseudo), 0);
-            csum = bpf_csum_diff(0, 0, (__be32 *)udph, aligned_len, csum);
-            udph->check = csum ? (__u16)csum : 0xFFFF;
-        }
-    }
     
     update_stat(STAT_NAT_APPLIED, 1);
     return 1;
