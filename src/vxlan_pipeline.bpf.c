@@ -708,45 +708,48 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     update_stat(STAT_FORWARDED, 1);
     
     /* Get interface and NAT target configurations */
-        __u32 if_key = 0;  /* Always use key 0 for single interface config */
-        struct interface_config *if_config = bpf_map_lookup_elem(&interface_map, &if_key);
-        
-        __u32 nat_key = 0;  /* Always use key 0 for single NAT target config */
-        struct nat_target_config *nat_config = bpf_map_lookup_elem(&nat_target_map, &nat_key);
-        
-        /* Validate that both configurations are available and valid */
-        if (!if_config || if_config->ifindex == 0) {
-            /* Interface configuration missing - cannot proceed with forwarding */
-            update_stat(STAT_ERRORS, 1);
-            return XDP_DROP;
-        }
-        
-        if (!nat_config || nat_config->ip_addr == 0) {
-            /* NAT target configuration missing - cannot proceed with forwarding */
-            update_stat(STAT_ERRORS, 1);
-            return XDP_DROP;
-        }
-        
-        /* Access Ethernet header for MAC address updates */
-        struct ethhdr *eth = (struct ethhdr *)data;
-        
-        /* Set source MAC to target interface's MAC (ens6's MAC) */
-        eth->h_source[0] = if_config->mac_addr[0];
-        eth->h_source[1] = if_config->mac_addr[1];
-        eth->h_source[2] = if_config->mac_addr[2];
-        eth->h_source[3] = if_config->mac_addr[3];
-        eth->h_source[4] = if_config->mac_addr[4];
-        eth->h_source[5] = if_config->mac_addr[5];
-        
-        /* Set destination MAC to NAT target's MAC (NAT_IP's MAC) */
-        eth->h_dest[0] = nat_config->mac_addr[0];
-        eth->h_dest[1] = nat_config->mac_addr[1];
-        eth->h_dest[2] = nat_config->mac_addr[2];
-        eth->h_dest[3] = nat_config->mac_addr[3];
-        eth->h_dest[4] = nat_config->mac_addr[4];
-        eth->h_dest[5] = nat_config->mac_addr[5];
+    __u32 if_key = 0;  /* Always use key 0 for single interface config */
+    struct interface_config *if_config = bpf_map_lookup_elem(&interface_map, &if_key);
     
-    update_stat(STAT_FORWARDED, 1);
+    __u32 nat_key = 0;  /* Always use key 0 for single NAT target config */
+    struct nat_target_config *nat_config = bpf_map_lookup_elem(&nat_target_map, &nat_key);
+    
+    /* Validate that both configurations are available and valid */
+    if (!if_config || if_config->ifindex == 0) {
+        /* Interface configuration missing - cannot proceed with forwarding */
+        update_stat(STAT_ERRORS, 1);
+        return XDP_DROP;
+    }
+    
+    if (!nat_config || nat_config->ip_addr == 0) {
+        /* NAT target configuration missing - cannot proceed with forwarding */
+        update_stat(STAT_ERRORS, 1);
+        return XDP_DROP;
+    }
+    
+    /* Access Ethernet header for MAC address updates with bounds check */
+    struct ethhdr *eth = (struct ethhdr *)data;
+    if ((void *)(eth + 1) > data_end) {
+        update_stat(STAT_ERRORS, 1);
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
+        return XDP_DROP;
+    }
+    
+    /* Set source MAC to target interface's MAC (ens6's MAC) */
+    eth->h_source[0] = if_config->mac_addr[0];
+    eth->h_source[1] = if_config->mac_addr[1];
+    eth->h_source[2] = if_config->mac_addr[2];
+    eth->h_source[3] = if_config->mac_addr[3];
+    eth->h_source[4] = if_config->mac_addr[4];
+    eth->h_source[5] = if_config->mac_addr[5];
+    
+    /* Set destination MAC to NAT target's MAC (NAT_IP's MAC) */
+    eth->h_dest[0] = nat_config->mac_addr[0];
+    eth->h_dest[1] = nat_config->mac_addr[1];
+    eth->h_dest[2] = nat_config->mac_addr[2];
+    eth->h_dest[3] = nat_config->mac_addr[3];
+    eth->h_dest[4] = nat_config->mac_addr[4];
+    eth->h_dest[5] = nat_config->mac_addr[5];
     
     /* Check if we should redirect to a specific interface */
     __u32 key = 0;
@@ -872,11 +875,10 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
             
             /* Ensure packet length is within bounds for BPF verifier */
             if (pkt_len > 1500) pkt_len = 1500;
-            event->len = pkt_len;
+            event->len = (__u16)pkt_len;  /* Explicit cast to match struct definition */
             
             /* Manual byte-by-byte copy with BPF verifier-friendly bounds checking */
-            for (int i = 0; i < 1500; i++) {
-                if (i >= pkt_len) break;
+            for (int i = 0; i < 1500 && i < pkt_len; i++) {
                 if ((char *)data + i >= (char *)data_end) break;
                 event->data[i] = *((char *)data + i);
             }
