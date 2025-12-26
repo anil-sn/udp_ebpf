@@ -710,6 +710,9 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
             return XDP_DROP;
         }
         
+        /* Access Ethernet header for MAC address updates */
+        struct ethhdr *eth = (struct ethhdr *)data;
+        
         /* Set source MAC to target interface's MAC (ens6's MAC) */
         eth->h_source[0] = if_config->mac_addr[0];
         eth->h_source[1] = if_config->mac_addr[1];
