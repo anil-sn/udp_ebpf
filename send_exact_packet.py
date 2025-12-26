@@ -51,7 +51,7 @@ def build_exact_packet():
     
     # UDP Header (8 bytes) - Will calculate proper checksum
     src_port = 19458         # Source Port
-    dst_port = 1035          # Port 1035 (TCP works, try UDP)
+    dst_port = 8081          # Original VXLAN pipeline target port (confirmed open)
     udp_length = 1341        # UDP Length  
     udp_checksum = 0x0000    # Will calculate proper checksum
     
