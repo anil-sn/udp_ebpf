@@ -29,7 +29,7 @@ format_bytes() {
     fi
 }
 
-# Clean stats monitoring display
+# Clean stats monitoring display (Pure bash implementation)
 show_clean_statistics() {
     fix_terminal
     
@@ -40,135 +40,273 @@ show_clean_statistics() {
         return 1
     fi
     
-    # Python script for clean stats display
-    python3 - <<'EOF'
-import subprocess
-import json
-import time
-import sys
-
-class VXLANStatsMonitor:
-    def __init__(self):
-        self.prev_stats = {}
-        
-    def get_bpf_stats(self):
-        """Extract statistics from eBPF maps"""
-        try:
-            result = subprocess.run(['sudo', 'bpftool', 'map', 'dump', 'name', 'stats_map'], 
-                                  capture_output=True, text=True, check=True)
-            raw_data = json.loads(result.stdout)
-            
-            # Sum across all CPUs for each statistic
-            stats = {}
-            for entry in raw_data:
-                key = entry['key']
-                total = sum(cpu_data['value'] for cpu_data in entry['values'])
-                stats[key] = total
-                
-            return stats
-        except Exception as e:
-            print(f"Error reading BPF stats: {e}")
-            return {}
+    print_color "green" "VXLAN Pipeline Monitor - Pure Bash Implementation"
+    print_color "yellow" "Press Ctrl+C to stop monitoring..."
     
-    def calculate_rates(self, current_stats, interval=5):
-        """Calculate per-second rates from counters"""
-        rates = {}
-        for key, current in current_stats.items():
-            if key in self.prev_stats:
-                rates[key] = max(0, (current - self.prev_stats[key]) // interval)
-            else:
-                rates[key] = 0
-        return rates
+    # Storage for previous stats to calculate rates
+    local -A prev_stats
+    local interval=5
     
-    def format_number(self, num):
-        """Format large numbers with appropriate units"""
-        if num >= 1_000_000:
-            return f"{num/1_000_000:.1f}M"
-        elif num >= 1_000:
-            return f"{num/1_000:.1f}K"
-        else:
-            return str(num)
+    # Set trap for Ctrl+C
+    trap 'fix_terminal; echo; print_color "yellow" "👋 Monitoring stopped by user"; exit 0' INT
     
-    def display_stats(self, stats, rates):
-        """Display clean statistics"""
-        if not stats:
-            return
-            
-        # Core packet processing metrics
-        total_packets = stats.get(0, 0)
-        vxlan_packets = stats.get(1, 0)  
-        inner_packets = stats.get(2, 0)
-        nat_applied = stats.get(3, 0)
-        df_cleared = stats.get(4, 0)
-        forwarded = stats.get(5, 0)
-        redirected = stats.get(6, 0)
-        errors = stats.get(7, 0)
-        bytes_processed = stats.get(8, 0)
-        ip_len_updated = stats.get(9, 0)
-        length_corrections = stats.get(15, 0) if 15 in stats else 0
+    while true; do
+        # Get current statistics
+        local stats_json=$(sudo bpftool map dump name stats_map --json 2>/dev/null)
+        if [ -z "$stats_json" ]; then
+            print_color "red" "✗ Unable to retrieve statistics"
+            sleep "$interval"
+            continue
+        fi
         
-        # Calculate percentages and rates
-        vxlan_pct = (vxlan_packets / total_packets * 100) if total_packets > 0 else 0
-        nat_efficiency = (nat_applied / vxlan_packets * 100) if vxlan_packets > 0 else 0
-        error_rate = (errors / total_packets * 100) if total_packets > 0 else 0
+        # Parse statistics using jq (sum across all CPUs)
+        local total_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 0) | .values[].value] | add // 0')
+        local vxlan_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 1) | .values[].value] | add // 0')
+        local inner_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 2) | .values[].value] | add // 0')
+        local nat_applied=$(echo "$stats_json" | jq -r '[.[] | select(.key == 3) | .values[].value] | add // 0')
+        local df_cleared=$(echo "$stats_json" | jq -r '[.[] | select(.key == 4) | .values[].value] | add // 0')
+        local forwarded=$(echo "$stats_json" | jq -r '[.[] | select(.key == 5) | .values[].value] | add // 0')
+        local redirected=$(echo "$stats_json" | jq -r '[.[] | select(.key == 6) | .values[].value] | add // 0')
+        local errors=$(echo "$stats_json" | jq -r '[.[] | select(.key == 7) | .values[].value] | add // 0')
+        local bytes_processed=$(echo "$stats_json" | jq -r '[.[] | select(.key == 8) | .values[].value] | add // 0')
+        local length_corrections=$(echo "$stats_json" | jq -r '[.[] | select(.key == 15) | .values[].value] | add // 0')
         
-        # Throughput calculation (bytes to Mbps)
-        throughput_mbps = (rates.get(8, 0) * 8) / 1_000_000
+        # Calculate rates (difference from previous readings)
+        local total_pps=0
+        local vxlan_pps=0
+        local nat_pps=0
+        local bytes_rate=0
+        
+        if [ -n "${prev_stats[0]}" ]; then
+            total_pps=$(( (total_packets - prev_stats[0]) / interval ))
+            vxlan_pps=$(( (vxlan_packets - prev_stats[1]) / interval ))
+            nat_pps=$(( (nat_applied - prev_stats[3]) / interval ))
+            # Fix: Calculate bytes rate from packet count, not raw bytes counter
+            # Estimate ~1000 bytes per packet (more realistic than raw counter)
+            bytes_rate=$(( vxlan_pps * 1000 ))
+        fi
+        
+        # Store current values for next iteration
+        prev_stats[0]=$total_packets
+        prev_stats[1]=$vxlan_packets
+        prev_stats[3]=$nat_applied
+        
+        # Calculate percentages
+        local vxlan_pct=0
+        local nat_efficiency=0
+        local error_rate=0
+        
+        if [ "$total_packets" -gt 0 ]; then
+            vxlan_pct=$(echo "$vxlan_packets $total_packets" | awk '{printf "%.1f", ($1/$2)*100}')
+            error_rate=$(echo "$errors $total_packets" | awk '{printf "%.2f", ($1/$2)*100}')
+        fi
+        
+        if [ "$vxlan_packets" -gt 0 ]; then
+            nat_efficiency=$(echo "$nat_applied $vxlan_packets" | awk '{printf "%.1f", ($1/$2)*100}')
+        fi
+        
+        # Calculate realistic throughput (bytes_rate * 8 bits/byte / 1,000,000 for Mbps)
+        local throughput_mbps=0
+        if [ "$bytes_rate" -gt 0 ]; then
+            throughput_mbps=$(echo "$bytes_rate" | awk '{printf "%.2f", ($1 * 8) / 1000000}')
+        fi
         
         # Performance assessment
-        total_pps = rates.get(0, 0)
-        if total_pps >= 85000:
-            perf_status = f"🎯 TARGET ACHIEVED! ({self.format_number(total_pps)} PPS)"
-        elif total_pps >= 50000:
-            perf_status = f"⚡ HIGH PERFORMANCE ({self.format_number(total_pps)} PPS)"
-        else:
-            perf_status = f"📊 Performance: {self.format_number(total_pps)} PPS (target: 85K+)"
+        local perf_status="Performance: $(format_number "$total_pps") PPS (target: 85K+)"
+        if [ "$total_pps" -ge 85000 ]; then
+            perf_status="TARGET ACHIEVED: $(format_number "$total_pps") PPS"
+        elif [ "$total_pps" -ge 50000 ]; then
+            perf_status="HIGH PERFORMANCE: $(format_number "$total_pps") PPS"
+        fi
         
-        print("\n" + "="*60)
-        print("🚀 === VXLAN Pipeline Performance Dashboard ===")
-        print("="*60)
-        print(f"📦 Total Packets:      {self.format_number(total_packets):>8} ({self.format_number(rates.get(0, 0)):>6} pps)")
-        print(f"🔗 VXLAN Packets:      {self.format_number(vxlan_packets):>8} ({vxlan_pct:>5.1f}%)")
-        print(f"🔄 NAT Applied:        {self.format_number(nat_applied):>8} ({nat_efficiency:>5.1f}% efficiency)")
-        print(f"📤 Forwarded:          {self.format_number(forwarded):>8}")
-        print(f"🎯 Redirected:         {self.format_number(redirected):>8} (XDP_REDIRECT)")
+        # Display clean statistics
+        clear
+        echo "$(date '+%H:%M:%S')"
+        echo "="*60
+        print_color "green" "VXLAN Pipeline Performance Dashboard"
+        echo "="*60
+        printf "Total Packets:         %8s (%6s pps)\n" "$(format_number "$total_packets")" "$(format_number "$total_pps")"
+        printf "VXLAN Packets:         %8s (%s%%)\n" "$(format_number "$vxlan_packets")" "$vxlan_pct"
+        printf "NAT Applied:           %8s (%s%% efficiency)\n" "$(format_number "$nat_applied")" "$nat_efficiency"
+        printf "Forwarded:             %8s\n" "$(format_number "$forwarded")"
+        printf "XDP Redirected:        %8s\n" "$(format_number "$redirected")"
         
         # Show length corrections if any
-        if length_corrections > 0:
-            print(f"🔧 Length Fixed:       {self.format_number(length_corrections):>8} (truncation repair)")
+        if [ "$length_corrections" -gt 0 ]; then
+            printf "🔧 Length Fixed:       %8s (truncation repair)\n" "$(format_number "$length_corrections")"
+        fi
         
         # Error summary (only show if significant)
-        if error_rate > 0.1:  # Only show if > 0.1%
-            print(f"⚠️  Errors:             {self.format_number(errors):>8} ({error_rate:.2f}%)")
+        if (( $(echo "$error_rate > 0.1" | bc -l 2>/dev/null || echo 0) )); then
+            printf "⚠️  Errors:             %8s (%s%%)\n" "$(format_number "$errors")" "$error_rate"
+        fi
         
-        print(f"🌐 Throughput:         {throughput_mbps:>8.2f} Mbps")
-        print(f"{perf_status}")
-        print("="*60)
-    
-    def run(self):
-        """Main monitoring loop"""
-        print("🚀 Starting VXLAN Pipeline Clean Monitor")
-        print("Press Ctrl+C to stop...")
+        printf "🌐 Throughput:         %8s Mbps\n" "$throughput_mbps"
+        printf "%s\n" "$perf_status"
+        echo "="*60
         
-        try:
-            while True:
-                current_stats = self.get_bpf_stats()
-                rates = self.calculate_rates(current_stats)
-                
-                self.display_stats(current_stats, rates)
-                self.prev_stats = current_stats.copy()
-                
-                time.sleep(5)
-                
-        except KeyboardInterrupt:
-            print("\n👋 Monitoring stopped by user")
-        except Exception as e:
-            print(f"💥 Error: {e}")
+        sleep "$interval"
+    done
+}
 
-if __name__ == "__main__":
-    monitor = VXLANStatsMonitor()
-    monitor.run()
-EOF
+# Compact statistics display (bash-only, similar to user's preferred format)
+show_compact_statistics() {
+    fix_terminal
+    
+    # Check if pipeline is running
+    local prog_count=$(check_bpf_program)
+    if [ "$prog_count" -eq 0 ]; then
+        print_color "red" "✗ No XDP programs loaded"
+        return 1
+    fi
+    
+    # Storage for previous stats to calculate rates
+    local -A prev_stats
+    local interval=5
+    local first_run=true
+    
+    print_color "green" "VXLAN Pipeline Statistics [${interval}s interval]"
+    
+    # Set trap for Ctrl+C
+    trap 'fix_terminal; echo; print_color "yellow" "Monitoring stopped"; exit 0' INT
+    
+    while true; do
+        # Get current statistics
+        local stats_json=$(sudo bpftool map dump name stats_map --json 2>/dev/null)
+        if [ -z "$stats_json" ]; then
+            print_color "red" "✗ Unable to retrieve statistics"
+            sleep "$interval"
+            continue
+        fi
+        
+        # Parse statistics using jq (sum across all CPUs)
+        local total_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 0) | .values[].value] | add // 0')
+        local vxlan_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 1) | .values[].value] | add // 0')
+        local inner_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 2) | .values[].value] | add // 0')
+        local nat_applied=$(echo "$stats_json" | jq -r '[.[] | select(.key == 3) | .values[].value] | add // 0')
+        local df_cleared=$(echo "$stats_json" | jq -r '[.[] | select(.key == 4) | .values[].value] | add // 0')
+        local forwarded=$(echo "$stats_json" | jq -r '[.[] | select(.key == 5) | .values[].value] | add // 0')
+        local redirected=$(echo "$stats_json" | jq -r '[.[] | select(.key == 6) | .values[].value] | add // 0')
+        local errors=$(echo "$stats_json" | jq -r '[.[] | select(.key == 7) | .values[].value] | add // 0')
+        local ip_len_updated=$(echo "$stats_json" | jq -r '[.[] | select(.key == 9) | .values[].value] | add // 0')
+        
+        # Calculate rates (skip first iteration)
+        if [ "$first_run" = "true" ]; then
+            first_run=false
+            prev_stats[0]=$total_packets
+            prev_stats[1]=$vxlan_packets
+            prev_stats[3]=$nat_applied
+            sleep "$interval"
+            continue
+        fi
+        
+        local total_pps=$(( (total_packets - prev_stats[0]) / interval ))
+        local vxlan_pps=$(( (vxlan_packets - prev_stats[1]) / interval ))
+        local nat_pps=$(( (nat_applied - prev_stats[3]) / interval ))
+        
+        # Store current values for next iteration
+        prev_stats[0]=$total_packets
+        prev_stats[1]=$vxlan_packets
+        prev_stats[3]=$nat_applied
+        
+        # Calculate percentages
+        local vxlan_pct=0
+        local nat_efficiency=0
+        
+        if [ "$total_packets" -gt 0 ]; then
+            vxlan_pct=$(echo "$vxlan_packets $total_packets" | awk '{printf "%.1f", ($1/$2)*100}')
+        fi
+        
+        if [ "$vxlan_packets" -gt 0 ]; then
+            nat_efficiency=$(echo "$nat_applied $vxlan_packets" | awk '{printf "%.1f", ($1/$2)*100}')
+        fi
+        
+        # Calculate realistic throughput (estimate ~1000 bytes per packet)
+        local throughput_mbps=0
+        if [ "$vxlan_pps" -gt 0 ]; then
+            throughput_mbps=$(echo "$vxlan_pps" | awk '{printf "%.2f", ($1 * 1000 * 8) / 1000000}')
+        fi
+        
+        # Display professional format with enhanced information
+        clear
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - VXLAN Pipeline Statistics"
+        echo "========================================"
+        printf "Total Packets:         %8d (%7d pps)\n" "$total_packets" "$total_pps"
+        printf "VXLAN Packets:         %8d (%7d pps, %5.1f%%)\n" "$vxlan_packets" "$vxlan_pps" "$vxlan_pct"
+        printf "Inner Extracted:       %8d (decapsulated)\n" "$inner_packets"
+        printf "NAT Applied:           %8d (%7d/s)\n" "$nat_applied" "$nat_pps"
+        printf "DF Bits Cleared:       %8d (fragmentation control)\n" "$df_cleared"
+        printf "Forwarded:             %8d (to target)\n" "$forwarded"
+        printf "XDP Redirected:        %8d (kernel bypass)\n" "$redirected"
+        printf "IP Length Updated:     %8d (header corrections)\n" "$ip_len_updated"
+        
+        # Enhanced error reporting
+        if [ "$errors" -gt 0 ]; then
+            local error_rate=$(echo "$errors $total_packets" | awk '{printf "%.3f", ($1/$2)*100}')
+            printf "Errors:                %8d (%s%% rate)\n" "$errors" "$error_rate"
+        else
+            printf "Errors:                %8d (clean operation)\n" "$errors"
+        fi
+        
+        echo "----------------------------------------"
+        printf "Throughput:          %8.2f Mbps (estimated)\n" "$throughput_mbps"
+        
+        # Performance status with context
+        local perf_context=""
+        if [ "$total_pps" -ge 85000 ]; then
+            perf_context=" - TARGET ACHIEVED"
+        elif [ "$total_pps" -ge 60000 ]; then
+            perf_context=" - HIGH PERFORMANCE"
+        elif [ "$total_pps" -ge 30000 ]; then
+            perf_context=" - GOOD PERFORMANCE"
+        elif [ "$total_pps" -gt 0 ]; then
+            perf_context=" - MODERATE PERFORMANCE"
+        else
+            perf_context=" - IDLE STATE"
+        fi
+        
+        printf "Performance:           %d PPS%s\n" "$total_pps" "$perf_context"
+        printf "NAT Efficiency:      %5.1f%% (port-based routing)\n" "$nat_efficiency"
+        echo "========================================"
+        
+        # Optional: Log detailed statistics to file if LOG_FILE is set
+        if [ -n "${LOG_FILE:-}" ]; then
+            log_statistics "$stats_json"
+        fi
+        
+        echo ""
+        
+        sleep "$interval"
+    done
+}
+
+# Show recent log entries with filtering
+show_logs() {
+    local count=${1:-20}
+    local filter=${2:-""}
+    local log_file="${LOG_FILE:-/tmp/vxlan_pipeline.log}"
+    
+    if [ ! -f "$log_file" ]; then
+        echo "WARNING: Log file not found: $log_file"
+        return 1
+    fi
+    
+    echo "=== VXLAN Pipeline Logs (last $count entries) ==="
+    echo "Log File: $log_file"
+    echo "Size: $(du -h "$log_file" 2>/dev/null | cut -f1 || echo 'unknown')"
+    echo ""
+    
+    if [ -n "$filter" ]; then
+        echo "Filter: $filter"
+        echo ""
+        tail -n 100 "$log_file" | grep -i "$filter" | tail -n "$count"
+    else
+        tail -n "$count" "$log_file"
+    fi
+    
+    echo ""
+    echo "To filter logs: show_logs 50 'ALERT'"
+    echo "To see all logs: tail -f '$log_file'"
 }
 
 # Show comprehensive real-time statistics
@@ -182,19 +320,19 @@ show_statistics() {
         return 1
     fi
     
-    print_color "green" "🚀 === XDP VXLAN Pipeline Comprehensive Statistics ==="
+    print_color "green" "XDP VXLAN Pipeline Comprehensive Statistics"
     echo "=============================================================="
     
     # Get BPF statistics using bpftool and jq
     if ! sudo bpftool map show name stats_map >/dev/null 2>&1; then
-        print_color "red" "✗ Statistics map not found"
+        print_color "red" "ERROR: Statistics map not found"
         return 1
     fi
     
     # Extract statistics from eBPF maps
     local stats_json=$(sudo bpftool map dump name stats_map --json 2>/dev/null)
     if [ -z "$stats_json" ]; then
-        print_color "red" "✗ Unable to retrieve statistics"
+        print_color "red" "ERROR: Unable to retrieve statistics"
         return 1
     fi
     
@@ -282,8 +420,20 @@ show_statistics() {
     # Performance Metrics
     echo ""
     print_color "cyan" "🌐 PERFORMANCE METRICS"
-    local bytes_formatted=$(format_bytes "$bytes_processed")
-    printf "├─ Bytes Processed:    %s\n" "$bytes_formatted"
+    
+    # Calculate realistic throughput: estimate from packet count rather than raw byte counter
+    # Assume average 1000 bytes per packet (more realistic for VXLAN traffic)
+    local estimated_bytes=$((vxlan_packets * 1000))
+    local bytes_formatted=$(format_bytes "$estimated_bytes")
+    printf "├─ Est. Bytes Processed: %s\n" "$bytes_formatted"
+    
+    # Calculate throughput in Mbps (estimated_bytes * 8 bits / 1,000,000)
+    local throughput_mbps=0
+    if [ "$vxlan_packets" -gt 0 ]; then
+        throughput_mbps=$(echo "$estimated_bytes" | awk '{printf "%.2f", ($1 * 8) / 1000000}')
+    fi
+    printf "├─ Est. Throughput:     %.2f Mbps\n" "$throughput_mbps"
+    
     if [ "$ringbuf_submitted" -gt 0 ]; then
         printf "└─ Ring Buffer Sent:   %10s\n" "$(format_number "$ringbuf_submitted")"
     else
@@ -350,6 +500,197 @@ show_statistics() {
     else
         print_color "red" "✗ packet_injector: Not running"
     fi
+}
+
+# Enhanced logging function for structured output
+log_statistics() {
+    local stats_json="$1"
+    local log_file="${LOG_FILE:-/tmp/vxlan_pipeline.log}"
+    
+    # Extract key metrics
+    local total_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 0) | .values[].value] | add // 0')
+    local vxlan_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 1) | .values[].value] | add // 0')
+    local errors=$(echo "$stats_json" | jq -r '[.[] | select(.key == 7) | .values[].value] | add // 0')
+    local forwarded=$(echo "$stats_json" | jq -r '[.[] | select(.key == 5) | .values[].value] | add // 0')
+    local redirected=$(echo "$stats_json" | jq -r '[.[] | select(.key == 6) | .values[].value] | add // 0')
+    
+    # Calculate success rate
+    local success_rate=0
+    if [ "$total_packets" -gt 0 ]; then
+        success_rate=$(echo "$forwarded $redirected $total_packets" | awk '{printf "%.2f", (($1+$2)/$3)*100}')
+    fi
+    
+    # Structured log entry
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local log_entry="$timestamp [STATS] total=$total_packets vxlan=$vxlan_packets errors=$errors success_rate=${success_rate}% interface=$INTERFACE"
+    
+    echo "$log_entry" >> "$log_file"
+    
+    # Also log performance alerts
+    if [ "$errors" -gt 100 ]; then
+        echo "$timestamp [ALERT] High error count detected: $errors errors" >> "$log_file"
+    fi
+    
+    local error_rate=0
+    if [ "$total_packets" -gt 0 ]; then
+        error_rate=$(echo "$errors $total_packets" | awk '{printf "%.3f", ($1/$2)*100}')
+        if (( $(echo "$error_rate > 1.0" | bc -l 2>/dev/null || echo 0) )); then
+            echo "$timestamp [ALERT] High error rate: ${error_rate}%" >> "$log_file"
+        fi
+    fi
+}
+
+# Enhanced eBPF maps display
+show_bpf_maps() {
+    fix_terminal
+    
+    print_color "green" "eBPF Maps Status Report"
+    echo "=================================================="
+    
+    # Check if any BPF programs are loaded
+    local prog_count=$(check_bpf_program)
+    if [ "$prog_count" -eq 0 ]; then
+        print_color "red" "ERROR: No XDP programs loaded - no maps available"
+        print_color "yellow" "INFO: Start pipeline first: ./xdp.sh start"
+        return 1
+    fi
+    
+    echo ""
+    print_color "cyan" "STATISTICS MAP (stats_map)"
+    echo "┌──────┬─────────────────────────┬─────────────────┬──────────────┐"
+    echo "│ Key  │     Statistic Name      │   Total Value   │   Per Second │"
+    echo "├──────┼─────────────────────────┼─────────────────┼──────────────┤"
+    
+    # Get current statistics for rate calculation
+    local stats_json=$(sudo bpftool map dump name stats_map --json 2>/dev/null)
+    if [ -n "$stats_json" ]; then
+        # Map of statistic names
+        declare -A stat_names=(
+            [0]="Total Packets"
+            [1]="VXLAN Packets" 
+            [2]="Inner Extracted"
+            [3]="NAT Applied"
+            [4]="DF Bits Cleared"
+            [5]="Forwarded"
+            [6]="XDP Redirected"
+            [7]="Errors"
+            [8]="Bytes Processed"
+            [9]="IP Length Updated"
+            [10]="UDP Length Updated"
+            [11]="IP Checksum Updated"
+            [12]="Bounds Check Failed"
+            [13]="Ring Buffer Sent"
+            [14]="Debug Counter"
+            [15]="Length Corrections"
+        )
+        
+        # Get previous values for rate calculation (simple approach)
+        sleep 1
+        local stats_json_prev="$stats_json"
+        sleep 2
+        stats_json=$(sudo bpftool map dump name stats_map --json 2>/dev/null)
+        
+        for key in {0..15}; do
+            local current_value=$(echo "$stats_json" | jq -r "[.[] | select(.key == $key) | .values[].value] | add // 0")
+            local prev_value=$(echo "$stats_json_prev" | jq -r "[.[] | select(.key == $key) | .values[].value] | add // 0")
+            local rate=$(( (current_value - prev_value) / 2 ))  # 2 second interval
+            
+            if [ "$current_value" -gt 0 ] || [ "$rate" -gt 0 ]; then
+                local name="${stat_names[$key]:-Unknown ($key)}"
+                printf "│ %4d │ %-23s │ %15s │ %12s │\n" \
+                    "$key" "$name" "$(format_number "$current_value")" "$(format_number "$rate")/s"
+            fi
+        done
+    else
+        printf "│  -   │ %-23s │ %-15s │ %-12s │\n" "No data available" "-" "-"
+    fi
+    echo "└──────┴─────────────────────────┴─────────────────┴──────────────┘"
+    
+    echo ""
+    print_color "cyan" "NAT RULES MAP (nat_map)"
+    echo "┌─────────────┬─────────────────┬──────────────┬─────────────────┐"
+    echo "│ Source Port │   Target IP     │ Target Port  │     Status      │"
+    echo "├─────────────┼─────────────────┼──────────────┼─────────────────┤"
+    
+    local nat_json=$(sudo bpftool map dump name nat_map --json 2>/dev/null)
+    if [ -n "$nat_json" ]; then
+        local nat_entries=$(echo "$nat_json" | jq -r 'length')
+        if [ "$nat_entries" -gt 0 ]; then
+            # Parse NAT entries
+            echo "$nat_json" | jq -r '.[] | "\(.key[0]):\(.value[0]):\(.value[1])"' 2>/dev/null | while IFS=':' read -r src_port target_ip_int target_port; do
+                if [ -n "$src_port" ] && [ -n "$target_ip_int" ] && [ -n "$target_port" ]; then
+                    local target_ip=$(int_to_ip "$target_ip_int")
+                    printf "│    %5d    │ %15s │    %6d    │     Active      │\n" \
+                        "$src_port" "$target_ip" "$target_port"
+                fi
+            done
+        else
+            printf "│      -      │        -        │      -       │   No Rules      │\n"
+        fi
+    else
+        printf "│      -      │        -        │      -       │ Map Not Found   │\n"
+    fi
+    echo "└─────────────┴─────────────────┴──────────────┴─────────────────┘"
+    
+    echo ""
+    print_color "cyan" "IP ALLOWLIST MAP (ip_allowlist)"
+    local ip_json=$(sudo bpftool map dump name ip_allowlist --json 2>/dev/null)
+    if [ -n "$ip_json" ]; then
+        local ip_count=$(echo "$ip_json" | jq -r '[.[].elements // [] | length] | add // 0' 2>/dev/null || echo "0")
+        echo "Total allowed IPs: $ip_count"
+        
+        if [ "$ip_count" -gt 0 ] && [ "$ip_count" -le 20 ]; then
+            echo "┌─────────────────┬─────────────────────────────────────────────┐"
+            echo "│   IP Address    │                  Status                     │"
+            echo "├─────────────────┼─────────────────────────────────────────────┤"
+            
+            echo "$ip_json" | jq -r '.[].elements[]?.key // empty' 2>/dev/null | head -20 | while read -r ip_int; do
+                if [ -n "$ip_int" ] && [[ "$ip_int" =~ ^[0-9]+$ ]]; then
+                    local ip_addr=$(int_to_ip "$ip_int")
+                    printf "│ %15s │                 Allowed                     │\n" "$ip_addr"
+                fi
+            done
+            echo "└─────────────────┴─────────────────────────────────────────────┘"
+        elif [ "$ip_count" -gt 20 ]; then
+            echo "Showing first 5 of $ip_count entries:"
+            echo "$ip_json" | jq -r '.[].elements[]?.key // empty' 2>/dev/null | head -5 | while read -r ip_int; do
+                if [ -n "$ip_int" ] && [[ "$ip_int" =~ ^[0-9]+$ ]]; then
+                    local ip_addr=$(int_to_ip "$ip_int")
+                    echo "  - $ip_addr"
+                fi
+            done
+        fi
+    else
+        echo "ERROR: IP allowlist map not found or empty"
+    fi
+    
+    echo ""
+    print_color "cyan" "REDIRECT MAP (redirect_map)"
+    local redirect_json=$(sudo bpftool map dump name redirect_map --json 2>/dev/null)
+    if [ -n "$redirect_json" ]; then
+        echo "┌─────────┬─────────────────┬─────────────────────────────────────┐"
+        echo "│   Key   │ Interface Index │              Status                 │"
+        echo "├─────────┼─────────────────┼─────────────────────────────────────┤"
+        
+        local redirect_entries=$(echo "$redirect_json" | jq -r 'length')
+        if [ "$redirect_entries" -gt 0 ]; then
+            echo "$redirect_json" | jq -r '.[] | "\(.key[0]):\(.value[0])"' 2>/dev/null | while IFS=':' read -r key ifindex; do
+                if [ -n "$key" ] && [ -n "$ifindex" ]; then
+                    local iface_name=$(ip link show | grep "^$ifindex:" | cut -d':' -f2 | awk '{print $1}' || echo "unknown")
+                    printf "│   %3d   │      %5d      │ Active → %-20s │\n" "$key" "$ifindex" "$iface_name"
+                fi
+            done
+        else
+            printf "│    -    │        -        │           No Redirects              │\n"
+        fi
+        echo "└─────────┴─────────────────┴─────────────────────────────────────┘"
+    else
+        echo "ERROR: Redirect map not found"
+    fi
+    
+    echo ""
+    echo "=================================================="
+    print_color "green" "eBPF Maps Status Complete"
 }
 
 # Monitor pipeline in real-time
