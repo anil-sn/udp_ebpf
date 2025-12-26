@@ -1245,16 +1245,27 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
      * This is CRITICAL for proper routing and processing by downstream systems
      */
     old_len = bpf_ntohs(ip_hdr->tot_len);  /* Store for change detection */
-    ip_hdr->tot_len = bpf_htons((__u16)temp_len);  /* Set correct length */
-    new_len = bpf_ntohs(ip_hdr->tot_len);  /* Verify the update */
     
-    /* Always count length updates since we're modifying after decapsulation */
-    update_stat(STAT_IP_LEN_UPDATED, 1);
+    /* Check if the existing IP length is reasonable for this packet */
+    __u32 max_reasonable_ip_len = packet_len - ETH_HLEN + 100;  /* Allow some tolerance */
+    __u32 min_reasonable_ip_len = packet_len - ETH_HLEN - 100;  /* Allow some tolerance */
     
-    /* Debug: Track if the length actually changed */
-    if (old_len != new_len) {
-        /* Length was different - this is expected after VXLAN decapsulation */
-        update_stat(STAT_PACKET_SIZE_DEBUG, (old_len << 16) | new_len);
+    /* Only update if the current length seems wrong */
+    if (old_len < min_reasonable_ip_len || old_len > max_reasonable_ip_len) {
+        ip_hdr->tot_len = bpf_htons((__u16)temp_len);  /* Set correct length */
+        new_len = bpf_ntohs(ip_hdr->tot_len);  /* Verify the update */
+        
+        /* Always count length updates since we're modifying after decapsulation */
+        update_stat(STAT_IP_LEN_UPDATED, 1);
+        
+        /* Debug: Track if the length actually changed */
+        if (old_len != new_len) {
+            /* Length was different - this is expected after VXLAN decapsulation */
+            update_stat(STAT_PACKET_SIZE_DEBUG, (old_len << 16) | new_len);
+        }
+    } else {
+        /* IP length seems reasonable, leave it alone */
+        new_len = old_len;
     }
     
     /* 
