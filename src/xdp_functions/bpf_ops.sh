@@ -160,22 +160,22 @@ get_statistics() {
     if command -v jq >/dev/null 2>&1; then
         case "$stat_key" in
             "total"|"0")
-                echo "$stats_data" | jq -r 'if (type == "array" and length > 0 and .[0].elements != null) then ([.[0].elements[] | select(.key == 0) | .values[] | .value] | add // 0) else 0 end' 2>/dev/null || echo "0"
+                echo "$stats_data" | jq -r '.[0].formatted.values | map(.value) | add // 0' 2>/dev/null || echo "0"
                 ;;
             "processed"|"1")
-                echo "$stats_data" | jq -r 'if (type == "array" and length > 0 and .[0].elements != null) then ([.[0].elements[] | select(.key == 1) | .values[] | .value] | add // 0) else 0 end' 2>/dev/null || echo "0"
+                echo "$stats_data" | jq -r '.[1].formatted.values | map(.value) | add // 0' 2>/dev/null || echo "0"
                 ;;
             "dropped"|"4")
-                echo "$stats_data" | jq -r 'if (type == "array" and length > 0 and .[0].elements != null) then ([.[0].elements[] | select(.key == 4) | .values[] | .value] | add // 0) else 0 end' 2>/dev/null || echo "0"
+                echo "$stats_data" | jq -r '.[4].formatted.values | map(.value) | add // 0' 2>/dev/null || echo "0"
                 ;;
             "vxlan"|"5")
-                echo "$stats_data" | jq -r 'if (type == "array" and length > 0 and .[0].elements != null) then ([.[0].elements[] | select(.key == 5) | .values[] | .value] | add // 0) else 0 end' 2>/dev/null || echo "0"
+                echo "$stats_data" | jq -r '.[5].formatted.values | map(.value) | add // 0' 2>/dev/null || echo "0"
                 ;;
             "nat"|"6")
-                echo "$stats_data" | jq -r 'if (type == "array" and length > 0 and .[0].elements != null) then ([.[0].elements[] | select(.key == 6) | .values[] | .value] | add // 0) else 0 end' 2>/dev/null || echo "0"
+                echo "$stats_data" | jq -r '.[6].formatted.values | map(.value) | add // 0' 2>/dev/null || echo "0"
                 ;;
             "bytes"|"8")
-                echo "$stats_data" | jq -r 'if (type == "array" and length > 0 and .[0].elements != null) then ([.[0].elements[] | select(.key == 8) | .values[] | .value] | add // 0) else 0 end' 2>/dev/null || echo "0"
+                echo "$stats_data" | jq -r '.[8].formatted.values | map(.value) | add // 0' 2>/dev/null || echo "0"
                 ;;
             "all")
                 echo "$stats_data"
