@@ -409,9 +409,19 @@ static __always_inline __u16 udp_checksum(struct iphdr *iph, struct udphdr *udph
      * Process payload in 16-bit chunks for complete checksum validation
      */
     __u8 *payload = (__u8 *)((void *)udph + sizeof(struct udphdr));
+    
+    /* Calculate payload length with bounds checking for BPF verifier */
+    if (udp_len < sizeof(struct udphdr)) {
+        return bpf_htons(0xFFFF); /* Invalid UDP length */
+    }
+    
     int payload_len = udp_len - sizeof(struct udphdr);
     
-    /* Bounds check for payload */
+    /* Ensure payload_len is within reasonable bounds for verifier */
+    if (payload_len < 0) payload_len = 0;
+    if (payload_len > 1500) payload_len = 1500; /* Maximum reasonable payload */
+    
+    /* Bounds check for payload end */
     if ((void *)payload + payload_len > data_end) {
         payload_len = (char *)data_end - (char *)payload;
         if (payload_len < 0) payload_len = 0;
