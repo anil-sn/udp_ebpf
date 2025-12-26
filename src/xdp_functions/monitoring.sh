@@ -247,44 +247,68 @@ show_detailed_info() {
     echo ""
     print_color "yellow" "=== NAT CONFIGURATION ==="
     
-    local nat_rules=$(get_nat_rules 2>/dev/null)
-    local nat_count=0
-    
-    if [ -n "$nat_rules" ] && [ "$nat_rules" != "" ]; then
-        nat_count=$(echo "$nat_rules" | grep -c "->" 2>/dev/null || echo "0")
+    # First check if nat_map exists and has entries
+    local nat_map_exists=$(sudo bpftool map show name nat_map 2>/dev/null)
+    if [ -z "$nat_map_exists" ]; then
+        echo "NAT map not found"
+        return
     fi
     
-    if [ "$nat_count" -gt 0 ]; then
-        echo "Active NAT Rules: $nat_count"
-        echo ""
-        echo "┌─────────────┬─────────────────┬──────────────┬────────────────────┐"
-        echo "│ Source Port │   Target IP     │ Target Port  │      Status        │"
-        echo "├─────────────┼─────────────────┼──────────────┼────────────────────┤"
+    local nat_entries=$(count_bpf_map_entries "nat_map")
+    echo "NAT map entries: $nat_entries"
+    
+    if [ "$nat_entries" -gt 0 ]; then
+        # Try to get formatted rules
+        local nat_rules=$(get_nat_rules 2>/dev/null)
+        local nat_count=0
         
-        echo "$nat_rules" | while IFS= read -r rule; do
-            if [[ "$rule" =~ ([0-9]+)\ -\>\ ([0-9.]+):([0-9]+) ]]; then
-                local src_port="${BASH_REMATCH[1]}"
-                local target_ip="${BASH_REMATCH[2]}"
-                local target_port="${BASH_REMATCH[3]}"
-                printf "│    %5d    │ %15s │    %6d    │       Active       │\n" \
-                    "$src_port" "$target_ip" "$target_port"
-            fi
-        done
-        echo "└─────────────┴─────────────────┴──────────────┴────────────────────┘"
-    else
-        # Try to get NAT info from BPF map directly
-        local nat_map_data=$(dump_bpf_map "nat_map" "json" 2>/dev/null)
-        if [ -n "$nat_map_data" ] && command -v jq >/dev/null 2>&1; then
-            local nat_entries=$(echo "$nat_map_data" | jq -r 'if (type == "array") then [.[] | select(.elements != null and (.elements | length) > 0) | .elements[]] else [] end | length' 2>/dev/null)
-            if [ "$nat_entries" -gt 0 ]; then
-                echo "NAT rules detected in BPF map: $nat_entries entries"
-                echo "(Use './xdp.sh stats' for detailed NAT information)"
-            else
-                echo "No NAT rules configured"
-            fi
-        else
-            echo "No NAT rules configured"
+        if [ -n "$nat_rules" ] && [ "$nat_rules" != "" ]; then
+            nat_count=$(echo "$nat_rules" | grep -c "->")
         fi
+        
+        if [ "$nat_count" -gt 0 ]; then
+            echo "Active NAT Rules: $nat_count"
+            echo ""
+            echo "┌─────────────┬─────────────────┬──────────────┬────────────────────┐"
+            echo "│ Source Port │   Target IP     │ Target Port  │      Status        │"
+            echo "├─────────────┼─────────────────┼──────────────┼────────────────────┤"
+            
+            echo "$nat_rules" | while IFS= read -r rule; do
+                if [[ "$rule" =~ ([0-9]+)\ -\>\ ([0-9.]+):([0-9]+) ]]; then
+                    local src_port="${BASH_REMATCH[1]}"
+                    local target_ip="${BASH_REMATCH[2]}"
+                    local target_port="${BASH_REMATCH[3]}"
+                    printf "│    %5d    │ %15s │    %6d    │       Active       │\n" \
+                        "$src_port" "$target_ip" "$target_port"
+                fi
+            done
+            echo "└─────────────┴─────────────────┴──────────────┴────────────────────┘"
+        else
+            # Debug: Show raw NAT map content for troubleshooting
+            echo "NAT rules parsing failed. Debug information:"
+            echo ""
+            echo "Raw NAT map dump (first few lines):"
+            local raw_nat=$(sudo bpftool map dump name nat_map 2>/dev/null | head -10)
+            if [ -n "$raw_nat" ]; then
+                echo "$raw_nat"
+            else
+                echo "Failed to dump NAT map"
+            fi
+            
+            echo ""
+            echo "JSON NAT map dump (first 500 chars):"
+            local json_nat=$(dump_bpf_map "nat_map" "json" 2>/dev/null)
+            if [ -n "$json_nat" ]; then
+                echo "$json_nat" | cut -c1-500
+                if [ ${#json_nat} -gt 500 ]; then
+                    echo "... (truncated)"
+                fi
+            else
+                echo "Failed to get JSON dump"
+            fi
+        fi
+    else
+        echo "No NAT rules configured (empty map)"
     fi
     
     # IP Allowlist Table
