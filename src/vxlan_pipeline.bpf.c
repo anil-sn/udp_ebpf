@@ -401,10 +401,15 @@ static __always_inline int init_pipeline_ctx(struct xdp_md *ctx, struct pipeline
 }
 
 static __always_inline int call_next_stage(struct xdp_md *ctx, __u32 next_stage) {
+    /* Validate stage number to prevent out-of-bounds access */
+    if (next_stage >= STAGE_MAX) {
+        return XDP_ABORTED;
+    }
+    
     /* Tail call to next stage */
     bpf_tail_call(ctx, &pipeline_programs, next_stage);
     
-    /* If tail call fails, return error */
+    /* If tail call fails, return error - this should never happen in normal operation */
     return XDP_ABORTED;
 }
 
@@ -1187,7 +1192,21 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
      * - packet_len = 2804
      * - temp_len = 2804 - 14 = 2790 (correct IP total length)
      */
+    
+    /* Prevent integer underflow in length calculation */
+    if (packet_len <= ETH_HLEN) {
+        update_stat(STAT_ERRORS, 1);
+        return -1;  /* Packet too small to contain IP data */
+    }
+    
     temp_len = packet_len - ETH_HLEN;  /* Calculate IP packet length */
+    
+    /* Additional safety check for 16-bit field overflow */
+    if (temp_len > 65535) {
+        /* IP tot_len is 16-bit field, cannot exceed 65535 */
+        update_stat(STAT_ERRORS, 1);
+        return -1;  /* Packet too large for IP header field */
+    }
     
     /* 
      * COMPREHENSIVE LENGTH VALIDATION (SECURITY + FUNCTIONALITY)
@@ -1229,9 +1248,21 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
         
         /* Validate UDP header is accessible */
         if ((void *)(udp_hdr + 1) <= data_end) {
+            /* Prevent underflow in UDP length calculation */
+            if (temp_len <= ip_hdr_len) {
+                update_stat(STAT_ERRORS, 1);
+                return -1;  /* Invalid: IP payload too small for UDP */
+            }
+            
             __u32 udp_len = temp_len - ip_hdr_len;  /* Calculate UDP payload + header */
             __u32 remaining_bytes = (char *)data_end - (char *)udp_hdr;
             __u32 max_udp_len = MAX_PACKET_SIZE - ETH_HLEN - ip_hdr_len;
+            
+            /* Additional safety: UDP length cannot exceed 16-bit field */
+            if (udp_len > 65535) {
+                update_stat(STAT_ERRORS, 1);
+                return -1;  /* UDP length exceeds field capacity */
+            }
             
             /* 
              * UDP LENGTH VALIDATION
@@ -1337,15 +1368,18 @@ static __always_inline int forward_packet(void *data, void *data_end,
     
     /* Use the tracked packet length for ring buffer copy - support large packets */
     temp_len = packet_len;
+    
+    /* Verifier-friendly bounds checking with compile-time constants */
     if (temp_len > PACKET_DATA_MAX_SIZE) {
         /* Truncate to ring buffer capacity to prevent buffer overflow */
         temp_len = PACKET_DATA_MAX_SIZE;
         update_stat(STAT_ERRORS, 1);  /* Track truncation events */
     }
     
-    /* Ensure temp_len is non-negative for eBPF verifier */
-    if ((__s32)temp_len < 0) {
-        temp_len = 0;
+    /* Ensure temp_len is within valid range for ring buffer */
+    if (temp_len == 0 || temp_len > PACKET_DATA_MAX_SIZE) {
+        update_stat(STAT_ERRORS, 1);
+        return XDP_DROP;
     }
     
     /* Reserve space in ring buffer */
@@ -1354,9 +1388,31 @@ static __always_inline int forward_packet(void *data, void *data_end,
         event->ifindex = *target_ifindex;
         event->len = (__u16)temp_len;
         
-        /* Single atomic copy with guaranteed bounds */
-        if (temp_len > 0 && (char *)data + temp_len <= (char *)data_end) {
-            bpf_probe_read_kernel(event->data, temp_len, data);
+        /* Enhanced bounds checking with explicit verifier validation */
+        if (temp_len > 0) {
+            /* Ensure temp_len doesn't exceed array bounds */
+            if (temp_len > PACKET_DATA_MAX_SIZE) {
+                temp_len = PACKET_DATA_MAX_SIZE;
+            }
+            
+            /* Verify source data is accessible */
+            if ((char *)data + temp_len <= (char *)data_end) {
+                /* Use loop unrolling for better verifier analysis */
+                __u32 copy_len = temp_len;
+                if (copy_len > PACKET_DATA_MAX_SIZE) {
+                    copy_len = PACKET_DATA_MAX_SIZE;
+                }
+                
+                /* Bounded copy with explicit length validation */
+                long ret = bpf_probe_read_kernel(event->data, copy_len & (PACKET_DATA_MAX_SIZE - 1), data);
+                if (ret < 0) {
+                    event->len = 0;  /* Mark as failed copy */
+                    update_stat(STAT_ERRORS, 1);
+                }
+            } else {
+                event->len = 0;  /* Mark as failed - insufficient data */
+                update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
+            }
         }
         
         bpf_ringbuf_submit(event, BPF_SUBMIT_FLAGS_NONE);
@@ -1449,7 +1505,14 @@ int vxlan_processor(struct xdp_md *ctx)
     
     /* Get pipeline context */
     pctx = get_pipeline_ctx();
-    if (!pctx || pctx->stage != STAGE_CLASSIFIER) {
+    if (!pctx) {
+        update_stat(STAT_ERRORS, 1);
+        return XDP_ABORTED;
+    }
+    
+    /* Validate we're coming from the correct previous stage */
+    if (pctx->stage != STAGE_CLASSIFIER) {
+        /* Context might be stale or from different packet, reset and abort */
         update_stat(STAT_ERRORS, 1);
         return XDP_ABORTED;
     }
@@ -1488,22 +1551,29 @@ int vxlan_processor(struct xdp_md *ctx)
         return result;
     }
     
-    /* Store VXLAN metadata */
+    /* Store VXLAN metadata with bounds checking */
     struct vxlanhdr *vxlan_hdr = (struct vxlanhdr *)(udp_hdr + 1);
+    if ((void *)(vxlan_hdr + 1) > data_end) {
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
+        return XDP_DROP;
+    }
+    
     pctx->vni = (vxlan_hdr->vni[0] << 16) | (vxlan_hdr->vni[1] << 8) | vxlan_hdr->vni[2];
     
-    /* Check IP allowlist if configured */
-    if (is_ip_allowed(inner_ip)) {
+    /* Check IP allowlist if configured and inner_ip is valid */
+    if (inner_ip && is_ip_allowed(inner_ip)) {
         pctx->flags |= PIPELINE_FLAG_IP_ALLOWED;
     }
     
     /* Check if NAT is required */
-    struct nat_key nat_lookup_key = { .src_port = inner_udp->dest };
-    struct nat_entry *nat_entry = bpf_map_lookup_elem(&nat_map, &nat_lookup_key);
-    if (nat_entry) {
-        pctx->flags |= PIPELINE_FLAG_NAT_REQUIRED;
-        pctx->nat_target_ip = nat_entry->target_ip;
-        pctx->nat_target_port = nat_entry->target_port;
+    if (inner_udp) {
+        struct nat_key nat_lookup_key = { .src_port = inner_udp->dest };
+        struct nat_entry *nat_entry = bpf_map_lookup_elem(&nat_map, &nat_lookup_key);
+        if (nat_entry) {
+            pctx->flags |= PIPELINE_FLAG_NAT_REQUIRED;
+            pctx->nat_target_ip = nat_entry->target_ip;
+            pctx->nat_target_port = nat_entry->target_port;
+        }
     }
     
     /* Perform VXLAN decapsulation */
@@ -1537,7 +1607,13 @@ int nat_engine(struct xdp_md *ctx)
     
     /* Get pipeline context */
     pctx = get_pipeline_ctx();
-    if (!pctx || pctx->stage != STAGE_VXLAN_PROCESSOR) {
+    if (!pctx) {
+        update_stat(STAT_ERRORS, 1);
+        return XDP_ABORTED;
+    }
+    
+    /* Validate we're coming from the correct previous stage */
+    if (pctx->stage != STAGE_VXLAN_PROCESSOR) {
         update_stat(STAT_ERRORS, 1);
         return XDP_ABORTED;
     }
@@ -1620,7 +1696,13 @@ int forwarding_stage(struct xdp_md *ctx)
     
     /* Get pipeline context */
     pctx = get_pipeline_ctx();
-    if (!pctx || pctx->stage != STAGE_NAT_ENGINE) {
+    if (!pctx) {
+        update_stat(STAT_ERRORS, 1);
+        return XDP_ABORTED;
+    }
+    
+    /* Validate we're coming from the correct previous stage */
+    if (pctx->stage != STAGE_NAT_ENGINE) {
         update_stat(STAT_ERRORS, 1);
         return XDP_ABORTED;
     }
@@ -1653,7 +1735,7 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     /* Start the pipeline at the classifier stage */
     bpf_tail_call(ctx, &pipeline_programs, STAGE_CLASSIFIER);
     
-    /* If tail call fails, fall back to basic processing */
+    /* If tail call fails, provide minimal fallback processing */
     void *data_end = (void *)(long)ctx->data_end;
     void *data = (void *)(long)ctx->data;
     
@@ -1664,26 +1746,9 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     }
     
     update_stat(STAT_TOTAL_PACKETS, 1);
+    update_stat(STAT_ERRORS, 1);  /* Count tail call failure as error */
     
-    /* Check if this looks like VXLAN */
-    struct ethhdr *eth_hdr = (struct ethhdr *)data;
-    struct iphdr *ip_hdr = (struct iphdr *)(eth_hdr + 1);
-    
-    if ((void *)(ip_hdr + 1) > data_end) {
-        return XDP_PASS;  /* Pass non-IP traffic */
-    }
-    
-    if (ip_hdr->protocol == IPPROTO_UDP) {
-        struct udphdr *udp_hdr = (struct udphdr *)((char *)ip_hdr + (ip_hdr->ihl * 4));
-        if ((void *)(udp_hdr + 1) <= data_end && 
-            bpf_ntohs(udp_hdr->dest) == VXLAN_UDP_PORT) {
-            /* This is VXLAN but tail call failed */
-            update_stat(STAT_ERRORS, 1);
-            return XDP_ABORTED;
-        }
-    }
-    
-    /* Non-VXLAN traffic passes through */
+    /* If tail call failed, pass all traffic to avoid drops */
     return XDP_PASS;
 }
 
