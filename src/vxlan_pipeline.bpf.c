@@ -444,18 +444,27 @@ static __always_inline int apply_nat(struct iphdr *iph, struct udphdr *udph, voi
     udph->dest = bpf_htons(nat->target_port);  /* e.g., 8081 from configuration */
     
     /* 
-     * Set IP checksum to 0 - let kernel calculate correct checksum
-     * - tx-checksum-ipv4 offloading handles this automatically
-     * - Eliminates BPF verifier complexity and incorrect checksum calculations
+     * Calculate IP checksum after NAT modification
+     * Use simple approach that works with AF_PACKET raw sockets
      */
     iph->check = 0;
+    __u32 sum = 0;
+    __u16 *ptr = (__u16 *)iph;
+    
+    /* Calculate checksum over IP header (20 bytes = 10 words) */
+    for (int i = 0; i < 10; i++) {
+        sum += ptr[i];
+    }
+    while (sum >> 16) {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+    iph->check = ~sum;
     
     /* 
      * UDP checksum: Set to 0 (no checksum computed)
      * - Valid per RFC 768 for UDP
-     * - Kernel will calculate correct checksum when packet_injector sends via ens6
-     * - tx-checksum-ipv4 offloading handles this automatically
-     * - Eliminates BPF verifier complexity and prevents checksum-related drops
+     * - Avoids complex pseudo-header calculation in eBPF
+     * - Most applications accept UDP with checksum=0
      */
     udph->check = 0;
     
