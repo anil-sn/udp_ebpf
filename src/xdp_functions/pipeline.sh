@@ -74,8 +74,11 @@ start_pipeline() {
         local nat_entries=$(count_bpf_map_entries "nat_map")
         if [ "$nat_entries" -gt 0 ]; then
             print_color "green" "✓ NAT map: $nat_entries rules loaded"
-            # Show the NAT rule details for debugging
-            get_nat_rules | head -3
+            # Show the NAT rule details for debugging (avoid pipe which might cause early exit)
+            get_nat_rules | while read -r rule; do
+                echo "$rule"
+                break  # Only show first rule
+            done
         else
             print_color "red" "✗ NAT map: Empty or missing"
             # Debug: Show available BPF maps for troubleshooting
