@@ -1,6 +1,148 @@
 #!/bin/bash
 # XDP Pipeline - Monitoring Functions
 
+# Clean stats monitoring display
+show_clean_statistics() {
+    fix_terminal
+    
+    # Check if pipeline is running
+    local prog_count=$(check_bpf_program)
+    if [ "$prog_count" -eq 0 ]; then
+        print_color "red" "✗ No XDP programs loaded"
+        return 1
+    fi
+    
+    # Python script for clean stats display
+    python3 - <<'EOF'
+import subprocess
+import json
+import time
+import sys
+
+class VXLANStatsMonitor:
+    def __init__(self):
+        self.prev_stats = {}
+        
+    def get_bpf_stats(self):
+        """Extract statistics from eBPF maps"""
+        try:
+            result = subprocess.run(['sudo', 'bpftool', 'map', 'dump', 'name', 'stats_map'], 
+                                  capture_output=True, text=True, check=True)
+            raw_data = json.loads(result.stdout)
+            
+            # Sum across all CPUs for each statistic
+            stats = {}
+            for entry in raw_data:
+                key = entry['key']
+                total = sum(cpu_data['value'] for cpu_data in entry['values'])
+                stats[key] = total
+                
+            return stats
+        except Exception as e:
+            print(f"Error reading BPF stats: {e}")
+            return {}
+    
+    def calculate_rates(self, current_stats, interval=5):
+        """Calculate per-second rates from counters"""
+        rates = {}
+        for key, current in current_stats.items():
+            if key in self.prev_stats:
+                rates[key] = max(0, (current - self.prev_stats[key]) // interval)
+            else:
+                rates[key] = 0
+        return rates
+    
+    def format_number(self, num):
+        """Format large numbers with appropriate units"""
+        if num >= 1_000_000:
+            return f"{num/1_000_000:.1f}M"
+        elif num >= 1_000:
+            return f"{num/1_000:.1f}K"
+        else:
+            return str(num)
+    
+    def display_stats(self, stats, rates):
+        """Display clean statistics"""
+        if not stats:
+            return
+            
+        # Core packet processing metrics
+        total_packets = stats.get(0, 0)
+        vxlan_packets = stats.get(1, 0)  
+        inner_packets = stats.get(2, 0)
+        nat_applied = stats.get(3, 0)
+        df_cleared = stats.get(4, 0)
+        forwarded = stats.get(5, 0)
+        redirected = stats.get(6, 0)
+        errors = stats.get(7, 0)
+        bytes_processed = stats.get(8, 0)
+        ip_len_updated = stats.get(9, 0)
+        length_corrections = stats.get(15, 0) if 15 in stats else 0
+        
+        # Calculate percentages and rates
+        vxlan_pct = (vxlan_packets / total_packets * 100) if total_packets > 0 else 0
+        nat_efficiency = (nat_applied / vxlan_packets * 100) if vxlan_packets > 0 else 0
+        error_rate = (errors / total_packets * 100) if total_packets > 0 else 0
+        
+        # Throughput calculation (bytes to Mbps)
+        throughput_mbps = (rates.get(8, 0) * 8) / 1_000_000
+        
+        # Performance assessment
+        total_pps = rates.get(0, 0)
+        if total_pps >= 85000:
+            perf_status = f"🎯 TARGET ACHIEVED! ({self.format_number(total_pps)} PPS)"
+        elif total_pps >= 50000:
+            perf_status = f"⚡ HIGH PERFORMANCE ({self.format_number(total_pps)} PPS)"
+        else:
+            perf_status = f"📊 Performance: {self.format_number(total_pps)} PPS (target: 85K+)"
+        
+        print("\n" + "="*60)
+        print("🚀 === VXLAN Pipeline Performance Dashboard ===")
+        print("="*60)
+        print(f"📦 Total Packets:      {self.format_number(total_packets):>8} ({self.format_number(rates.get(0, 0)):>6} pps)")
+        print(f"🔗 VXLAN Packets:      {self.format_number(vxlan_packets):>8} ({vxlan_pct:>5.1f}%)")
+        print(f"🔄 NAT Applied:        {self.format_number(nat_applied):>8} ({nat_efficiency:>5.1f}% efficiency)")
+        print(f"📤 Forwarded:          {self.format_number(forwarded):>8}")
+        print(f"🎯 Redirected:         {self.format_number(redirected):>8} (XDP_REDIRECT)")
+        
+        # Show length corrections if any
+        if length_corrections > 0:
+            print(f"🔧 Length Fixed:       {self.format_number(length_corrections):>8} (truncation repair)")
+        
+        # Error summary (only show if significant)
+        if error_rate > 0.1:  # Only show if > 0.1%
+            print(f"⚠️  Errors:             {self.format_number(errors):>8} ({error_rate:.2f}%)")
+        
+        print(f"🌐 Throughput:         {throughput_mbps:>8.2f} Mbps")
+        print(f"{perf_status}")
+        print("="*60)
+    
+    def run(self):
+        """Main monitoring loop"""
+        print("🚀 Starting VXLAN Pipeline Clean Monitor")
+        print("Press Ctrl+C to stop...")
+        
+        try:
+            while True:
+                current_stats = self.get_bpf_stats()
+                rates = self.calculate_rates(current_stats)
+                
+                self.display_stats(current_stats, rates)
+                self.prev_stats = current_stats.copy()
+                
+                time.sleep(5)
+                
+        except KeyboardInterrupt:
+            print("\n👋 Monitoring stopped by user")
+        except Exception as e:
+            print(f"💥 Error: {e}")
+
+if __name__ == "__main__":
+    monitor = VXLANStatsMonitor()
+    monitor.run()
+EOF
+}
+
 # Show real-time statistics
 show_statistics() {
     fix_terminal

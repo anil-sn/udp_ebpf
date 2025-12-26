@@ -112,7 +112,7 @@
 /* =================================================================== */
 
 /* Statistics Map */
-#define STATS_MAP_MAX_ENTRIES          15           /* Number of statistics counters (0-14) */
+#define STATS_MAP_MAX_ENTRIES          16           /* Number of statistics counters (0-15) */
 #define STATS_MAP_TYPE                 BPF_MAP_TYPE_PERCPU_ARRAY
 
 /* NAT Map */
