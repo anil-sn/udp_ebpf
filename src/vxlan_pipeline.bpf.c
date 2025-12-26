@@ -688,83 +688,7 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         return XDP_DROP;
     }
 
-    /* 
-     * CRITICAL: Update IP and UDP header lengths after VXLAN decapsulation
-     * 
-     * EXPERT ANALYSIS: The bounds check is failing after bpf_xdp_adjust_head()
-     * causing the length update code to never execute. Using step-by-step 
-     * bounds validation to satisfy eBPF verifier.
-     */
-    
-    /* Step 1: Validate Ethernet header bounds explicitly */
-    if (data + sizeof(struct ethhdr) > data_end) {
-        update_stat(STAT_ERRORS, 1);
-        return XDP_DROP;
-    }
-    
-    struct ethhdr *eth = (struct ethhdr *)data;
-    
-    /* Step 2: Validate IP header bounds with separate check */
-    void *ip_start = data + sizeof(struct ethhdr);
-    if (ip_start + sizeof(struct iphdr) > data_end) {
-        update_stat(STAT_ERRORS, 1);
-        return XDP_DROP;
-    }
-    
-    struct iphdr *iph = (struct iphdr *)ip_start;
-    
-    /* Step 3: Calculate new lengths after VXLAN decapsulation */
-    __u32 new_ip_total_len = ((char *)data_end - (char *)data) - 14;  /* Subtract Ethernet header */
-    
-    /* Step 4: Validate calculated IP length is reasonable */
-    if (new_ip_total_len < 20 || new_ip_total_len > 1500) {
-        update_stat(STAT_ERRORS, 1);
-        return XDP_DROP;
-    }
-    
-    /* Step 5: FORCE UPDATE IP Total Length (this was being skipped!) */
-    iph->tot_len = bpf_htons((__u16)new_ip_total_len);
-    
-    /* Step 6: Recalculate IP checksum completely */
-    iph->check = 0;  /* Clear checksum field */
-    __u32 checksum = 0;
-    __u16 *ip_hdr = (__u16 *)iph;
-    
-    /* Sum IP header words (20 bytes = 10 words) */
-    #pragma unroll
-    for (int i = 0; i < 10; i++) {
-        checksum += bpf_ntohs(ip_hdr[i]);
-    }
-    
-    /* Handle carries and complement */
-    while (checksum >> 16) {
-        checksum = (checksum & 0xFFFF) + (checksum >> 16);
-    }
-    iph->check = bpf_htons(~checksum & 0xFFFF);
-    
-    update_stat(STAT_IP_LEN_UPDATED, 1);
-    
-    /* Step 7: Update UDP length for UDP packets */
-    if (iph->protocol == IPPROTO_UDP) {
-        int ip_hdr_len = (iph->ihl & 0x0F) * 4;  /* Extract IHL safely */
-        
-        /* Validate IP header length */
-        if (ip_hdr_len >= 20 && ip_hdr_len <= 60) {
-            void *udp_start = ip_start + ip_hdr_len;
-            
-            /* Validate UDP header bounds */
-            if (udp_start + sizeof(struct udphdr) <= data_end) {
-                struct udphdr *udph = (struct udphdr *)udp_start;
-                
-                /* Calculate and set UDP length */
-                __u32 new_udp_len = new_ip_total_len - ip_hdr_len;
-                if (new_udp_len >= 8 && new_udp_len <= 65535) {
-                    udph->len = bpf_htons((__u16)new_udp_len);
-                    udph->check = 0;  /* Disable UDP checksum */
-                }
-            }
-        }
-    }
+    update_stat(STAT_FORWARDED, 1);
     
     /* Get interface and NAT target configurations */
         __u32 if_key = 0;  /* Always use key 0 for single interface config */
@@ -812,7 +736,52 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         /* Send packet to userspace via ring buffer for ens6 injection */
         update_stat(STAT_REDIRECTED, 1);
         
-        /* Calculate packet length */
+        /* 
+         * CRITICAL: Update packet lengths RIGHT BEFORE ring buffer copy
+         * to ensure the updated packet is sent to userspace
+         */
+        struct ethhdr *eth = (struct ethhdr *)data;
+        struct iphdr *iph = (struct iphdr *)(data + 14);
+        
+        /* Ensure we can access headers safely */
+        if ((void *)iph + 20 <= data_end) {
+            /* Calculate new lengths after VXLAN decapsulation */
+            __u32 packet_size = (char *)data_end - (char *)data;
+            __u32 new_ip_len = packet_size - 14;  /* Remove Ethernet header */
+            
+            /* Force IP length update */
+            iph->tot_len = bpf_htons((__u16)new_ip_len);
+            
+            /* Force IP checksum recalculation */
+            iph->check = 0;
+            __u32 sum = 0;
+            __u16 *ip_ptr = (__u16 *)iph;
+            
+            /* Calculate checksum over 20-byte IP header */
+            #pragma unroll
+            for (int i = 0; i < 10; i++) {
+                sum += bpf_ntohs(ip_ptr[i]);
+            }
+            while (sum >> 16) {
+                sum = (sum & 0xFFFF) + (sum >> 16);
+            }
+            iph->check = bpf_htons(~sum);
+            
+            /* Force UDP length update */
+            if (iph->protocol == IPPROTO_UDP) {
+                struct udphdr *udph = (struct udphdr *)(data + 14 + 20);
+                if ((void *)udph + 8 <= data_end) {
+                    __u32 new_udp_len = new_ip_len - 20;  /* IP payload size */
+                    udph->len = bpf_htons((__u16)new_udp_len);
+                    udph->check = 0;  /* Disable UDP checksum */
+                }
+            }
+            
+            /* Increment debug counter */
+            update_stat(STAT_IP_LEN_UPDATED, 1);
+        }
+        
+        /* Calculate packet length AFTER length updates */
         __u32 pkt_len = data_end - data;
         if (pkt_len > 1500) {
             pkt_len = 1500; /* Limit to max packet data size */
