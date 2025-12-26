@@ -7,8 +7,8 @@ import socket
 import struct
 
 def build_exact_packet():
-    # Ethernet Header (14 bytes)
-    dst_mac = bytes.fromhex('0afe93869353')  # Destination MAC
+    # Ethernet Header (14 bytes) - Use correct ens5 MAC address
+    dst_mac = bytes.fromhex('0a5f3811aaaf')  # Real ens5 MAC from ifconfig
     src_mac = bytes.fromhex('0a205587cbdd')  # Source MAC  
     ethertype = struct.pack('!H', 0x0800)   # IPv4
     
@@ -81,7 +81,7 @@ def send_exact_packet():
         
         # Verify key fields
         print("\nPacket verification:")
-        print(f"Dest MAC: {packet[:6].hex()} (should be 0afe93869353)")
+        print(f"Dest MAC: {packet[:6].hex()} (should be 0a5f3811aaaf)")
         print(f"Src MAC: {packet[6:12].hex()} (should be 0a205587cbdd)")
         print(f"EtherType: {packet[12:14].hex()} (should be 0800)")
         print(f"IP Total Length: {struct.unpack('!H', packet[16:18])[0]} (should be 1361)")
