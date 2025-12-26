@@ -1254,17 +1254,31 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     /* High 16 bits = old_len, Low 16 bits = expected_ip_len */
     update_stat(STAT_PACKET_SIZE_DEBUG, (old_len << 16) | (expected_ip_len & 0xFFFF));
     
-    /* ATOMIC OPERATION: Update length and clear checksum */
-    ip_hdr->tot_len = bpf_htons((__u16)expected_ip_len);
-    ip_hdr->check = 0;  /* Zero checksum - let network stack recalculate */
+    /* DIRECT MEMORY WRITE with immediate verification */
+    volatile __u16 *len_ptr = &ip_hdr->tot_len;
+    *len_ptr = bpf_htons((__u16)expected_ip_len);
     
-    /* VERIFY the write worked by reading it back */
-    __u16 verification = bpf_ntohs(ip_hdr->tot_len);
+    /* Memory barrier - force write completion */
+    __sync_synchronize();
     
-    /* EVIDENCE: If verification != expected_ip_len, the write failed! */
-    if (verification != expected_ip_len) {
-        update_stat(STAT_ERRORS, 1);  /* Count write failures */
+    /* IMMEDIATE verification with fresh read */
+    __u16 written_value = bpf_ntohs(*len_ptr);
+    if (written_value != expected_ip_len) {
+        update_stat(STAT_ERRORS, 1);  /* Write verification failed */
+        
+        /* Try alternative write method */
+        ip_hdr->tot_len = bpf_htons((__u16)expected_ip_len);
+        __sync_synchronize();
+        
+        /* Re-verify */
+        __u16 retry_value = bpf_ntohs(ip_hdr->tot_len);
+        if (retry_value != expected_ip_len) {
+            update_stat(STAT_ERRORS, 1);  /* Both write methods failed */
+        }
     }
+    
+    /* Clear checksum after successful length update */
+    ip_hdr->check = 0;
     
     /* EVIDENCE: Detect the specific 1500→1486 pattern */
     if (old_len == 1500) {
