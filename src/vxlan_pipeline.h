@@ -15,6 +15,25 @@
 /* PROTOCOL CONSTANTS                                                   */
 /* =================================================================== */
 
+/* BPF System Constants */
+#define BPF_MAP_TYPE_ARRAY              2
+#define BPF_MAP_TYPE_HASH               1
+#define BPF_MAP_TYPE_PERCPU_ARRAY       6
+#define BPF_MAP_TYPE_RINGBUF            27
+#define BPF_F_NO_PREALLOC              0x01UL
+
+/* XDP Action Codes */
+#define XDP_ABORTED                     0
+#define XDP_DROP                        1
+#define XDP_PASS                        2
+#define XDP_TX                          3
+#define XDP_REDIRECT                    4
+
+/* Network Protocol Definitions */
+#define ETH_P_IP                        0x0800
+#define IPPROTO_UDP                     17
+#define ETH_HLEN                        14
+
 /* VXLAN Protocol (RFC 7348) */
 #define VXLAN_PORT                      4789        /* Standard VXLAN UDP port */
 #define TARGET_VNI                      1           /* AWS Traffic Mirror VNI (always 1) */
@@ -33,6 +52,17 @@
 /* UDP Protocol */
 #define UDP_HEADER_SIZE                8            /* UDP header size */
 
+/* Network Address Constants */
+#define MAC_ADDR_LEN                   6            /* MAC address length in bytes */
+#define IPV4_ADDR_LEN                  4            /* IPv4 address length in bytes */
+
+/* Checksum and Processing Constants */
+#define CHECKSUM_CARRY_MASK            0xFFFF       /* Mask for checksum carry handling */
+
+/* Network MTU and Size Constants */
+#define STANDARD_MTU                   1500         /* Standard Ethernet MTU */
+#define JUMBO_FRAME_THRESHOLD          9000         /* Jumbo frame size threshold */
+
 /* =================================================================== */
 /* PACKET PROCESSING LIMITS                                            */
 /* =================================================================== */
@@ -45,7 +75,7 @@
 
 /* Performance Limits */
 #define TARGET_PPS                     85000        /* Target packet processing rate */
-#define MAX_CPU_CORES                  128          /* Maximum CPU cores for per-CPU stats */
+#define MAX_CPU_CORES                  16           /* Maximum CPU cores for per-CPU stats */
 
 /* =================================================================== */
 /* EBPF MAP CONFIGURATION                                              */
@@ -62,6 +92,12 @@
 /* Redirect Map */
 #define REDIRECT_MAP_MAX_ENTRIES       1           /* Single redirect target interface */
 #define REDIRECT_MAP_TYPE              BPF_MAP_TYPE_ARRAY
+
+/* Memory and Buffer Size Constants */
+#define RINGBUF_SIZE_BYTES             (1024 * 1024) /* 1MB ring buffer for high throughput */
+#define PACKET_DATA_MAX_SIZE           1500         /* Maximum packet data in ring buffer events */
+#define RINGBUF_RESERVE_SIZE           1506         /* Ring buffer reservation size (packet + metadata) */
+#define IP_ALLOWLIST_MAX_ENTRIES       10000        /* Support up to 10K allowed IPs */
 
 /* =================================================================== */
 /* PROTOCOL CONSTANTS ONLY - NO HARDCODED CONFIG                     */
@@ -98,6 +134,24 @@
 #define ERROR_BOUNDS_CHECK             -2           /* Bounds check failure */
 #define ERROR_MAP_LOOKUP               -3           /* eBPF map lookup failure */
 #define ERROR_CHECKSUM                 -4           /* Checksum calculation error */
+
+/* =================================================================== */
+/* PROCESSING AND VALIDATION CONSTANTS                                  */
+/* =================================================================== */
+
+/* VNI Array Indices (for VXLAN VNI validation) */
+#define VNI_BYTE_0_INDEX               0            /* First byte of VNI array */
+#define VNI_BYTE_1_INDEX               1            /* Second byte of VNI array */
+#define VNI_BYTE_2_INDEX               2            /* Third byte of VNI array */
+
+/* Key Constants for Map Lookups */
+#define MAP_KEY_SINGLE_ENTRY           0            /* Key for single-entry maps */
+
+/* Boolean and Validation Constants */
+#define IP_ALLOWED                     1            /* IP allowlist allowed value */
+#define IP_BLOCKED                     0            /* IP allowlist blocked value */
+#define INTERFACE_INVALID              0            /* Invalid interface index */
+#define BPF_SUBMIT_FLAGS_NONE          0            /* No flags for bpf_ringbuf_submit */
 
 /* =================================================================== */
 /* DEBUGGING AND MONITORING                                            */
