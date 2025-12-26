@@ -794,9 +794,9 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         /* DEBUG: Track packet size for analysis */
         update_stat(STAT_PACKET_SIZE_DEBUG, decap_packet_len);
         
-        /* Validate decapsulated length makes sense (1486 = max after ETH header removal) */
+        /* Validate decapsulated length makes sense (1472 = 1500-14-14 max IP after ETH removal) */
         if (decap_packet_len < ETH_HLEN + sizeof(struct iphdr) || 
-            decap_ip_len < sizeof(struct iphdr) || decap_ip_len > 1486) {
+            decap_ip_len < sizeof(struct iphdr) || decap_ip_len > 1472) {
             update_stat(STAT_ERRORS, 1);
             update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
             goto skip_length_updates;
