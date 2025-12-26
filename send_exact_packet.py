@@ -127,7 +127,7 @@ def send_exact_packet():
         print(f"EtherType: {packet[12:14].hex()} (should be 0800)")
         print(f"IP Total Length: {struct.unpack('!H', packet[16:18])[0]} (should be 1361)")
         print(f"UDP Src Port: {struct.unpack('!H', packet[34:36])[0]} (should be 19458)")
-        print(f"UDP Dst Port: {struct.unpack('!H', packet[36:38])[0]} (should be 1035)")
+        print(f"UDP Dst Port: {struct.unpack('!H', packet[36:38])[0]} (should be 8081)")
         print(f"UDP Checksum: {hex(struct.unpack('!H', packet[40:42])[0])} (calculated)")
         
         # Create raw socket
@@ -138,7 +138,7 @@ def send_exact_packet():
         bytes_sent = sock.send(packet)
         print(f"\n✅ Sent {bytes_sent} bytes via ens5!")  # Updated interface
         print("Packet details:")
-        print(f"  172.30.82.13:19458 -> 172.30.82.95:1035")
+        print(f"  172.30.82.13:19458 -> 172.30.82.95:8081")
         print(f"  UDP payload: 1333 bytes")
         print(f"  Total frame: 1375 bytes")
         print("\nNow check tcpdump on 172.30.82.95...")
