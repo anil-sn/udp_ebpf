@@ -746,10 +746,9 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
          */
         
         /* ALWAYS increment debug counter first to prove code execution */
-        update_stat(STAT_REDIRECTED, 1);
         update_stat(STAT_IP_LEN_UPDATED, 1); /* Force increment to prove code path */
         
-        struct ethhdr *eth = (struct ethhdr *)data;
+        /* Reuse existing eth pointer, declare iph for length updates */
         struct iphdr *iph = (struct iphdr *)(data + 14);
         
         /* Simple bounds check */
