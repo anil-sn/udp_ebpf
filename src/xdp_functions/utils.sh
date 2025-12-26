@@ -139,7 +139,7 @@ Commands:
   stop            Stop the XDP pipeline
   restart         Restart the XDP pipeline
   status          Show pipeline status
-  stats           Show detailed statistics
+  stats           Show comprehensive statistics dashboard
   info            Show comprehensive information
   monitor         Real-time monitoring
   test            Run end-to-end tests

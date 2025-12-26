@@ -1,6 +1,34 @@
 #!/bin/bash
 # XDP Pipeline - Monitoring Functions
 
+# Helper function to format large numbers with appropriate units
+format_number() {
+    local num="$1"
+    if [ "$num" -ge 1000000000 ]; then
+        echo "$num" | awk '{printf "%.1fB", $1/1000000000}'
+    elif [ "$num" -ge 1000000 ]; then
+        echo "$num" | awk '{printf "%.1fM", $1/1000000}'
+    elif [ "$num" -ge 1000 ]; then
+        echo "$num" | awk '{printf "%.1fK", $1/1000}'
+    else
+        echo "$num"
+    fi
+}
+
+# Helper function to format bytes with appropriate units
+format_bytes() {
+    local bytes="$1"
+    if [ "$bytes" -ge 1000000000 ]; then
+        echo "$bytes" | awk '{printf "%.2f GB", $1/1000000000}'
+    elif [ "$bytes" -ge 1000000 ]; then
+        echo "$bytes" | awk '{printf "%.2f MB", $1/1000000}'
+    elif [ "$bytes" -ge 1000 ]; then
+        echo "$bytes" | awk '{printf "%.2f KB", $1/1000}'
+    else
+        echo "$bytes B"
+    fi
+}
+
 # Clean stats monitoring display
 show_clean_statistics() {
     fix_terminal
@@ -143,12 +171,9 @@ if __name__ == "__main__":
 EOF
 }
 
-# Show real-time statistics
+# Show comprehensive real-time statistics
 show_statistics() {
     fix_terminal
-    
-    print_color "green" "XDP VXLAN Pipeline Statistics"
-    echo "=============================="
     
     # Check if pipeline is running
     local prog_count=$(check_bpf_program)
@@ -157,39 +182,156 @@ show_statistics() {
         return 1
     fi
     
-    print_color "green" "✓ XDP Programs: $prog_count loaded"
+    print_color "green" "🚀 === XDP VXLAN Pipeline Comprehensive Statistics ==="
+    echo "=============================================================="
     
-    # Get and display statistics
+    # Get BPF statistics using bpftool and jq
+    if ! sudo bpftool map show name stats_map >/dev/null 2>&1; then
+        print_color "red" "✗ Statistics map not found"
+        return 1
+    fi
+    
+    # Extract statistics from eBPF maps
+    local stats_json=$(sudo bpftool map dump name stats_map --json 2>/dev/null)
+    if [ -z "$stats_json" ]; then
+        print_color "red" "✗ Unable to retrieve statistics"
+        return 1
+    fi
+    
+    # Sum statistics across all CPUs using jq
+    local total_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 0) | .values[].value] | add // 0')
+    local vxlan_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 1) | .values[].value] | add // 0')
+    local inner_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 2) | .values[].value] | add // 0')
+    local nat_applied=$(echo "$stats_json" | jq -r '[.[] | select(.key == 3) | .values[].value] | add // 0')
+    local df_cleared=$(echo "$stats_json" | jq -r '[.[] | select(.key == 4) | .values[].value] | add // 0')
+    local forwarded=$(echo "$stats_json" | jq -r '[.[] | select(.key == 5) | .values[].value] | add // 0')
+    local redirected=$(echo "$stats_json" | jq -r '[.[] | select(.key == 6) | .values[].value] | add // 0')
+    local errors=$(echo "$stats_json" | jq -r '[.[] | select(.key == 7) | .values[].value] | add // 0')
+    local bytes_processed=$(echo "$stats_json" | jq -r '[.[] | select(.key == 8) | .values[].value] | add // 0')
+    local ip_len_updated=$(echo "$stats_json" | jq -r '[.[] | select(.key == 9) | .values[].value] | add // 0')
+    local udp_len_updated=$(echo "$stats_json" | jq -r '[.[] | select(.key == 10) | .values[].value] | add // 0')
+    local ip_checksum_updated=$(echo "$stats_json" | jq -r '[.[] | select(.key == 11) | .values[].value] | add // 0')
+    local bounds_check_failed=$(echo "$stats_json" | jq -r '[.[] | select(.key == 12) | .values[].value] | add // 0')
+    local ringbuf_submitted=$(echo "$stats_json" | jq -r '[.[] | select(.key == 13) | .values[].value] | add // 0')
+    local length_corrections=$(echo "$stats_json" | jq -r '[.[] | select(.key == 15) | .values[].value] | add // 0')
+    
+    # Calculate percentages and rates
+    local vxlan_pct=0
+    local nat_efficiency=0
+    local error_rate=0
+    local success_rate=0
+    
+    if [ "$total_packets" -gt 0 ]; then
+        vxlan_pct=$(echo "$vxlan_packets $total_packets" | awk '{printf "%.1f", ($1/$2)*100}')
+        error_rate=$(echo "$errors $total_packets" | awk '{printf "%.3f", ($1/$2)*100}')
+        success_rate=$(echo "$forwarded $redirected $total_packets" | awk '{printf "%.1f", (($1+$2)/$3)*100}')
+    fi
+    
+    if [ "$vxlan_packets" -gt 0 ]; then
+        nat_efficiency=$(echo "$nat_applied $vxlan_packets" | awk '{printf "%.1f", ($1/$2)*100}')
+    fi
+    
+    # Performance assessment
+    local perf_status="📊 MONITORING"
+    if [ "$total_packets" -ge 85000 ]; then
+        perf_status="🎯 TARGET ACHIEVED"
+    elif [ "$total_packets" -ge 50000 ]; then
+        perf_status="⚡ HIGH PERFORMANCE"
+    elif [ "$total_packets" -ge 25000 ]; then
+        perf_status="📈 GOOD PERFORMANCE"
+    elif [ "$total_packets" -gt 0 ]; then
+        perf_status="🔧 MODERATE PERFORMANCE"
+    fi
+    
+    # System Overview
     echo ""
-    print_color "yellow" "Packet Statistics:"
+    print_color "cyan" "📊 SYSTEM OVERVIEW"
+    printf "├─ Performance Status: %s\n" "$perf_status"
+    printf "├─ Total Processed:    %s packets\n" "$(format_number "$total_packets")"
+    printf "└─ Success Rate:       %s%%\n" "$success_rate"
     
-    if sudo bpftool map show name stats_map >/dev/null 2>&1; then
-        # Get key statistics
-        local total_rx=$(get_statistics "total")
-        local total_processed=$(get_statistics "processed")
-        local total_dropped=$(get_statistics "dropped")
-        local total_vxlan=$(get_statistics "vxlan")
-        local total_nat=$(get_statistics "nat")
-        local total_bytes=$(get_statistics "bytes")
-        
-        # Format bytes
-        local bytes_fmt=$(format_bytes "$total_bytes")
-        
-        # Calculate drop rate
-        local drop_rate="0.000%"
-        if [ "$total_rx" -gt 0 ]; then
-            drop_rate=$(echo "$total_dropped $total_rx" | awk '{printf "%.3f%%", ($1/$2)*100}')
+    # Packet Flow Pipeline
+    echo ""
+    print_color "cyan" "📦 PACKET FLOW PIPELINE"
+    printf "├─ Total Received:     %10s\n" "$(format_number "$total_packets")"
+    printf "├─ VXLAN Packets:      %10s (%s%%)\n" "$(format_number "$vxlan_packets")" "$vxlan_pct"
+    printf "├─ Inner Extracted:    %10s\n" "$(format_number "$inner_packets")"
+    printf "├─ NAT Applied:        %10s (%s%% efficiency)\n" "$(format_number "$nat_applied")" "$nat_efficiency"
+    printf "├─ DF Bits Cleared:    %10s\n" "$(format_number "$df_cleared")"
+    printf "├─ Successfully Fwd:   %10s\n" "$(format_number "$forwarded")"
+    printf "└─ XDP Redirected:     %10s\n" "$(format_number "$redirected")"
+    
+    # Header Processing (only show if there's activity)
+    if [ "$ip_len_updated" -gt 0 ] || [ "$udp_len_updated" -gt 0 ] || [ "$length_corrections" -gt 0 ]; then
+        echo ""
+        print_color "cyan" "🔧 HEADER PROCESSING"
+        if [ "$length_corrections" -gt 0 ]; then
+            printf "├─ Length Corrections:  %10s (AWS truncation fixes)\n" "$(format_number "$length_corrections")"
+        fi
+        if [ "$ip_len_updated" -gt 0 ]; then
+            printf "├─ IP Length Updates:   %10s\n" "$(format_number "$ip_len_updated")"
+        fi
+        if [ "$udp_len_updated" -gt 0 ]; then
+            printf "├─ UDP Length Updates:  %10s\n" "$(format_number "$udp_len_updated")"
+        fi
+        if [ "$ip_checksum_updated" -gt 0 ]; then
+            printf "└─ IP Checksum Calcs:   %10s\n" "$(format_number "$ip_checksum_updated")"
+        fi
+    fi
+    
+    # Performance Metrics
+    echo ""
+    print_color "cyan" "🌐 PERFORMANCE METRICS"
+    local bytes_formatted=$(format_bytes "$bytes_processed")
+    printf "├─ Bytes Processed:    %s\n" "$bytes_formatted"
+    if [ "$ringbuf_submitted" -gt 0 ]; then
+        printf "└─ Ring Buffer Sent:   %10s\n" "$(format_number "$ringbuf_submitted")"
+    else
+        printf "└─ Ring Buffer Sent:   %10s\n" "0"
+    fi
+    
+    # Error Analysis (only show if errors exist)
+    if [ "$errors" -gt 0 ] || [ "$bounds_check_failed" -gt 0 ]; then
+        echo ""
+        print_color "yellow" "⚠️  ERROR ANALYSIS"
+        printf "├─ Total Errors:       %10s (%s%%)\n" "$(format_number "$errors")" "$error_rate"
+        if [ "$bounds_check_failed" -gt 0 ]; then
+            printf "├─ Bounds Failures:    %10s\n" "$(format_number "$bounds_check_failed")"
         fi
         
-        echo "┌─────────────────────────────────────────┐"
-        echo "│             Packet Counters             │"
-        echo "├─────────────────────────────────────────┤"
-        printf "│ Total Received:        %16s │\n" "$(format_number "$total_rx")"
-        printf "│ Total Processed:       %16s │\n" "$(format_number "$total_processed")"
-        printf "│ Total Dropped:         %16s │\n" "$(format_number "$total_dropped") ($drop_rate)"
-        printf "│ VXLAN Processed:       %16s │\n" "$(format_number "$total_vxlan")"
-        printf "│ NAT Applied:           %16s │\n" "$(format_number "$total_nat")"
-        printf "│ Total Bytes:           %16s │\n" "$bytes_fmt"
+        local error_impact="MINIMAL"
+        if (( $(echo "$error_rate > 1.0" | bc -l 2>/dev/null || echo 0) )); then
+            error_impact="HIGH"
+        elif (( $(echo "$error_rate > 0.1" | bc -l 2>/dev/null || echo 0) )); then
+            error_impact="MODERATE"
+        fi
+        printf "└─ Error Impact:       %s\n" "$error_impact"
+    fi
+    
+    # Pipeline Status Summary
+    echo ""
+    print_color "cyan" "✅ PIPELINE STATUS"
+    local status_emoji="🟢"
+    local status_text="EXCELLENT"
+    
+    if (( $(echo "$success_rate < 99.9" | bc -l 2>/dev/null || echo 0) )); then
+        if (( $(echo "$success_rate < 99.0" | bc -l 2>/dev/null || echo 0) )); then
+            if (( $(echo "$success_rate < 95.0" | bc -l 2>/dev/null || echo 0) )); then
+                status_emoji="🔴"
+                status_text="CRITICAL"
+            else
+                status_emoji="🟠"
+                status_text="NEEDS ATTENTION"
+            fi
+        else
+            status_emoji="🟡"
+            status_text="GOOD"
+        fi
+    fi
+    
+    printf "└─ Overall Status:     %s %s (%s%% success rate)\n" "$status_emoji" "$status_text" "$success_rate"
+    
+    echo "=============================================================="
         echo "└─────────────────────────────────────────┘"
     else
         print_color "yellow" "Stats map not found"
