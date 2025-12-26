@@ -7,6 +7,12 @@ source "$(dirname "${BASH_SOURCE[0]}")/config.sh" 2>/dev/null || true
 source "$(dirname "${BASH_SOURCE[0]}")/utils.sh" 2>/dev/null || true
 source "$(dirname "${BASH_SOURCE[0]}")/bpf_ops.sh" 2>/dev/null || true
 
+# Auto-detect interface if not set
+if [ -z "$INTERFACE" ]; then
+    INTERFACE=$(ip route get 8.8.8.8 | awk 'NR==1 {print $5}')
+    [ -n "$INTERFACE" ] || INTERFACE="ens5"
+fi
+
 # Performance thresholds
 HIGH_PPS_THRESHOLD=${HIGH_PPS_THRESHOLD:-50000}    # Scale up above 50K PPS
 LOW_PPS_THRESHOLD=${LOW_PPS_THRESHOLD:-10000}      # Scale down below 10K PPS
@@ -147,6 +153,29 @@ optimize_interrupt_affinity() {
     done
 }
 
+# Start multiple packet injector instances for multi-core utilization
+start_multicore_injectors() {
+    local cpu_count="$1"
+    local injector_binary="../packet_injector"
+    
+    # Check if packet_injector exists
+    if [ ! -f "$injector_binary" ]; then
+        print_color "yellow" "Warning: packet_injector binary not found at $injector_binary"
+        return 1
+    fi
+    
+    print_color "blue" "Starting $cpu_count packet_injector instances..."
+    
+    # Start one injector per CPU core
+    for ((cpu=0; cpu<cpu_count; cpu++)); do
+        # Start injector with CPU affinity
+        taskset -c "$cpu" "$injector_binary" &
+        local pid=$!
+        print_color "green" "✓ Started packet_injector PID $pid on CPU $cpu"
+        sleep 0.1  # Small delay between starts
+    done
+}
+
 # Set process affinity for XDP components
 optimize_process_affinity() {
     local queue_count="$1"
@@ -281,13 +310,35 @@ case "${1:-status}" in
         optimize_interrupt_affinity "$CURRENT_QUEUES"
         optimize_process_affinity "$CURRENT_QUEUES"
         ;;
+    "start-injectors")
+        get_system_info
+        cpu_count=${2:-$CURRENT_QUEUES}
+        start_multicore_injectors "$cpu_count"
+        ;;
+    "max-performance")
+        get_system_info
+        print_color "blue" "Configuring for maximum performance..."
+        # Scale to maximum queues
+        if [ "$CURRENT_QUEUES" -lt "$MAX_QUEUES" ]; then
+            sudo ethtool -L "$INTERFACE" combined "$MAX_QUEUES"
+            CURRENT_QUEUES="$MAX_QUEUES"
+        fi
+        # Optimize affinity
+        optimize_interrupt_affinity "$CURRENT_QUEUES"
+        # Start multi-core injectors
+        pkill -f "packet_injector" 2>/dev/null || true
+        sleep 1
+        start_multicore_injectors "$CURRENT_QUEUES"
+        ;;
     "help")
         echo "Dynamic XDP Scaling Usage:"
-        echo "  $0 start      - Start dynamic scaling monitor"  
-        echo "  $0 status     - Show current scaling status"
-        echo "  $0 scale-up   - Manually add one queue"
-        echo "  $0 scale-down - Manually remove one queue"
-        echo "  $0 optimize   - Optimize CPU affinity"
+        echo "  $0 start           - Start dynamic scaling monitor"  
+        echo "  $0 status          - Show current scaling status"
+        echo "  $0 scale-up        - Manually add one queue"
+        echo "  $0 scale-down      - Manually remove one queue"
+        echo "  $0 optimize        - Optimize CPU affinity"
+        echo "  $0 start-injectors [N] - Start N packet_injector instances"
+        echo "  $0 max-performance - Scale to max queues + multi-core injectors"
         ;;
     *)
         print_color "red" "Unknown command: $1"
