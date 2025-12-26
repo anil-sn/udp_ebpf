@@ -298,7 +298,7 @@ struct {
 struct packet_event {
     __u32 ifindex;     /* Target interface index */
     __u16 len;         /* Packet length */
-    __u8 data[1500];   /* Packet data (max MTU) */
+    __u8 data[9000];   /* Packet data (jumbo frame support) */
 } __attribute__((packed));
 
 /*
@@ -794,9 +794,9 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         /* DEBUG: Track packet size for analysis */
         update_stat(STAT_PACKET_SIZE_DEBUG, decap_packet_len);
         
-        /* Validate decapsulated length makes sense (1500 = standard MTU IP size) */
+        /* Validate decapsulated length makes sense (support jumbo frames up to 9000 bytes) */
         if (decap_packet_len < ETH_HLEN + sizeof(struct iphdr) || 
-            decap_ip_len < sizeof(struct iphdr) || decap_ip_len > 1500) {
+            decap_ip_len < sizeof(struct iphdr) || decap_ip_len > 8986) {
             update_stat(STAT_ERRORS, 1);
             update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
             goto skip_length_updates;
@@ -824,8 +824,8 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
             if ((void *)(inner_udph + 1) <= data_end) {
                 __u32 decap_udp_len = decap_ip_len - ip_hdr_len;  // UDP length after decap
                 
-                /* Validate UDP length is reasonable (1480 = 1500 IP - 20 IP header) */
-                if (decap_udp_len >= sizeof(struct udphdr) && decap_udp_len <= 1480) {
+                /* Validate UDP length supports jumbo frames (8986 IP - 20 IP header = 8966 max UDP) */
+                if (decap_udp_len >= sizeof(struct udphdr) && decap_udp_len <= 8966) {
                     __u16 old_udp_len = bpf_ntohs(inner_udph->len);  /* DEBUG: Save old value */
                     inner_udph->len = bpf_htons((__u16)decap_udp_len);
                     inner_udph->check = 0;  /* Zero UDP checksum for performance */
@@ -868,23 +868,23 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         
         /* Calculate packet length AFTER length updates for ring buffer */
         __u32 pkt_len = data_end - data;  // Use current packet boundaries
-        if (pkt_len > 1500) {
-            pkt_len = 1500; /* Limit to max packet data size */
+        if (pkt_len > 9000) {
+            pkt_len = 9000; /* Limit to jumbo frame size */
         }
         
-        /* Reserve space in ring buffer using fixed maximum size for BPF verifier */
-        /* Size: sizeof(__u32) + sizeof(__u16) + 1500 bytes = 1506 bytes */
-        struct packet_event *event = bpf_ringbuf_reserve(&packet_ringbuf, 1506, 0);
+        /* Reserve space in ring buffer using jumbo frame size for BPF verifier */
+        /* Size: sizeof(__u32) + sizeof(__u16) + 9000 bytes = 9006 bytes */
+        struct packet_event *event = bpf_ringbuf_reserve(&packet_ringbuf, 9006, 0);
         if (event) {
             /* Copy packet metadata */
             event->ifindex = *target_ifindex;
             
             /* Ensure packet length is within bounds for BPF verifier */
-            if (pkt_len > 1500) pkt_len = 1500;
+            if (pkt_len > 9000) pkt_len = 9000;
             event->len = (__u16)pkt_len;  /* Explicit cast to match struct definition */
             
             /* Manual byte-by-byte copy with BPF verifier-friendly bounds checking */
-            for (int i = 0; i < 1500 && i < pkt_len; i++) {
+            for (int i = 0; i < 9000 && i < pkt_len; i++) {
                 if ((char *)data + i >= (char *)data_end) break;
                 event->data[i] = *((char *)data + i);
             }
