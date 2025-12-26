@@ -1199,7 +1199,8 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     }
     
     /* The IP total length should be the actual available IP packet size */
-    __u16 actual_ip_len = packet_len - ETH_HLEN;
+    /* CRITICAL FIX: AWS Traffic Mirror provides correct truncated length - preserve it! */
+    __u16 actual_ip_len = bpf_ntohs(ip_hdr->tot_len);  /* Use original IP length */
     
     /* EVIDENCE: Capture the input values for analysis */
     update_stat(STAT_BYTES_PROCESSED, (packet_len << 16) | (actual_ip_len & 0xFFFF));
@@ -1236,14 +1237,8 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     __u32 measured_packet_size = (char *)data_end - (char *)data;
     __u16 expected_ip_len;
     
-    if (measured_packet_size != packet_len) {
-        /* Parameter mismatch - use measured size */
-        expected_ip_len = measured_packet_size - ETH_HLEN;
-        /* Note: Using measured size instead of parameter */
-    } else {
-        /* Parameter is correct - use calculated value */
-        expected_ip_len = actual_ip_len;
-    }
+    /* PRESERVE ORIGINAL: AWS Traffic Mirror already provides correct IP length */
+    expected_ip_len = actual_ip_len;  /* Keep the original IP header length */
     
     /* EVIDENCE-BASED LENGTH DEBUGGING */
     old_len = bpf_ntohs(ip_hdr->tot_len);  /* Current IP length from header */
@@ -1422,9 +1417,9 @@ static __always_inline int forward_packet(void *data, void *data_end,
                     /* CRITICAL FIX: Update IP length in ring buffer copy */
                     if (copy_len >= sizeof(struct ethhdr) + sizeof(struct iphdr)) {
                         struct iphdr *ring_ip = (struct iphdr *)(event->data + sizeof(struct ethhdr));
-                        /* Use actual available IP packet size */
-                        __u16 ring_ip_len = temp_len;  /* temp_len = total packet - ETH_HLEN */
-                        ring_ip->tot_len = bpf_htons(ring_ip_len);
+                        /* PRESERVE ORIGINAL: Use the same IP length as in the actual packet */
+                        __u16 ring_ip_len = bpf_ntohs(ring_ip->tot_len);  /* Keep original IP length */
+                        /* No need to change IP length - AWS Traffic Mirror already correct */
                         ring_ip->check = 0;  /* Clear checksum */
                         
                         /* Also fix UDP length in ring buffer if UDP packet */
