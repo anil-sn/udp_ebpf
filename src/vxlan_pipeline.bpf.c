@@ -1204,6 +1204,10 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     
     temp_len = packet_len - ETH_HLEN;  /* Calculate IP packet length */
     
+    /* EVIDENCE: Capture the input values for analysis */
+    /* This will help us see if packet_len is wrong (e.g., 1500 when it should be 1486) */
+    update_stat(STAT_BYTES_PROCESSED, (packet_len << 16) | (temp_len & 0xFFFF));
+    
     /* Additional safety check for 16-bit field overflow */
     if (temp_len > 65535) {
         /* IP tot_len is 16-bit field, cannot exceed 65535 */
@@ -1239,30 +1243,34 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     }
     
     /* 
-     * PHASE 4: IP TOTAL LENGTH VALIDATION & CORRECTION
-     * ================================================
-     * Detect and fix length mismatches that cause packet truncation
+     * EVIDENCE-BASED LENGTH DEBUGGING
+     * ===============================
+     * Capture exact values to understand why 1500 appears in IP header
      */
-    old_len = bpf_ntohs(ip_hdr->tot_len);  /* Get current IP length */
-    __u32 expected_ip_len = temp_len;      /* Expected: packet_len - ETH_HLEN */
+    old_len = bpf_ntohs(ip_hdr->tot_len);  /* Current IP length from header */
+    __u32 expected_ip_len = temp_len;      /* Our calculated correct length */
     
-    /* ALWAYS update IP length to correct value after decapsulation */
+    /* EVIDENCE COLLECTION: Store exact values we're seeing */
+    /* High 16 bits = old_len, Low 16 bits = expected_ip_len */
+    update_stat(STAT_PACKET_SIZE_DEBUG, (old_len << 16) | (expected_ip_len & 0xFFFF));
+    
+    /* FORCE the correct length */
     ip_hdr->tot_len = bpf_htons((__u16)expected_ip_len);
-    update_stat(STAT_IP_LEN_UPDATED, 1);
     
-    /* DETECT the specific truncation bug: IP length == total packet length */
-    if (old_len == packet_len) {
-        /* FOUND THE TRUNCATION BUG! */
-        /* IP header claims entire packet length including Ethernet header */
-        update_stat(STAT_ERRORS, 1);  /* Count this as the truncation error */
-        
-        /* Store debug info: old_len in high 16 bits, new_len in low 16 bits */
-        update_stat(STAT_PACKET_SIZE_DEBUG, (old_len << 16) | expected_ip_len);
-        
-    } else if (old_len != expected_ip_len) {
-        /* Other types of length mismatches */
-        update_stat(STAT_PACKET_SIZE_DEBUG, (old_len << 16) | expected_ip_len);
+    /* VERIFY the write worked by reading it back */
+    __u16 verification = bpf_ntohs(ip_hdr->tot_len);
+    
+    /* EVIDENCE: If verification != expected_ip_len, the write failed! */
+    if (verification != expected_ip_len) {
+        update_stat(STAT_ERRORS, 1);  /* Count write failures */
     }
+    
+    /* EVIDENCE: Detect the specific 1500→1486 pattern */
+    if (old_len == 1500) {
+        update_stat(STAT_ERRORS, 1);  /* Count occurrences of the bug pattern */
+    }
+    
+    update_stat(STAT_IP_LEN_UPDATED, 1);
     
     /* 
      * PHASE 5: UDP LENGTH UPDATE (PROTOCOL-SPECIFIC)
@@ -1600,12 +1608,19 @@ int vxlan_processor(struct xdp_md *ctx)
     
     /* Check if NAT is required */
     if (inner_udp) {
-        struct nat_key nat_lookup_key = { .src_port = inner_udp->dest };
+        /* NAT map key uses dest port from inner packet */
+        struct nat_key nat_lookup_key = { .src_port = inner_udp->dest };  /* Note: field name is src_port but we're matching dest */
         struct nat_entry *nat_entry = bpf_map_lookup_elem(&nat_map, &nat_lookup_key);
         if (nat_entry) {
             pctx->flags |= PIPELINE_FLAG_NAT_REQUIRED;
             pctx->nat_target_ip = nat_entry->target_ip;
             pctx->nat_target_port = nat_entry->target_port;
+            
+            /* Debug: Track NAT matches */
+            update_stat(STAT_PACKET_SIZE_DEBUG, bpf_ntohs(inner_udp->dest));
+        } else {
+            /* No NAT rule found for this destination port */
+            /* This might explain why some packets aren't getting NAT'd */
         }
     }
     
@@ -1695,6 +1710,32 @@ int nat_engine(struct xdp_md *ctx)
             if (result == 0) {
                 pctx->nat_applied = 1;
                 update_stat(STAT_NAT_APPLIED, 1);
+            } else {
+                /* NAT failed - this might explain wrong destinations */
+                update_stat(STAT_ERRORS, 1);
+            }
+        }
+    } else {
+        /* No NAT required - this might be the issue! */
+        /* Some packets should get NAT but aren't flagged for it */
+        /* Let's try to apply NAT to ALL UDP packets as fallback */
+        if (ip_hdr->protocol == IPPROTO_UDP) {
+            udp_hdr = (struct udphdr *)((char *)ip_hdr + (ip_hdr->ihl * 4));
+            
+            if ((void *)(udp_hdr + 1) <= data_end) {
+                /* Try NAT lookup directly */
+                struct nat_key fallback_key = { .src_port = udp_hdr->dest };
+                struct nat_entry *fallback_entry = bpf_map_lookup_elem(&nat_map, &fallback_key);
+                if (fallback_entry) {
+                    /* Found NAT rule that was missed earlier! */
+                    result = apply_nat(ip_hdr, udp_hdr, data_end);
+                    if (result == 0) {
+                        pctx->nat_applied = 1;
+                        update_stat(STAT_NAT_APPLIED, 1);
+                        /* Track this as a recovered NAT */
+                        update_stat(STAT_PACKET_SIZE_DEBUG, bpf_ntohs(udp_hdr->dest) | 0x80000000);
+                    }
+                }
             }
         }
     }
