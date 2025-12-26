@@ -1254,31 +1254,30 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     /* High 16 bits = old_len, Low 16 bits = expected_ip_len */
     update_stat(STAT_PACKET_SIZE_DEBUG, (old_len << 16) | (expected_ip_len & 0xFFFF));
     
-    /* DIRECT MEMORY WRITE with immediate verification */
-    volatile __u16 *len_ptr = &ip_hdr->tot_len;
-    *len_ptr = bpf_htons((__u16)expected_ip_len);
+    /* Calculate the CORRECT IP length based on actual packet size */
+    __u16 expected_ip_len = packet_len - sizeof(struct ethhdr);
+    old_len = bpf_ntohs(ip_hdr->tot_len);
     
-    /* Memory barrier - force write completion */
-    __sync_synchronize();
+    /* Evidence Collection: Track the exact values we see */
+    update_stat(STAT_PACKET_SIZE_DEBUG, (old_len << 16) | (expected_ip_len & 0xFFFF));
     
-    /* IMMEDIATE verification with fresh read */
-    __u16 written_value = bpf_ntohs(*len_ptr);
-    if (written_value != expected_ip_len) {
-        update_stat(STAT_ERRORS, 1);  /* Write verification failed */
-        
-        /* Try alternative write method */
-        ip_hdr->tot_len = bpf_htons((__u16)expected_ip_len);
-        __sync_synchronize();
-        
-        /* Re-verify */
-        __u16 retry_value = bpf_ntohs(ip_hdr->tot_len);
-        if (retry_value != expected_ip_len) {
-            update_stat(STAT_ERRORS, 1);  /* Both write methods failed */
-        }
+    /* EVIDENCE: Count 1500 occurrences */
+    if (old_len == 1500) {
+        update_stat(STAT_ERRORS, 1);  /* Detection counter */
     }
     
-    /* Clear checksum after successful length update */
-    ip_hdr->check = 0;
+    /* CRITICAL INSIGHT: Maybe packet_len is wrong? Let's verify... */
+    __u32 actual_packet_size = (char *)data_end - (char *)data;
+    if (actual_packet_size != packet_len) {
+        /* AHA! The packet_len parameter might be stale/incorrect */
+        expected_ip_len = actual_packet_size - sizeof(struct ethhdr);
+        /* Use the REAL measured packet size instead */
+        update_stat(STAT_ERRORS, 1);  /* Count size mismatches */
+    }
+    
+    /* Update IP length field */
+    ip_hdr->tot_len = bpf_htons(expected_ip_len);
+    ip_hdr->check = 0;  /* Clear checksum */
     
     /* EVIDENCE: Detect the specific 1500→1486 pattern */
     if (old_len == 1500) {
