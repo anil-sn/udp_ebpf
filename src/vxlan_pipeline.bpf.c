@@ -1835,7 +1835,7 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     }
     
     update_stat(STAT_TOTAL_PACKETS, 1);
-    update_stat(STAT_ERRORS, 1);  /* Count tail call failure as error */
+    /* Note: Only increment errors on actual tail call failures, not successful processing */
     
     /* If tail call failed, pass all traffic to avoid drops */
     return XDP_PASS;
