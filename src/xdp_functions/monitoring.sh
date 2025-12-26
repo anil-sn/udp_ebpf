@@ -60,16 +60,16 @@ show_clean_statistics() {
         fi
         
         # Parse statistics using jq (sum across all CPUs)
-        local total_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 0) | .values[].value] | add // 0')
-        local vxlan_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 1) | .values[].value] | add // 0')
-        local inner_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 2) | .values[].value] | add // 0')
-        local nat_applied=$(echo "$stats_json" | jq -r '[.[] | select(.key == 3) | .values[].value] | add // 0')
-        local df_cleared=$(echo "$stats_json" | jq -r '[.[] | select(.key == 4) | .values[].value] | add // 0')
-        local forwarded=$(echo "$stats_json" | jq -r '[.[] | select(.key == 5) | .values[].value] | add // 0')
-        local redirected=$(echo "$stats_json" | jq -r '[.[] | select(.key == 6) | .values[].value] | add // 0')
-        local errors=$(echo "$stats_json" | jq -r '[.[] | select(.key == 7) | .values[].value] | add // 0')
-        local bytes_processed=$(echo "$stats_json" | jq -r '[.[] | select(.key == 8) | .values[].value] | add // 0')
-        local length_corrections=$(echo "$stats_json" | jq -r '[.[] | select(.key == 15) | .values[].value] | add // 0')
+        local total_packets=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 0) | .formatted.values[].value] | add // 0')
+        local vxlan_packets=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 1) | .formatted.values[].value] | add // 0')
+        local inner_packets=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 2) | .formatted.values[].value] | add // 0')
+        local nat_applied=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 3) | .formatted.values[].value] | add // 0')
+        local df_cleared=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 4) | .formatted.values[].value] | add // 0')
+        local forwarded=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 5) | .formatted.values[].value] | add // 0')
+        local redirected=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 6) | .formatted.values[].value] | add // 0')
+        local errors=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 7) | .formatted.values[].value] | add // 0')
+        local bytes_processed=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 8) | .formatted.values[].value] | add // 0')
+        local length_corrections=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 15) | .formatted.values[].value] | add // 0')
         
         # Calculate rates (difference from previous readings)
         local total_pps=0
@@ -180,15 +180,15 @@ show_compact_statistics() {
         fi
         
         # Parse statistics using jq (sum across all CPUs)
-        local total_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 0) | .values[].value] | add // 0')
-        local vxlan_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 1) | .values[].value] | add // 0')
-        local inner_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 2) | .values[].value] | add // 0')
-        local nat_applied=$(echo "$stats_json" | jq -r '[.[] | select(.key == 3) | .values[].value] | add // 0')
-        local df_cleared=$(echo "$stats_json" | jq -r '[.[] | select(.key == 4) | .values[].value] | add // 0')
-        local forwarded=$(echo "$stats_json" | jq -r '[.[] | select(.key == 5) | .values[].value] | add // 0')
-        local redirected=$(echo "$stats_json" | jq -r '[.[] | select(.key == 6) | .values[].value] | add // 0')
-        local errors=$(echo "$stats_json" | jq -r '[.[] | select(.key == 7) | .values[].value] | add // 0')
-        local ip_len_updated=$(echo "$stats_json" | jq -r '[.[] | select(.key == 9) | .values[].value] | add // 0')
+        local total_packets=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 0) | .formatted.values[].value] | add // 0')
+        local vxlan_packets=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 1) | .formatted.values[].value] | add // 0')
+        local inner_packets=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 2) | .formatted.values[].value] | add // 0')
+        local nat_applied=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 3) | .formatted.values[].value] | add // 0')
+        local df_cleared=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 4) | .formatted.values[].value] | add // 0')
+        local forwarded=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 5) | .formatted.values[].value] | add // 0')
+        local redirected=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 6) | .formatted.values[].value] | add // 0')
+        local errors=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 7) | .formatted.values[].value] | add // 0')
+        local ip_len_updated=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 9) | .formatted.values[].value] | add // 0')
         
         # Calculate rates (skip first iteration)
         if [ "$first_run" = "true" ]; then
@@ -337,21 +337,21 @@ show_statistics() {
     fi
     
     # Sum statistics across all CPUs using jq
-    local total_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 0) | .values[].value] | add // 0')
-    local vxlan_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 1) | .values[].value] | add // 0')
-    local inner_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 2) | .values[].value] | add // 0')
-    local nat_applied=$(echo "$stats_json" | jq -r '[.[] | select(.key == 3) | .values[].value] | add // 0')
-    local df_cleared=$(echo "$stats_json" | jq -r '[.[] | select(.key == 4) | .values[].value] | add // 0')
-    local forwarded=$(echo "$stats_json" | jq -r '[.[] | select(.key == 5) | .values[].value] | add // 0')
-    local redirected=$(echo "$stats_json" | jq -r '[.[] | select(.key == 6) | .values[].value] | add // 0')
-    local errors=$(echo "$stats_json" | jq -r '[.[] | select(.key == 7) | .values[].value] | add // 0')
-    local bytes_processed=$(echo "$stats_json" | jq -r '[.[] | select(.key == 8) | .values[].value] | add // 0')
-    local ip_len_updated=$(echo "$stats_json" | jq -r '[.[] | select(.key == 9) | .values[].value] | add // 0')
-    local udp_len_updated=$(echo "$stats_json" | jq -r '[.[] | select(.key == 10) | .values[].value] | add // 0')
-    local ip_checksum_updated=$(echo "$stats_json" | jq -r '[.[] | select(.key == 11) | .values[].value] | add // 0')
-    local bounds_check_failed=$(echo "$stats_json" | jq -r '[.[] | select(.key == 12) | .values[].value] | add // 0')
-    local ringbuf_submitted=$(echo "$stats_json" | jq -r '[.[] | select(.key == 13) | .values[].value] | add // 0')
-    local length_corrections=$(echo "$stats_json" | jq -r '[.[] | select(.key == 15) | .values[].value] | add // 0')
+    local total_packets=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 0) | .formatted.values[].value] | add // 0')
+    local vxlan_packets=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 1) | .formatted.values[].value] | add // 0')
+    local inner_packets=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 2) | .formatted.values[].value] | add // 0')
+    local nat_applied=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 3) | .formatted.values[].value] | add // 0')
+    local df_cleared=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 4) | .formatted.values[].value] | add // 0')
+    local forwarded=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 5) | .formatted.values[].value] | add // 0')
+    local redirected=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 6) | .formatted.values[].value] | add // 0')
+    local errors=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 7) | .formatted.values[].value] | add // 0')
+    local bytes_processed=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 8) | .formatted.values[].value] | add // 0')
+    local ip_len_updated=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 9) | .formatted.values[].value] | add // 0')
+    local udp_len_updated=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 10) | .formatted.values[].value] | add // 0')
+    local ip_checksum_updated=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 11) | .formatted.values[].value] | add // 0')
+    local bounds_check_failed=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 12) | .formatted.values[].value] | add // 0')
+    local ringbuf_submitted=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 13) | .formatted.values[].value] | add // 0')
+    local length_corrections=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 15) | .formatted.values[].value] | add // 0')
     
     # Calculate percentages and rates
     local vxlan_pct=0
@@ -508,11 +508,11 @@ log_statistics() {
     local log_file="${LOG_FILE:-/tmp/vxlan_pipeline.log}"
     
     # Extract key metrics
-    local total_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 0) | .values[].value] | add // 0')
-    local vxlan_packets=$(echo "$stats_json" | jq -r '[.[] | select(.key == 1) | .values[].value] | add // 0')
-    local errors=$(echo "$stats_json" | jq -r '[.[] | select(.key == 7) | .values[].value] | add // 0')
-    local forwarded=$(echo "$stats_json" | jq -r '[.[] | select(.key == 5) | .values[].value] | add // 0')
-    local redirected=$(echo "$stats_json" | jq -r '[.[] | select(.key == 6) | .values[].value] | add // 0')
+    local total_packets=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 0) | .formatted.values[].value] | add // 0')
+    local vxlan_packets=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 1) | .formatted.values[].value] | add // 0')
+    local errors=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 7) | .formatted.values[].value] | add // 0')
+    local forwarded=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 5) | .formatted.values[].value] | add // 0')
+    local redirected=$(echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 6) | .formatted.values[].value] | add // 0')
     
     # Calculate success rate
     local success_rate=0
