@@ -413,11 +413,6 @@ case "${1:-status}" in
         else
             print_color "green" "✓ Already using 8 queues"
         fi
-                fi
-            fi
-        else
-            print_color "green" "✓ Already using 8 queues"
-        fi
         
         # Always optimize for 8 CPUs regardless of queue scaling success
         local target_cpus=8
