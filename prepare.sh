@@ -70,7 +70,7 @@ install_dependencies() {
             }
             
             # Network tools (including ARP discovery)
-            sudo apt-get install -y iproute2 net-tools tcpdump arping iputils-arping
+            sudo apt-get install -y iproute2 net-tools tcpdump iputils-arping
             log "Network tools installed (including arping for MAC discovery)"
             
             # Extended XDP development packages
