@@ -748,15 +748,6 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         /* ALWAYS increment debug counter first to prove code execution */
         update_stat(STAT_IP_LEN_UPDATED, 1); /* Force increment to prove code path */
         
-        /* Your analysis implementation: Proper length calculation after VXLAN decapsulation */
-        __u32 total_packet_len = data_end - data;
-        
-        /* Validate packet size after decapsulation */
-        if (total_packet_len < ETH_HLEN + sizeof(struct iphdr)) {
-            update_stat(STAT_ERRORS, 1);
-            goto skip_length_updates;
-        }
-        
         /* Get inner Ethernet header (data already points to inner frame after adjust_head) */
         struct ethhdr *inner_eth = (struct ethhdr *)data;
         if ((void *)(inner_eth + 1) > data_end) {
@@ -771,17 +762,37 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
             goto skip_length_updates;
         }
         
-        /* CRITICAL FIX: Calculate correct IP total length (your analysis) */
-        __u32 ip_payload_len = total_packet_len - ETH_HLEN;  // Total packet minus Ethernet header
-        inner_iph->tot_len = bpf_htons((__u16)ip_payload_len);
+        /* CRITICAL FIX: Calculate correct lengths after VXLAN decapsulation */
+        __u32 decap_packet_len = data_end - data;  // Actual packet size after decapsulation
+        __u32 decap_ip_len = decap_packet_len - ETH_HLEN;  // IP packet length after decap
         
-        /* Update UDP length if this is a UDP packet (your analysis) */
+        /* Validate decapsulated length makes sense (1486 = max after ETH header removal) */
+        if (decap_packet_len < ETH_HLEN + sizeof(struct iphdr) || 
+            decap_ip_len < sizeof(struct iphdr) || decap_ip_len > 1486) {
+            update_stat(STAT_ERRORS, 1);
+            goto skip_length_updates;
+        }
+        
+        /* Update IP total length to match actual decapsulated packet */
+        inner_iph->tot_len = bpf_htons((__u16)decap_ip_len);
+        
+        /* Update UDP length if this is a UDP packet */
         if (inner_iph->protocol == IPPROTO_UDP) {
-            struct udphdr *inner_udph = (struct udphdr *)((char *)inner_iph + (inner_iph->ihl * 4));
+            /* Validate IP header length before using it */
+            __u32 ip_hdr_len = inner_iph->ihl * 4;
+            if (ip_hdr_len < IP_HEADER_MIN_SIZE || ip_hdr_len > IP_HEADER_MAX_SIZE) {
+                goto skip_length_updates; /* Invalid IP header length */
+            }
+            
+            struct udphdr *inner_udph = (struct udphdr *)((char *)inner_iph + ip_hdr_len);
             if ((void *)(inner_udph + 1) <= data_end) {
-                __u32 udp_payload_len = ip_payload_len - (inner_iph->ihl * 4);  // IP payload minus IP header
-                inner_udph->len = bpf_htons((__u16)udp_payload_len);
-                inner_udph->check = 0;  /* Zero UDP checksum for performance */
+                __u32 decap_udp_len = decap_ip_len - ip_hdr_len;  // UDP length after decap
+                
+                /* Validate UDP length is reasonable */
+                if (decap_udp_len >= sizeof(struct udphdr) && decap_udp_len <= 1466) {
+                    inner_udph->len = bpf_htons((__u16)decap_udp_len);
+                    inner_udph->check = 0;  /* Zero UDP checksum for performance */
+                }
             }
         }
         
@@ -809,8 +820,8 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         
         skip_length_updates:;  /* Add semicolon to make it a null statement */
         
-        /* Calculate packet length AFTER length updates */
-        __u32 pkt_len = data_end - data;
+        /* Calculate packet length AFTER length updates for ring buffer */
+        __u32 pkt_len = data_end - data;  // Use current packet boundaries
         if (pkt_len > 1500) {
             pkt_len = 1500; /* Limit to max packet data size */
         }
