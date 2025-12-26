@@ -765,21 +765,20 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
          * DEBUG: Force execution and comprehensive tracking
          */
         
-        /* Get inner Ethernet header (data already points to inner frame after adjust_head) */
-        struct ethhdr *inner_eth = (struct ethhdr *)data;
-        if ((void *)(inner_eth + 1) > data_end) {
+        /* After bpf_xdp_adjust_head(), data now points directly to inner Ethernet header */
+        /* NO NEED to re-parse - just validate minimum packet size and access headers directly */
+        
+        /* Basic validation: ensure minimum packet size (Ethernet + IP headers) */
+        __u32 min_packet_size = sizeof(struct ethhdr) + sizeof(struct iphdr);
+        if (data + min_packet_size > data_end) {
             update_stat(STAT_ERRORS, 1);
             update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
             goto skip_length_updates;
         }
         
-        /* Get inner IP header */
-        struct iphdr *inner_iph = (struct iphdr *)(inner_eth + 1);
-        if ((void *)(inner_iph + 1) > data_end) {
-            update_stat(STAT_ERRORS, 1);
-            update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
-            goto skip_length_updates;
-        }
+        /* Access headers directly - we know structure after adjust_head */
+        struct ethhdr *inner_eth = (struct ethhdr *)data;
+        struct iphdr *inner_iph = (struct iphdr *)(data + sizeof(struct ethhdr));
         
         /* CRITICAL FIX: Calculate correct lengths after VXLAN decapsulation */
         __u32 decap_packet_len = data_end - data;  // Actual packet size after decapsulation
