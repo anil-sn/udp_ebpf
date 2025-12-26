@@ -304,78 +304,18 @@ static __always_inline int is_ip_allowed(struct iphdr *iph) {
 }
 
 /*
- * Fast IP Header Checksum Calculation
- * 
- * ALGORITHM OVERVIEW:
- * ==================
- * Implements the standard Internet Checksum algorithm (RFC 791, RFC 1071)
- * optimized for eBPF verifier compatibility and high-performance processing.
- * 
- * CHECKSUM ALGORITHM:
- * ==================
- * 1. Sum all 16-bit words in the IP header
- * 2. Add any carry bits that result from the sum
- * 3. Take the one's complement of the final result
- * 
- * eBPF OPTIMIZATIONS:
- * ==================
- * - Manual loop unrolling: Avoids verifier issues with bounded loops
- * - Network byte order: Proper endianness handling with bpf_ntohs/bpf_htons
- * - Bounds checking: All memory accesses are verified to be within packet bounds
- * - Minimal branching: Reduces pipeline stalls and improves cache efficiency
- * 
- * PERFORMANCE CHARACTERISTICS:
- * ===========================
- * - Execution time: ~50-100 CPU cycles per checksum
- * - Memory accesses: 10 reads (IP header is always 20 bytes minimum)
- * - Cache efficiency: Single cache line access for standard IP headers
- * 
- * ALTERNATIVE APPROACH:
- * ====================
- * For even higher performance in production, consider using the eBPF
- * bpf_csum_diff() helper function, which leverages hardware acceleration
- * on supported NICs.
+ * IP Header Checksum using eBPF helper
+ * Uses bpf_csum_diff for efficient, verifier-friendly checksum calculation
  */
 static __always_inline __u16 ip_checksum(struct iphdr *iph)
 {
-    __u32 sum = 0;
-    __u16 *ptr = (__u16 *)iph;
-    
-    /* Clear existing checksum field before calculation */
     __u16 old_check = iph->check;
-    iph->check = 0;
+    iph->check = 0;  /* Clear checksum field */
     
-    /* 
-     * Sum all 16-bit words in IP header (20 bytes = 10 words)
-     * Manual unroll prevents eBPF verifier issues with loops
-     * 
-     * IP Header layout (20 bytes):
-     * Word 0-1: Version|IHL|ToS, Total Length
-     * Word 2-3: Identification, Flags|Fragment Offset  
-     * Word 4-5: TTL|Protocol|Checksum (checksum now 0)
-     * Word 6-7: Source Address (32 bits)
-     * Word 8-9: Destination Address (32 bits)
-     */
-    sum += bpf_ntohs(ptr[0]);  /* Version, IHL, ToS, Total Length */
-    sum += bpf_ntohs(ptr[1]);
-    sum += bpf_ntohs(ptr[2]);  /* Identification, Flags, Fragment Offset */
-    sum += bpf_ntohs(ptr[3]);
-    sum += bpf_ntohs(ptr[4]);  /* TTL, Protocol, Checksum (now 0) */
-    sum += bpf_ntohs(ptr[5]);
-    sum += bpf_ntohs(ptr[6]);  /* Source Address (high 16 bits) */
-    sum += bpf_ntohs(ptr[7]);  /* Source Address (low 16 bits) */
-    sum += bpf_ntohs(ptr[8]);  /* Destination Address (high 16 bits) */
-    sum += bpf_ntohs(ptr[9]);  /* Destination Address (low 16 bits) */
+    /* Use eBPF helper for efficient checksum calculation */
+    __s64 csum = bpf_csum_diff(0, 0, (__be32 *)iph, sizeof(struct iphdr), 0);
     
-    /* 
-     * Fold 32-bit sum into 16-bit checksum
-     * Add any carry bits that occurred during summation
-     */
-    sum = (sum & 0xFFFF) + (sum >> 16);  /* Add high 16 bits to low 16 bits */
-    sum = (sum & 0xFFFF) + (sum >> 16);  /* Add any remaining carry */
-    
-    /* Return one's complement of the sum in network byte order */
-    return bpf_htons(~sum);
+    return (__u16)csum;
 }
 
 /*
@@ -387,14 +327,14 @@ static __always_inline __u16 udp_checksum(struct iphdr *iph, struct udphdr *udph
 {
     __u16 udp_len = bpf_ntohs(udph->len);
     
-    /* Validate UDP length */
-    if (udp_len < sizeof(struct udphdr)) {
+    /* Validate UDP length with explicit bounds for verifier */
+    if (udp_len < sizeof(struct udphdr) || udp_len > 1500) {
         return 0;
     }
     
-    /* Calculate total UDP packet size (header + payload) */
-    void *udp_end = (void *)udph + udp_len;
-    if (udp_end > data_end) {
+    /* Ensure we don't read beyond packet boundary */
+    if ((void *)udph + udp_len > data_end) {
+        /* Adjust udp_len to fit within packet bounds */
         udp_len = (char *)data_end - (char *)udph;
         if (udp_len < sizeof(struct udphdr)) {
             return 0;
@@ -419,9 +359,20 @@ static __always_inline __u16 udp_checksum(struct iphdr *iph, struct udphdr *udph
         .len = bpf_htons(udp_len)
     };
     
+    /* Round udp_len to multiple of 4 for bpf_csum_diff requirement */
+    __u16 padded_len = (udp_len + 3) & ~3;
+    
+    /* Ensure padded length doesn't exceed packet bounds */
+    if ((void *)udph + padded_len > data_end) {
+        padded_len = ((char *)data_end - (char *)udph) & ~3;
+        if (padded_len < sizeof(struct udphdr)) {
+            return 0;
+        }
+    }
+    
     /* Calculate checksum: pseudo-header + UDP header + payload */
     __s64 csum = bpf_csum_diff(0, 0, (__be32 *)&pseudo_hdr, sizeof(pseudo_hdr), 0);
-    csum = bpf_csum_diff(0, 0, (__be32 *)udph, udp_len, csum);
+    csum = bpf_csum_diff(0, 0, (__be32 *)udph, padded_len, csum);
     
     return csum ? (__u16)csum : 0xFFFF;
 }
