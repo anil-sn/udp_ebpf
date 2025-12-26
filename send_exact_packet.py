@@ -7,9 +7,9 @@ import socket
 import struct
 
 def build_exact_packet():
-    # Ethernet Header (14 bytes) - Use correct ens5 MAC address
-    dst_mac = bytes.fromhex('0a5f3811aaaf')  # Real ens5 MAC from ifconfig
-    src_mac = bytes.fromhex('0a205587cbdd')  # Source MAC  
+    # Ethernet Header (14 bytes) - Use gateway MAC for AWS routing
+    dst_mac = bytes.fromhex('0a2ce332fbb9')  # Gateway MAC (AWS routes via gateway)
+    src_mac = bytes.fromhex('0a7755c207b3')  # ens5 MAC address  
     ethertype = struct.pack('!H', 0x0800)   # IPv4
     
     # IPv4 Header (20 bytes) 
@@ -122,8 +122,8 @@ def send_exact_packet():
         
         # Verify key fields
         print("\nPacket verification:")
-        print(f"Dest MAC: {packet[:6].hex()} (should be 0a5f3811aaaf)")
-        print(f"Src MAC: {packet[6:12].hex()} (should be 0a205587cbdd)")
+        print(f"Dest MAC: {packet[:6].hex()} (using gateway MAC)")
+        print(f"Src MAC: {packet[6:12].hex()} (should be 0a7755c207b3)")
         print(f"EtherType: {packet[12:14].hex()} (should be 0800)")
         print(f"IP Total Length: {struct.unpack('!H', packet[16:18])[0]} (should be 1361)")
         print(f"UDP Src Port: {struct.unpack('!H', packet[34:36])[0]} (should be 19458)")
@@ -132,11 +132,11 @@ def send_exact_packet():
         
         # Create raw socket
         sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0800))
-        sock.bind(('ens6', 0))
+        sock.bind(('ens5', 0))  # Use ens5 - same interface as routing table
         
         # Send packet
         bytes_sent = sock.send(packet)
-        print(f"\n✅ Sent {bytes_sent} bytes via ens6!")
+        print(f"\n✅ Sent {bytes_sent} bytes via ens5!")  # Updated interface
         print("Packet details:")
         print(f"  172.30.82.13:19458 -> 172.30.82.95:1035")
         print(f"  UDP payload: 1333 bytes")
