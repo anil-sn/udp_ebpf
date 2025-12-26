@@ -450,19 +450,17 @@ static __always_inline int apply_nat(struct iphdr *iph, struct udphdr *udph, voi
     
     /* 
      * UDP checksum recalculation:
-     * Using eBPF helper with verifier-safe bounds checking
+     * Using eBPF helper with explicit packet bounds verification
      */
     udph->check = 0;
     
     /* Get UDP length with explicit bounds */
     __u16 udp_len = bpf_ntohs(udph->len);
     
-    /* Conservative bounds checking to satisfy verifier */
-    if (udp_len >= 8 && udp_len <= 64) {  /* Very conservative limit */
-        /* Calculate available space without pointer arithmetic */
-        __u32 available_bytes = (char *)data_end - (char *)udph;
-        
-        if (available_bytes >= udp_len) {
+    /* Very conservative bounds checking to satisfy verifier */
+    if (udp_len >= 8 && udp_len <= 32) {  /* Even more conservative limit */
+        /* Explicit packet bounds check that verifier can understand */
+        if ((void *)udph + udp_len <= data_end) {
             /* Create pseudo-header */
             struct {
                 __be32 saddr;
@@ -480,7 +478,7 @@ static __always_inline int apply_nat(struct iphdr *iph, struct udphdr *udph, voi
             
             /* Calculate checksum with proper alignment */
             __u16 aligned_len = (udp_len + 3) & ~3;
-            if (aligned_len <= 64 && available_bytes >= aligned_len) {
+            if (aligned_len <= 32 && (void *)udph + aligned_len <= data_end) {
                 __s64 csum = bpf_csum_diff(0, 0, (__be32 *)&pseudo, sizeof(pseudo), 0);
                 csum = bpf_csum_diff(0, 0, (__be32 *)udph, aligned_len, csum);
                 udph->check = csum ? (__u16)csum : 0xFFFF;
