@@ -396,28 +396,23 @@ case "${1:-status}" in
         ;;
     "max-performance")
         get_system_info
-        print_color "blue" "Configuring for maximum performance (forcing 8 queues)..."
+        print_color "blue" "Configuring for maximum performance (SSH-safe method)..."
         
-        # Always force 8 queues - this is required for maximum performance
+        # Always attempt 8 queues but never risk SSH disconnection
         if [ "$CURRENT_QUEUES" -lt 8 ]; then
-            print_color "yellow" "Force scaling network queues: $CURRENT_QUEUES → 8 (may cause brief disconnection)"
+            print_color "yellow" "Attempting to scale network queues: $CURRENT_QUEUES → 8 (safe method only)"
             
-            # Use aggressive method for AWS ENA - bring interface down/up
-            if sudo ip link set "$INTERFACE" down && \
-               sudo ethtool -L "$INTERFACE" combined 8 && \
-               sudo ip link set "$INTERFACE" up; then
-                print_color "green" "✓ Successfully forced 8 queues"
-                # Update our tracking
+            # Use ONLY safe method - never bring interface down to avoid SSH disconnection
+            if sudo ethtool -L "$INTERFACE" combined 8 2>/dev/null; then
+                print_color "green" "✓ Successfully scaled to 8 queues"
                 get_system_info
             else
-                # Fallback: try without bringing interface down
-                print_color "yellow" "Trying fallback method..."
-                if sudo ethtool -L "$INTERFACE" combined 8 2>/dev/null; then
-                    print_color "green" "✓ Successfully set 8 queues (fallback method)"
-                    get_system_info
-                else
-                    print_color "red" "✗ Failed to force 8 queues - AWS ENA driver limitation"
-                    print_color "yellow" "Continuing with current $CURRENT_QUEUES queues"
+                print_color "yellow" "⚠ Queue scaling failed (AWS ENA limitation)"
+                print_color "blue" "Continuing with $CURRENT_QUEUES queues, optimizing for 8-core processing"
+            fi
+        else
+            print_color "green" "✓ Already using 8 queues"
+        fi
                 fi
             fi
         else
