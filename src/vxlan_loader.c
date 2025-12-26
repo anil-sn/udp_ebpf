@@ -744,8 +744,44 @@ static int load_bpf_program()
     interface_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "interface_map");
     nat_target_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "nat_target_map");
     
-    if (stats_map_fd < 0 || nat_map_fd < 0 || redirect_map_fd < 0 || interface_map_fd < 0 || nat_target_map_fd < 0) {
+    /* Get new tail call maps */
+    int pipeline_programs_fd = bpf_object__find_map_fd_by_name(bpf_obj, "pipeline_programs");
+    int pipeline_ctx_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "pipeline_ctx_map");
+    
+    if (stats_map_fd < 0 || nat_map_fd < 0 || redirect_map_fd < 0 || 
+        interface_map_fd < 0 || nat_target_map_fd < 0 || 
+        pipeline_programs_fd < 0 || pipeline_ctx_map_fd < 0) {
         fprintf(stderr, "Failed to find required maps\n");
+        bpf_object__close(bpf_obj);
+        bpf_obj = NULL;
+        return -1;
+    }
+    
+    /* Set up program array for tail calls */
+    struct bpf_program *classifier_prog = bpf_object__find_program_by_name(bpf_obj, "vxlan_classifier");
+    struct bpf_program *processor_prog = bpf_object__find_program_by_name(bpf_obj, "vxlan_processor");
+    struct bpf_program *nat_prog = bpf_object__find_program_by_name(bpf_obj, "nat_engine");
+    struct bpf_program *forward_prog = bpf_object__find_program_by_name(bpf_obj, "forwarding_stage");
+    
+    if (!classifier_prog || !processor_prog || !nat_prog || !forward_prog) {
+        fprintf(stderr, "Failed to find pipeline stage programs\n");
+        bpf_object__close(bpf_obj);
+        bpf_obj = NULL;
+        return -1;
+    }
+    
+    /* Populate program array map */
+    __u32 stage_0 = 0, stage_1 = 1, stage_2 = 2, stage_3 = 3;
+    int classifier_fd = bpf_program__fd(classifier_prog);
+    int processor_fd = bpf_program__fd(processor_prog);
+    int nat_fd = bpf_program__fd(nat_prog);
+    int forward_fd = bpf_program__fd(forward_prog);
+    
+    if (bpf_map_update_elem(pipeline_programs_fd, &stage_0, &classifier_fd, BPF_ANY) ||
+        bpf_map_update_elem(pipeline_programs_fd, &stage_1, &processor_fd, BPF_ANY) ||
+        bpf_map_update_elem(pipeline_programs_fd, &stage_2, &nat_fd, BPF_ANY) ||
+        bpf_map_update_elem(pipeline_programs_fd, &stage_3, &forward_fd, BPF_ANY)) {
+        fprintf(stderr, "Failed to populate program array map\n");
         bpf_object__close(bpf_obj);
         bpf_obj = NULL;
         return -1;
