@@ -71,7 +71,7 @@ calculate_performance() {
         fi
     fi
     
-    echo "$current_time $current_packets $current_errors" > "/tmp/xdp_perf_state"
+    # Clean up old performance state files to prevent disk space issues\n    find /tmp -name \"xdp_perf_state*\" -mtime +1 -delete 2>/dev/null || true\n    \n    echo \"$current_time $current_packets $current_errors\" > \"/tmp/xdp_perf_state\"
     echo "$pps $error_rate"
 }
 
@@ -186,8 +186,11 @@ scale_performance() {
 # Cleanup function
 cleanup_scaling() {
     echo "Cleaning up performance scaling artifacts..."
-    rm -f "/tmp/xdp_perf_state"
-    echo "SUCCESS: Cleanup completed"
+    rm -f "/tmp/xdp_perf_state"*
+    # Clean up any old log files to prevent disk space issues
+    find /tmp -name "vxlan_*.log" -mtime +7 -delete 2>/dev/null || true
+    find /tmp -name "packet_injector_*.log" -mtime +1 -delete 2>/dev/null || true
+    echo "SUCCESS: Enhanced cleanup completed"
 }
 
 # Export functions

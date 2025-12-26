@@ -157,7 +157,7 @@ start_pipeline() {
             # Start 8 packet injector instances with CPU affinity
             for ((cpu=0; cpu<8; cpu++)); do
                 nohup taskset -c "$cpu" sudo ./packet_injector vxlan_pipeline.bpf.o "$TARGET_INTERFACE" \
-                    </dev/null >"/tmp/packet_injector_cpu${cpu}.log" 2>&1 &
+                    </dev/null >/dev/null 2>&1 &
                 sleep 0.2  # Small delay between starts
             done
             
@@ -179,7 +179,7 @@ start_pipeline() {
                 print_color "green" "✓ CPU affinity optimized for all injector processes"
             else
                 print_color "yellow" "Warning: No packet injector processes started"
-                print_color "yellow" "Check logs: ls /tmp/packet_injector_cpu*.log"
+                print_color "yellow" "Packet injectors running with minimal logging to conserve disk space"
             fi
         else
             print_color "yellow" "Warning: vxlan_pipeline.bpf.o not found, skipping packet injector"
@@ -319,6 +319,8 @@ cleanup_pipeline() {
     print_color "yellow" "Cleaning temporary files..."
     sudo rm -rf /tmp/xdp_test_* 2>/dev/null && print_color "green" "  SUCCESS: Removed test directories"
     sudo rm -rf /tmp/vxlan_* 2>/dev/null && print_color "green" "  SUCCESS: Removed temporary files"
+    sudo rm -rf /tmp/packet_injector_cpu*.log 2>/dev/null && print_color "green" "  SUCCESS: Removed injector logs"
+    sudo rm -rf /tmp/vxlan_pipeline.log* 2>/dev/null && print_color "green" "  SUCCESS: Removed pipeline logs"
     
     # Reset interface configurations (optional)
     if [ "${1:-}" = "--reset-interfaces" ]; then

@@ -38,6 +38,156 @@ get_interface_stats() {
     echo "$rx_packets:$tx_packets:$rx_bytes:$tx_bytes:$rx_dropped:$tx_dropped"
 }
 
+# Enhanced PPS monitoring for both incoming and target interfaces
+monitor_interface_pps() {
+    local incoming_iface="${INTERFACE:-ens5}"
+    local target_iface="${TARGET_INTERFACE:-ens6}"
+    local interval="${1:-1}"
+    local duration="${2:-0}"  # 0 = infinite
+    
+    print_color "cyan" "🔍 DUAL INTERFACE PPS MONITOR"
+    print_color "blue" "Incoming: $incoming_iface | Target: $target_iface | Interval: ${interval}s"
+    echo ""
+    
+    # Storage for previous statistics
+    local -A prev_stats
+    local start_time=$(date +%s)
+    local iterations=0
+    
+    # Initial readings
+    local incoming_stats=$(get_interface_stats "$incoming_iface")
+    local target_stats=$(get_interface_stats "$target_iface")
+    
+    prev_stats["incoming_rx"]=$(echo "$incoming_stats" | cut -d: -f1)
+    prev_stats["incoming_tx"]=$(echo "$incoming_stats" | cut -d: -f2)
+    prev_stats["target_rx"]=$(echo "$target_stats" | cut -d: -f1)
+    prev_stats["target_tx"]=$(echo "$target_stats" | cut -d: -f2)
+    
+    # Header
+    printf "%-8s | %-15s | %-15s | %-15s | %-15s\n" "TIME" "INCOMING-RX" "INCOMING-TX" "TARGET-RX" "TARGET-TX"
+    printf "%-8s | %-15s | %-15s | %-15s | %-15s\n" "--------" "---------------" "---------------" "---------------" "---------------"
+    
+    # Set trap for Ctrl+C
+    trap 'print_color "yellow" "\n📊 PPS monitoring stopped"; return 0' INT
+    
+    while true; do
+        sleep "$interval"
+        iterations=$((iterations + 1))
+        
+        # Get current statistics
+        incoming_stats=$(get_interface_stats "$incoming_iface")
+        target_stats=$(get_interface_stats "$target_iface")
+        
+        # Parse current values
+        local incoming_rx=$(echo "$incoming_stats" | cut -d: -f1)
+        local incoming_tx=$(echo "$incoming_stats" | cut -d: -f2)
+        local target_rx=$(echo "$target_stats" | cut -d: -f1)
+        local target_tx=$(echo "$target_stats" | cut -d: -f2)
+        
+        # Calculate PPS
+        local incoming_rx_pps=$(( (incoming_rx - prev_stats["incoming_rx"]) / interval ))
+        local incoming_tx_pps=$(( (incoming_tx - prev_stats["incoming_tx"]) / interval ))
+        local target_rx_pps=$(( (target_rx - prev_stats["target_rx"]) / interval ))
+        local target_tx_pps=$(( (target_tx - prev_stats["target_tx"]) / interval ))
+        
+        # Format and display
+        local timestamp=$(date +"%H:%M:%S")
+        printf "%-8s | %'10d pps | %'10d pps | %'10d pps | %'10d pps\n" \
+            "$timestamp" "$incoming_rx_pps" "$incoming_tx_pps" "$target_rx_pps" "$target_tx_pps"
+        
+        # Update previous values
+        prev_stats["incoming_rx"]=$incoming_rx
+        prev_stats["incoming_tx"]=$incoming_tx
+        prev_stats["target_rx"]=$target_rx
+        prev_stats["target_tx"]=$target_tx
+        
+        # Check duration limit
+        if [ "$duration" -gt 0 ]; then
+            local elapsed=$(( $(date +%s) - start_time ))
+            if [ "$elapsed" -ge "$duration" ]; then
+                break
+            fi
+        fi
+    done
+    
+    print_color "green" "✓ PPS monitoring completed ($iterations samples)"
+}
+
+# Single interface PPS monitoring (for individual interface monitoring)
+monitor_interface_pps_single() {
+    local interface="${1:-ens5}"
+    local interval="${2:-1}"
+    local duration="${3:-0}"  # 0 = infinite
+    
+    if ! check_interface_exists "$interface"; then
+        print_color "red" "ERROR: Interface $interface does not exist"
+        return 1
+    fi
+    
+    print_color "cyan" "📊 SINGLE INTERFACE PPS MONITOR: $interface"
+    print_color "blue" "Interval: ${interval}s | Press Ctrl+C to stop"
+    echo ""
+    
+    local prev_rx=0
+    local prev_tx=0
+    local start_time=$(date +%s)
+    local iterations=0
+    
+    # Initial reading
+    local stats=$(get_interface_stats "$interface")
+    prev_rx=$(echo "$stats" | cut -d: -f1)
+    prev_tx=$(echo "$stats" | cut -d: -f2)
+    
+    # Header
+    printf "%-8s | %-15s | %-15s | %-12s\n" "TIME" "RX PPS" "TX PPS" "TOTAL PPS"
+    printf "%-8s | %-15s | %-15s | %-12s\n" "--------" "---------------" "---------------" "------------"
+    
+    # Set trap for Ctrl+C
+    trap 'print_color "yellow" "\n📊 PPS monitoring stopped"; return 0' INT
+    
+    while true; do
+        sleep "$interval"
+        iterations=$((iterations + 1))
+        
+        # Get current statistics
+        stats=$(get_interface_stats "$interface")
+        local curr_rx=$(echo "$stats" | cut -d: -f1)
+        local curr_tx=$(echo "$stats" | cut -d: -f2)
+        
+        # Calculate PPS
+        local rx_pps=$(( (curr_rx - prev_rx) / interval ))
+        local tx_pps=$(( (curr_tx - prev_tx) / interval ))
+        local total_pps=$((rx_pps + tx_pps))
+        
+        # Display with color coding
+        local timestamp=$(date +"%H:%M:%S")
+        if [ "$total_pps" -gt 50000 ]; then
+            printf "\033[32m%-8s | %'10d pps | %'10d pps | %'9d pps\033[0m\n" \
+                "$timestamp" "$rx_pps" "$tx_pps" "$total_pps"
+        elif [ "$total_pps" -gt 10000 ]; then
+            printf "\033[33m%-8s | %'10d pps | %'10d pps | %'9d pps\033[0m\n" \
+                "$timestamp" "$rx_pps" "$tx_pps" "$total_pps"
+        else
+            printf "%-8s | %'10d pps | %'10d pps | %'9d pps\n" \
+                "$timestamp" "$rx_pps" "$tx_pps" "$total_pps"
+        fi
+        
+        # Update previous values
+        prev_rx=$curr_rx
+        prev_tx=$curr_tx
+        
+        # Check duration limit
+        if [ "$duration" -gt 0 ]; then
+            local elapsed=$(( $(date +%s) - start_time ))
+            if [ "$elapsed" -ge "$duration" ]; then
+                break
+            fi
+        fi
+    done
+    
+    print_color "green" "✓ PPS monitoring completed ($iterations samples)"
+}
+
 # Configure interface for XDP with enhanced validation
 configure_interface() {
     local iface="$1"

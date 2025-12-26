@@ -50,6 +50,28 @@ case "$CMD" in
     "monitor") 
         monitor_pipeline "$@"
         ;;
+    "pps")
+        # PPS monitoring for both interfaces
+        case "${1:-}" in
+            "incoming")
+                shift 2>/dev/null || true
+                monitor_interface_pps_single "${INTERFACE:-ens5}" "$@"
+                ;;
+            "target")  
+                shift 2>/dev/null || true
+                monitor_interface_pps_single "${TARGET_INTERFACE:-ens6}" "$@"
+                ;;
+            "both"|"dual"|"")
+                shift 2>/dev/null || true
+                monitor_interface_pps "$@"
+                ;;
+            *)
+                print_color "red" "ERROR: Invalid pps option. Use: incoming, target, both, or dual"
+                echo "Usage: ./xdp.sh pps [incoming|target|both] [interval] [duration]"
+                exit 1
+                ;;
+        esac
+        ;;
     "scale")
         source "$SCRIPT_DIR/xdp_functions/dynamic_scaling.sh"
         if [ "${1:-}" = "max-performance" ]; then
