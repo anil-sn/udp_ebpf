@@ -171,6 +171,7 @@ enum stats_index {
     STAT_REDIRECTED = 6,         /* Packets forwarded via XDP_REDIRECT (highest performance) */
     STAT_ERRORS = 7,             /* Packets dropped due to parsing or validation errors */
     STAT_BYTES_PROCESSED = 8,    /* Total bytes processed (for throughput calculation) */
+    STAT_IP_LEN_UPDATED = 9,     /* Packets where IP total length was updated after VXLAN stripping */
 };
 
 /*
@@ -696,36 +697,44 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     if ((void *)(eth + 1) + sizeof(struct iphdr) <= data_end) {
         struct iphdr *iph = (struct iphdr *)(eth + 1);
         
-        /* Calculate new packet size after VXLAN stripping */
-        __u32 new_packet_size = (char *)data_end - (char *)data;
-        __u32 new_ip_total_len = new_packet_size - sizeof(struct ethhdr);
+        /* Calculate new IP packet size after VXLAN stripping */
+        __u32 total_packet_size = (char *)data_end - (char *)data;
+        __u32 new_ip_total_len = total_packet_size - ETH_HEADER_SIZE;
         
-        /* Validate the new size is reasonable */
-        if (new_ip_total_len >= IP_HEADER_MIN_SIZE && new_ip_total_len <= MAX_PACKET_SIZE) {
-            /* Store old value for checksum update */
+        /* 
+         * Validate the new size is reasonable and fits in IP header tot_len field
+         * - Must be at least minimum IP header size (20 bytes)
+         * - Must not exceed maximum IP packet size (65535 bytes)
+         * - Should fit in 16-bit tot_len field
+         */
+        if (new_ip_total_len >= IP_HEADER_MIN_SIZE && 
+            new_ip_total_len <= 65535 && 
+            new_ip_total_len <= 1500) {  /* Reasonable MTU limit */
+            
+            /* Store old value for incremental checksum update */
             __u16 old_tot_len = iph->tot_len;
+            __u16 new_tot_len_net = bpf_htons((__u16)new_ip_total_len);
             
-            /* Update IP total length to match actual packet size */
-            iph->tot_len = bpf_htons((__u16)new_ip_total_len);
-            
-            /* Incrementally update IP checksum for the tot_len field change */
-            __u32 checksum = (~bpf_ntohs(iph->check)) & 0xFFFF;
-            checksum -= bpf_ntohs(old_tot_len);
-            checksum += bpf_ntohs(iph->tot_len);
-            checksum = (checksum & 0xFFFF) + (checksum >> 16);
-            checksum = (checksum & 0xFFFF) + (checksum >> 16);
-            iph->check = bpf_htons(~checksum);
-        }
-    }
-
-    /* Force egress via target interface using correct L2 addressing */
-    if ((void *)(eth + 1) <= data_end) {
-        /* Get target interface configuration */
-        __u32 if_key = 0;
-        struct interface_config *if_config = bpf_map_lookup_elem(&interface_map, &if_key);
-        
-        /* Get NAT target configuration */
-        struct nat_target_config *nat_config = bpf_map_lookup_elem(&nat_target_map, &if_key);
+            /* Only update if the value actually changed */
+            if (old_tot_len != new_tot_len_net) {
+                /* Update IP total length to match actual packet size */
+                iph->tot_len = new_tot_len_net;
+                
+                /* Incrementally update IP checksum for the tot_len field change */
+                __u32 checksum = (~bpf_ntohs(iph->check)) & 0xFFFF;
+                checksum -= bpf_ntohs(old_tot_len);
+                checksum += bpf_ntohs(new_tot_len_net);
+                
+                /* Handle checksum carries properly */
+                while (checksum >> 16) {
+                    checksum = (checksum & 0xFFFF) + (checksum >> 16);
+                }
+                
+                iph->check = bpf_htons((~checksum) & 0xFFFF);
+                
+                /* Track IP length updates for monitoring */
+                update_stat(STAT_IP_LEN_UPDATED, 1);
+            }
         
         /* Validate that both configurations are available and valid */
         if (!if_config || if_config->ifindex == 0) {
