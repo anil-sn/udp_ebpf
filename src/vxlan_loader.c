@@ -667,6 +667,7 @@ static void display_stats()
     printf("[D] DF Bits Cleared:  %10llu (for >1400B pkts)\n", current_stats[STAT_DF_CLEARED]);
     printf("[F] Forwarded:        %10llu\n", current_stats[STAT_FORWARDED]);
     printf("[R] Redirected:       %10llu (XDP_REDIRECT)\n", current_stats[STAT_REDIRECTED]);
+    printf("[L] IP Len Updated:   %10llu\n", current_stats[STAT_IP_LEN_UPDATED]);
     printf("[E] Errors:           %10llu\n", current_stats[STAT_ERRORS]);
     printf("[T] Throughput:       %10.2f Mbps\n", mbps);
     
