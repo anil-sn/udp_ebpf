@@ -1237,6 +1237,11 @@ static __always_inline int forward_packet(void *data, void *data_end,
         update_stat(STAT_ERRORS, 1);  /* Track truncation events */
     }
     
+    /* Ensure temp_len is non-negative for eBPF verifier */
+    if ((__s32)temp_len < 0) {
+        temp_len = 0;
+    }
+    
     /* Reserve space in ring buffer */
     event = bpf_ringbuf_reserve(&packet_ringbuf, RINGBUF_RESERVE_SIZE, 0);
     if (event) {
