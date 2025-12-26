@@ -1257,6 +1257,28 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     /* FORCE the correct length */
     ip_hdr->tot_len = bpf_htons((__u16)expected_ip_len);
     
+    /* CRITICAL: Recalculate IP checksum IMMEDIATELY after length change */
+    ip_hdr->check = 0;  /* Clear old checksum first */
+    __u32 checksum_acc = 0;
+    __u16 *ip_ptr = (__u16 *)ip_hdr;
+    
+    /* Recalculate checksum with new length */
+    checksum_acc += bpf_ntohs(ip_ptr[0]);  /* Version, IHL, TOS */
+    checksum_acc += bpf_ntohs(ip_ptr[1]);  /* Total Length - NOW CORRECTED */
+    checksum_acc += bpf_ntohs(ip_ptr[2]);  /* Identification */
+    checksum_acc += bpf_ntohs(ip_ptr[3]);  /* Flags, Fragment Offset */
+    checksum_acc += bpf_ntohs(ip_ptr[4]);  /* TTL, Protocol */
+    /* Skip checksum field (ip_ptr[5]) */
+    checksum_acc += bpf_ntohs(ip_ptr[6]);  /* Source IP high */
+    checksum_acc += bpf_ntohs(ip_ptr[7]);  /* Source IP low */
+    checksum_acc += bpf_ntohs(ip_ptr[8]);  /* Dest IP high */
+    checksum_acc += bpf_ntohs(ip_ptr[9]);  /* Dest IP low */
+    
+    while (checksum_acc >> 16) {
+        checksum_acc = (checksum_acc & 0xFFFF) + (checksum_acc >> 16);
+    }
+    ip_hdr->check = bpf_htons(~checksum_acc);
+    
     /* VERIFY the write worked by reading it back */
     __u16 verification = bpf_ntohs(ip_hdr->tot_len);
     
@@ -1325,28 +1347,7 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
         }
     }
     
-    /* Recalculate IP checksum - use separate variable for accumulator */
-    ip_hdr->check = 0;
-    __u32 checksum_acc = 0;  /* Dedicated checksum accumulator */
-    __u16 *ip_ptr = (__u16 *)ip_hdr;
-    
-    /* Calculate checksum over IP header - unroll for BPF verifier */
-    checksum_acc += bpf_ntohs(ip_ptr[0]);
-    checksum_acc += bpf_ntohs(ip_ptr[1]);
-    checksum_acc += bpf_ntohs(ip_ptr[2]);
-    checksum_acc += bpf_ntohs(ip_ptr[3]);
-    checksum_acc += bpf_ntohs(ip_ptr[4]);
-    checksum_acc += bpf_ntohs(ip_ptr[5]);
-    checksum_acc += bpf_ntohs(ip_ptr[6]);
-    checksum_acc += bpf_ntohs(ip_ptr[7]);
-    checksum_acc += bpf_ntohs(ip_ptr[8]);
-    checksum_acc += bpf_ntohs(ip_ptr[9]);
-    
-    while (checksum_acc >> 16) {
-        checksum_acc = (checksum_acc & CHECKSUM_CARRY_MASK) + (checksum_acc >> 16);
-    }
-    ip_hdr->check = bpf_htons(~checksum_acc);
-    
+    /* IP checksum already recalculated above after length correction */
     update_stat(STAT_IP_CHECKSUM_UPDATED, 1);
     return 0;  /* Success */
 }
