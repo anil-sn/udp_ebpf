@@ -807,7 +807,7 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         }
         inner_iph->check = bpf_htons(~sum);
         
-        skip_length_updates:
+        skip_length_updates:;  /* Add semicolon to make it a null statement */
         
         /* Calculate packet length AFTER length updates */
         __u32 pkt_len = data_end - data;
