@@ -243,6 +243,20 @@ struct {
     __type(value, struct interface_config); /* Interface configuration */
     __uint(max_entries, 1);                /* Single interface config */
 } interface_map SEC(".maps");
+
+/* NAT target MAC address configuration */
+struct nat_target_config {
+    __u8 mac_addr[6];       /* NAT target IP's MAC address */
+    __u32 ip_addr;          /* NAT target IP for validation */
+} __attribute__((packed));
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __type(key, __u32);                    /* Always use key=0 for single NAT target */
+    __type(value, struct nat_target_config); /* NAT target MAC configuration */
+    __uint(max_entries, 1);                /* Single NAT target config */
+} nat_target_map SEC(".maps");
+
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __type(key, __u32);                    /* Always use key=0 for single interface */
@@ -671,22 +685,44 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         return XDP_DROP;
     }
     
-    /* Force egress via target interface using dynamic MAC */
+    /* Force egress via target interface using correct L2 addressing */
     struct ethhdr *eth = (struct ethhdr *)data;
     if ((void *)(eth + 1) <= data_end) {
         /* Get target interface configuration */
         __u32 if_key = 0;
         struct interface_config *if_config = bpf_map_lookup_elem(&interface_map, &if_key);
         
-        if (if_config && if_config->ifindex > 0) {
-            /* Set destination MAC from interface configuration */
-            eth->h_dest[0] = if_config->mac_addr[0];
-            eth->h_dest[1] = if_config->mac_addr[1];
-            eth->h_dest[2] = if_config->mac_addr[2];
-            eth->h_dest[3] = if_config->mac_addr[3];
-            eth->h_dest[4] = if_config->mac_addr[4];
-            eth->h_dest[5] = if_config->mac_addr[5];
+        /* Get NAT target configuration */
+        struct nat_target_config *nat_config = bpf_map_lookup_elem(&nat_target_map, &if_key);
+        
+        /* Validate that both configurations are available and valid */
+        if (!if_config || if_config->ifindex == 0) {
+            /* Interface configuration missing - cannot proceed with forwarding */
+            update_stat(STAT_ERRORS, 1);
+            return XDP_DROP;
         }
+        
+        if (!nat_config || nat_config->ip_addr == 0) {
+            /* NAT target configuration missing - cannot proceed with forwarding */
+            update_stat(STAT_ERRORS, 1);
+            return XDP_DROP;
+        }
+        
+        /* Set source MAC to target interface's MAC (ens6's MAC) */
+        eth->h_source[0] = if_config->mac_addr[0];
+        eth->h_source[1] = if_config->mac_addr[1];
+        eth->h_source[2] = if_config->mac_addr[2];
+        eth->h_source[3] = if_config->mac_addr[3];
+        eth->h_source[4] = if_config->mac_addr[4];
+        eth->h_source[5] = if_config->mac_addr[5];
+        
+        /* Set destination MAC to NAT target's MAC (NAT_IP's MAC) */
+        eth->h_dest[0] = nat_config->mac_addr[0];
+        eth->h_dest[1] = nat_config->mac_addr[1];
+        eth->h_dest[2] = nat_config->mac_addr[2];
+        eth->h_dest[3] = nat_config->mac_addr[3];
+        eth->h_dest[4] = nat_config->mac_addr[4];
+        eth->h_dest[5] = nat_config->mac_addr[5];
     }
     
     update_stat(STAT_FORWARDED, 1);

@@ -91,6 +91,12 @@ struct interface_config {
     __u32 ifindex;          /* Interface index for validation */
 } __attribute__((packed));
 
+/* NAT Target Configuration Structure - must match eBPF program */
+struct nat_target_config {
+    __u8 mac_addr[6];       /* NAT target IP's MAC address */
+    __u32 ip_addr;          /* NAT target IP for validation */
+} __attribute__((packed));
+
 /* Global variables for cleanup */
 static struct bpf_object *bpf_obj = NULL;
 static int prog_fd = -1;
@@ -98,6 +104,7 @@ static int stats_map_fd = -1;
 static int nat_map_fd = -1;
 static int redirect_map_fd = -1;
 static int interface_map_fd = -1;  /* New: interface configuration map */
+static int nat_target_map_fd = -1; /* New: NAT target configuration map */
 static int ifindex = -1;
 static volatile sig_atomic_t running = 1;
 
@@ -106,6 +113,7 @@ struct config {
     char interface[IF_NAMESIZE];
     char target_interface[IF_NAMESIZE];
     char nat_target_ip[INET_ADDRSTRLEN];
+    __u8 nat_target_mac[6];         /* Pre-resolved NAT target MAC address */
     int nat_target_port;
     int nat_source_port;
     int stats_interval;
@@ -116,6 +124,7 @@ static struct config cfg = {
     .interface = "ens5",
     .target_interface = "ens6", 
     .nat_target_ip = "172.30.82.95",
+    .nat_target_mac = {0},              /* Will be resolved at startup */
     .nat_target_port = 8081,
     .nat_source_port = 31765,
     .stats_interval = 5,
@@ -302,6 +311,123 @@ static int configure_nat_rules()
 }
 
 /*
+ * RESOLVE MAC ADDRESS FROM IP ADDRESS
+ * ===================================
+ * 
+ * This function resolves the MAC address for a given IP address using the
+ * system's ARP table. This is critical for proper L2 forwarding to ensure
+ * packets reach the correct destination.
+ * 
+ * RESOLUTION METHODS:
+ * 1. Check /proc/net/arp for existing ARP entries
+ * 2. If not found, attempt to ping the IP to populate ARP table
+ * 3. Re-check ARP table after ping attempt
+ * 
+ * PERFORMANCE CONSIDERATIONS:
+ * - ARP lookup is done once at startup, not per-packet
+ * - Cached result avoids runtime network queries
+ * - Essential for proper packet delivery in switched networks
+ */
+static int resolve_ip_to_mac(const char* ip_str, __u8 mac_addr[6])
+{
+    FILE *arp_table;
+    char line[256];
+    char arp_ip[16], arp_mac[18];
+    int found = 0;
+    
+    /* First, try to find the IP in the ARP table */
+    arp_table = fopen("/proc/net/arp", "r");
+    if (!arp_table) {
+        perror("Failed to open /proc/net/arp");
+        return -1;
+    }
+    
+    /* Skip the header line */
+    if (fgets(line, sizeof(line), arp_table) == NULL) {
+        fclose(arp_table);
+        return -1;
+    }
+    
+    /* Search for the target IP in ARP table */
+    while (fgets(line, sizeof(line), arp_table)) {
+        if (sscanf(line, "%15s %*s %*s %17s", arp_ip, arp_mac) == 2) {
+            if (strcmp(arp_ip, ip_str) == 0 && strlen(arp_mac) == 17) {
+                /* Found the IP, parse MAC address */
+                if (sscanf(arp_mac, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+                          &mac_addr[0], &mac_addr[1], &mac_addr[2],
+                          &mac_addr[3], &mac_addr[4], &mac_addr[5]) == 6) {
+                    found = 1;
+                    break;
+                }
+            }
+        }
+    }
+    fclose(arp_table);
+    
+    if (!found) {
+        /* IP not in ARP table, try to populate it with ARP probe */
+        printf("MAC address for %s not found in ARP table, attempting to resolve via ARP probe...\n", ip_str);
+        
+        /* Use ip neigh to add a probe entry which triggers ARP resolution */
+        char arp_cmd[256];
+        snprintf(arp_cmd, sizeof(arp_cmd), "ip neigh add %s dev %s proxy >/dev/null 2>&1 || ip neigh replace %s dev %s nud probe >/dev/null 2>&1", 
+                ip_str, cfg.target_interface, ip_str, cfg.target_interface);
+        
+        int arp_result = system(arp_cmd);
+        if (arp_result != 0) {
+            printf("Warning: ARP probe for %s failed (exit code: %d)\n", ip_str, arp_result);
+            /* Continue anyway, maybe ARP entry exists from other sources */
+        }
+        
+        /* Wait briefly for ARP resolution */
+        usleep(500000); /* 500ms delay for ARP resolution */
+        
+        /* Try ARP table lookup again after ping */
+        arp_table = fopen("/proc/net/arp", "r");
+        if (!arp_table) {
+            perror("Failed to re-open /proc/net/arp");
+            return -1;
+        }
+        
+        /* Skip header */
+        if (fgets(line, sizeof(line), arp_table) == NULL) {
+            fclose(arp_table);
+            return -1;
+        }
+        
+        /* Search again */
+        while (fgets(line, sizeof(line), arp_table)) {
+            if (sscanf(line, "%15s %*s %*s %17s", arp_ip, arp_mac) == 2) {
+                if (strcmp(arp_ip, ip_str) == 0 && strlen(arp_mac) == 17) {
+                    if (sscanf(arp_mac, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+                              &mac_addr[0], &mac_addr[1], &mac_addr[2],
+                              &mac_addr[3], &mac_addr[4], &mac_addr[5]) == 6) {
+                        found = 1;
+                        break;
+                    }
+                }
+            }
+        }
+        fclose(arp_table);
+    }
+    
+    if (!found) {
+        printf("Error: Could not resolve MAC address for IP %s\n", ip_str);
+        printf("Please ensure:\n");
+        printf("  1. The IP %s is reachable from this host\n", ip_str);
+        printf("  2. The target host responds to ping\n");
+        printf("  3. No firewall is blocking ICMP\n");
+        return -1;
+    }
+    
+    printf("Resolved MAC address for %s: %02x:%02x:%02x:%02x:%02x:%02x\n",
+           ip_str, mac_addr[0], mac_addr[1], mac_addr[2],
+           mac_addr[3], mac_addr[4], mac_addr[5]);
+    
+    return 0;
+}
+
+/*
  * CONFIGURE TARGET INTERFACE FOR PACKET FORWARDING
  * ================================================
  * 
@@ -397,6 +523,60 @@ static int configure_redirect_interface()
     printf("Target MAC address: %02x:%02x:%02x:%02x:%02x:%02x\n",
            if_config.mac_addr[0], if_config.mac_addr[1], if_config.mac_addr[2],
            if_config.mac_addr[3], if_config.mac_addr[4], if_config.mac_addr[5]);
+    
+    return 0;
+}
+
+/*
+ * CONFIGURE NAT TARGET MAC ADDRESS
+ * ================================
+ * 
+ * This function configures the MAC address for the NAT target IP using
+ * the pre-resolved MAC address from the config structure. The MAC address
+ * should have been resolved during program initialization.
+ * 
+ * PROCESS:
+ * 1. Use pre-resolved MAC address from config
+ * 2. Store MAC address and IP in nat_target_map
+ * 3. Validate configuration for proper packet forwarding
+ */
+static int configure_nat_target_mac()
+{
+    struct nat_target_config nat_config = {0};
+    __u32 key = 0;
+    
+    /* Use pre-resolved MAC address from config */
+    memcpy(nat_config.mac_addr, cfg.nat_target_mac, 6);
+    
+    /* Double-check MAC address validity (should have been validated earlier) */
+    int mac_valid = 0;
+    for (int i = 0; i < 6; i++) {
+        if (nat_config.mac_addr[i] != 0) {
+            mac_valid = 1;
+            break;
+        }
+    }
+    if (!mac_valid) {
+        fprintf(stderr, "Error: Cannot configure NAT target with invalid MAC address\n");
+        return -1;
+    }
+    
+    /* Store NAT target IP for validation */
+    if (inet_pton(AF_INET, cfg.nat_target_ip, &nat_config.ip_addr) != 1) {
+        fprintf(stderr, "Invalid NAT target IP address: %s\n", cfg.nat_target_ip);
+        return -1;
+    }
+    
+    /* Update NAT target map */
+    if (bpf_map_update_elem(nat_target_map_fd, &key, &nat_config, BPF_ANY) != 0) {
+        fprintf(stderr, "Failed to update NAT target map: %s\n", strerror(errno));
+        return -1;
+    }
+    
+    printf("NAT target MAC configured: %s -> %02x:%02x:%02x:%02x:%02x:%02x\n",
+           cfg.nat_target_ip,
+           nat_config.mac_addr[0], nat_config.mac_addr[1], nat_config.mac_addr[2],
+           nat_config.mac_addr[3], nat_config.mac_addr[4], nat_config.mac_addr[5]);
     
     return 0;
 }
@@ -560,8 +740,9 @@ static int load_bpf_program()
     nat_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "nat_map");
     redirect_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "redirect_map");
     interface_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "interface_map");
+    nat_target_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "nat_target_map");
     
-    if (stats_map_fd < 0 || nat_map_fd < 0 || redirect_map_fd < 0 || interface_map_fd < 0) {
+    if (stats_map_fd < 0 || nat_map_fd < 0 || redirect_map_fd < 0 || interface_map_fd < 0 || nat_target_map_fd < 0) {
         fprintf(stderr, "Failed to find required maps\n");
         bpf_object__close(bpf_obj);
         bpf_obj = NULL;
@@ -602,6 +783,7 @@ static int load_bpf_program()
     struct bpf_map *nat_map = bpf_object__find_map_by_name(bpf_obj, "nat_map");
     struct bpf_map *redirect_map = bpf_object__find_map_by_name(bpf_obj, "redirect_map");
     struct bpf_map *interface_map = bpf_object__find_map_by_name(bpf_obj, "interface_map");
+    struct bpf_map *nat_target_map = bpf_object__find_map_by_name(bpf_obj, "nat_target_map");
     struct bpf_map *ip_allowlist_map = bpf_object__find_map_by_name(bpf_obj, "ip_allowlist");
     struct bpf_map *ringbuf_map = bpf_object__find_map_by_name(bpf_obj, "packet_ringbuf");
     
@@ -622,6 +804,9 @@ static int load_bpf_program()
     }
     if (interface_map && bpf_map__pin(interface_map, "/sys/fs/bpf/vxlan_interface_map")) {
         fprintf(stderr, "Warning: Failed to pin interface_map\n");
+    }
+    if (nat_target_map && bpf_map__pin(nat_target_map, "/sys/fs/bpf/vxlan_nat_target_map")) {
+        fprintf(stderr, "Warning: Failed to pin nat_target_map\n");
     }
     if (ip_allowlist_map && bpf_map__pin(ip_allowlist_map, "/sys/fs/bpf/vxlan_ip_allowlist")) {
         fprintf(stderr, "Warning: Failed to pin ip_allowlist\n");
@@ -797,6 +982,37 @@ int main(int argc, char **argv)
         return ret == 1 ? 0 : 1; /* 1 means help was shown */
     }
     
+    /* Resolve NAT target MAC address early for fast startup validation */
+    printf("Resolving NAT target MAC address for %s...\n", cfg.nat_target_ip);
+    if (resolve_ip_to_mac(cfg.nat_target_ip, cfg.nat_target_mac) != 0) {
+        fprintf(stderr, "Failed to resolve MAC address for NAT target IP %s\n", cfg.nat_target_ip);
+        fprintf(stderr, "This is required for proper L2 forwarding. Please ensure:\n");
+        fprintf(stderr, "  1. NAT target IP %s is reachable\n", cfg.nat_target_ip);
+        fprintf(stderr, "  2. Target interface %s exists and is up\n", cfg.target_interface);
+        return 1;
+    }
+    
+    /* Validate resolved MAC address is not all zeros */
+    int mac_is_valid = 0;
+    for (int i = 0; i < 6; i++) {
+        if (cfg.nat_target_mac[i] != 0) {
+            mac_is_valid = 1;
+            break;
+        }
+    }
+    if (!mac_is_valid) {
+        fprintf(stderr, "Error: Resolved NAT target MAC address is invalid (all zeros)\n");
+        fprintf(stderr, "This indicates ARP resolution failed. Please check:\n");
+        fprintf(stderr, "  1. NAT target IP %s is on the same network segment\n", cfg.nat_target_ip);
+        fprintf(stderr, "  2. Target host is responding to ARP requests\n");
+        fprintf(stderr, "  3. No firewall is blocking ARP traffic\n");
+        return 1;
+    }
+    
+    printf("NAT target MAC resolved: %02x:%02x:%02x:%02x:%02x:%02x\n",
+           cfg.nat_target_mac[0], cfg.nat_target_mac[1], cfg.nat_target_mac[2],
+           cfg.nat_target_mac[3], cfg.nat_target_mac[4], cfg.nat_target_mac[5]);
+    
     /* Setup signal handlers */
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
@@ -821,6 +1037,11 @@ int main(int argc, char **argv)
     
     /* Configure redirect interface */
     if (configure_redirect_interface() != 0) {
+        return 1;
+    }
+    
+    /* Configure NAT target MAC address */
+    if (configure_nat_target_mac() != 0) {
         return 1;
     }
     
