@@ -1231,9 +1231,9 @@ static __always_inline int forward_packet(void *data, void *data_end,
     
     /* Use the tracked packet length for ring buffer copy - support large packets */
     temp_len = packet_len;
-    if (temp_len > MAX_PACKET_SIZE) {
-        /* Only truncate if exceeding absolute maximum to prevent buffer overflow */
-        temp_len = MAX_PACKET_SIZE;
+    if (temp_len > PACKET_DATA_MAX_SIZE) {
+        /* Truncate to ring buffer capacity to prevent buffer overflow */
+        temp_len = PACKET_DATA_MAX_SIZE;
         update_stat(STAT_ERRORS, 1);  /* Track truncation events */
     }
     
