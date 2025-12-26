@@ -77,10 +77,14 @@ count_bpf_map_entries() {
     
     # Check if jq is available for proper JSON parsing
     if command -v jq >/dev/null 2>&1; then
-        # FIXED: Handle actual bpftool JSON format - array of key-value objects
-        local total_count=$(echo "$map_data" | jq -r 'if (type == "array") then length else 0 end' 2>/dev/null || echo "0")
-        total_count=$(echo "$total_count" | tr -d '\n\r' | tr -d ' ')
-        echo "$total_count"
+        # Simply count the array length - no need for complex conditionals
+        local total_count=$(echo "$map_data" | jq 'length' 2>/dev/null)
+        if [ -n "$total_count" ] && [ "$total_count" != "null" ]; then
+            total_count=$(echo "$total_count" | tr -d '\n\r' | tr -d ' ')
+            echo "$total_count"
+        else
+            echo "0"
+        fi
     else
         # Fallback to counting "key" occurrences
         local count=$(echo "$map_data" | grep -c '"key":' 2>/dev/null || echo "0")
