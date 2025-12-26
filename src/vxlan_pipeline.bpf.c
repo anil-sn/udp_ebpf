@@ -444,14 +444,42 @@ static __always_inline int apply_nat(struct iphdr *iph, struct udphdr *udph, voi
     udph->dest = bpf_htons(nat->target_port);  /* e.g., 8081 from configuration */
     
     /* Recalculate IP checksum after DNAT modification */
-    /* Temporarily disabled - TODO: re-enable with proper verifier-safe implementation */
-    // iph->check = ip_checksum(iph);
+    iph->check = 0;
+    __s64 ip_csum = bpf_csum_diff(0, 0, (__be32 *)iph, sizeof(struct iphdr), 0);
+    iph->check = (__u16)ip_csum;
     
     /* 
      * UDP checksum recalculation:
-     * Temporarily disabled - TODO: re-enable with proper verifier-safe implementation
+     * Using eBPF helper with simplified bounds checking
      */
-    // udph->check = udp_checksum(iph, udph, data_end);
+    udph->check = 0;
+    
+    /* Get UDP length with bounds check */
+    __u16 udp_len = bpf_ntohs(udph->len);
+    if (udp_len >= 8 && udp_len <= 1500 && (void *)udph + udp_len <= data_end) {
+        /* Create pseudo-header */
+        struct {
+            __be32 saddr;
+            __be32 daddr;
+            __u8 zero;
+            __u8 protocol;
+            __be16 len;
+        } __attribute__((packed)) pseudo = {
+            .saddr = iph->saddr,
+            .daddr = iph->daddr,
+            .zero = 0,
+            .protocol = IPPROTO_UDP,
+            .len = bpf_htons(udp_len)
+        };
+        
+        /* Calculate checksum with proper alignment */
+        __u16 aligned_len = (udp_len + 3) & ~3;
+        if ((void *)udph + aligned_len <= data_end) {
+            __s64 csum = bpf_csum_diff(0, 0, (__be32 *)&pseudo, sizeof(pseudo), 0);
+            csum = bpf_csum_diff(0, 0, (__be32 *)udph, aligned_len, csum);
+            udph->check = csum ? (__u16)csum : 0xFFFF;
+        }
+    }
     
     update_stat(STAT_NAT_APPLIED, 1);
     return 1;
