@@ -298,7 +298,7 @@ struct {
 struct packet_event {
     __u32 ifindex;     /* Target interface index */
     __u16 len;         /* Packet length */
-    __u8 data[9000];   /* Packet data (jumbo frame support) */
+    __u8 data[1500];   /* Packet data (max MTU) */
 } __attribute__((packed));
 
 /*
@@ -794,9 +794,9 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         /* DEBUG: Track packet size for analysis */
         update_stat(STAT_PACKET_SIZE_DEBUG, decap_packet_len);
         
-        /* Validate decapsulated length makes sense (support jumbo frames up to 9000 bytes) */
+        /* Validate decapsulated length makes sense (support up to 1500 bytes) */
         if (decap_packet_len < ETH_HLEN + sizeof(struct iphdr) || 
-            decap_ip_len < sizeof(struct iphdr) || decap_ip_len > 8986) {
+            decap_ip_len < sizeof(struct iphdr) || decap_ip_len > 1500) {
             update_stat(STAT_ERRORS, 1);
             update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
             goto skip_length_updates;
@@ -824,8 +824,8 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
             if ((void *)(inner_udph + 1) <= data_end) {
                 __u32 decap_udp_len = decap_ip_len - ip_hdr_len;  // UDP length after decap
                 
-                /* Validate UDP length supports jumbo frames (8986 IP - 20 IP header = 8966 max UDP) */
-                if (decap_udp_len >= sizeof(struct udphdr) && decap_udp_len <= 8966) {
+                /* Validate UDP length (1500 IP - 20 IP header = 1480 max UDP) */
+                if (decap_udp_len >= sizeof(struct udphdr) && decap_udp_len <= 1480) {
                     __u16 old_udp_len = bpf_ntohs(inner_udph->len);  /* DEBUG: Save old value */
                     inner_udph->len = bpf_htons((__u16)decap_udp_len);
                     inner_udph->check = 0;  /* Zero UDP checksum for performance */
@@ -868,25 +868,43 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         
         /* Calculate packet length AFTER length updates for ring buffer */
         __u32 pkt_len = data_end - data;  // Use current packet boundaries
-        if (pkt_len > 9000) {
-            pkt_len = 9000; /* Limit to jumbo frame size */
+        if (pkt_len > 1500) {
+            pkt_len = 1500; /* Limit to 1500 bytes */
         }
         
-        /* Reserve space in ring buffer using jumbo frame size for BPF verifier */
-        /* Size: sizeof(__u32) + sizeof(__u16) + 9000 bytes = 9006 bytes */
-        struct packet_event *event = bpf_ringbuf_reserve(&packet_ringbuf, 9006, 0);
+        /* Reserve space in ring buffer */
+        /* Size: sizeof(__u32) + sizeof(__u16) + 1500 bytes = 1506 bytes */
+        struct packet_event *event = bpf_ringbuf_reserve(&packet_ringbuf, 1506, 0);
         if (event) {
             /* Copy packet metadata */
             event->ifindex = *target_ifindex;
+            event->len = (__u16)pkt_len;
             
-            /* Ensure packet length is within bounds for BPF verifier */
-            if (pkt_len > 9000) pkt_len = 9000;
-            event->len = (__u16)pkt_len;  /* Explicit cast to match struct definition */
-            
-            /* Manual byte-by-byte copy with BPF verifier-friendly bounds checking */
-            for (int i = 0; i < 9000 && i < pkt_len; i++) {
-                if ((char *)data + i >= (char *)data_end) break;
-                event->data[i] = *((char *)data + i);
+            /* Use bpf_probe_read_kernel for safe copying - BPF verifier friendly */
+            if (pkt_len <= 1500) {
+                /* Try kernel probe read first (most efficient) */
+                if (bpf_probe_read_kernel(event->data, pkt_len, data) != 0) {
+                    /* Fallback: Simple memcpy with fixed small loop */
+                    __u32 copy_bytes = pkt_len;
+                    if (copy_bytes > 1500) copy_bytes = 1500;
+                    
+                    /* Copy in 256-byte chunks to reduce BPF complexity */
+                    for (__u32 offset = 0; offset < copy_bytes; offset += 256) {
+                        __u32 chunk_size = 256;
+                        if (offset + chunk_size > copy_bytes) {
+                            chunk_size = copy_bytes - offset;
+                        }
+                        if (chunk_size > 256) chunk_size = 256;
+                        
+                        /* Bounds check before copy */
+                        if ((char *)data + offset + chunk_size > (char *)data_end) {
+                            break;
+                        }
+                        
+                        /* Copy this chunk using bpf_probe_read_kernel */
+                        bpf_probe_read_kernel(event->data + offset, chunk_size, (char *)data + offset);
+                    }
+                }
             }
             
             /* Submit to userspace */
