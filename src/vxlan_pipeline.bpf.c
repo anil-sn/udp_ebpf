@@ -748,50 +748,66 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         /* ALWAYS increment debug counter first to prove code execution */
         update_stat(STAT_IP_LEN_UPDATED, 1); /* Force increment to prove code path */
         
-        /* Reuse existing eth pointer, declare iph for length updates */
-        struct iphdr *iph = (struct iphdr *)(data + 14);
+        /* Your analysis implementation: Proper length calculation after VXLAN decapsulation */
+        __u32 total_packet_len = data_end - data;
         
-        /* Simple bounds check */
-        if ((void *)iph + 20 <= data_end) {
-            /* Calculate new lengths after VXLAN decapsulation */
-            __u32 packet_size = (char *)data_end - (char *)data;
-            __u32 new_ip_len = packet_size - 14;  /* Remove Ethernet header */
-            
-            /* FORCE IP length update - no conditions */
-            iph->tot_len = bpf_htons((__u16)new_ip_len);
-            
-            /* FORCE IP checksum recalculation - simplified version */
-            iph->check = 0;
-            __u32 sum = 0;
-            __u16 *ip_ptr = (__u16 *)iph;
-            
-            /* Calculate checksum over 20-byte IP header */
-            sum += bpf_ntohs(ip_ptr[0]);
-            sum += bpf_ntohs(ip_ptr[1]);
-            sum += bpf_ntohs(ip_ptr[2]);
-            sum += bpf_ntohs(ip_ptr[3]);
-            sum += bpf_ntohs(ip_ptr[4]);
-            sum += bpf_ntohs(ip_ptr[5]);
-            sum += bpf_ntohs(ip_ptr[6]);
-            sum += bpf_ntohs(ip_ptr[7]);
-            sum += bpf_ntohs(ip_ptr[8]);
-            sum += bpf_ntohs(ip_ptr[9]);
-            
-            while (sum >> 16) {
-                sum = (sum & 0xFFFF) + (sum >> 16);
-            }
-            iph->check = bpf_htons(~sum);
-            
-            /* FORCE UDP length update */
-            if (iph->protocol == IPPROTO_UDP) {
-                struct udphdr *udph = (struct udphdr *)(data + 34);
-                if ((void *)udph + 8 <= data_end) {
-                    __u32 new_udp_len = new_ip_len - 20;
-                    udph->len = bpf_htons((__u16)new_udp_len);
-                    udph->check = 0;
-                }
+        /* Validate packet size after decapsulation */
+        if (total_packet_len < ETH_HLEN + sizeof(struct iphdr)) {
+            update_stat(STAT_ERRORS, 1);
+            goto skip_length_updates;
+        }
+        
+        /* Get inner Ethernet header (data already points to inner frame after adjust_head) */
+        struct ethhdr *inner_eth = (struct ethhdr *)data;
+        if ((void *)(inner_eth + 1) > data_end) {
+            update_stat(STAT_ERRORS, 1);
+            goto skip_length_updates;
+        }
+        
+        /* Get inner IP header */
+        struct iphdr *inner_iph = (struct iphdr *)(inner_eth + 1);
+        if ((void *)(inner_iph + 1) > data_end) {
+            update_stat(STAT_ERRORS, 1);
+            goto skip_length_updates;
+        }
+        
+        /* CRITICAL FIX: Calculate correct IP total length (your analysis) */
+        __u32 ip_payload_len = total_packet_len - ETH_HLEN;  // Total packet minus Ethernet header
+        inner_iph->tot_len = bpf_htons((__u16)ip_payload_len);
+        
+        /* Update UDP length if this is a UDP packet (your analysis) */
+        if (inner_iph->protocol == IPPROTO_UDP) {
+            struct udphdr *inner_udph = (struct udphdr *)((char *)inner_iph + (inner_iph->ihl * 4));
+            if ((void *)(inner_udph + 1) <= data_end) {
+                __u32 udp_payload_len = ip_payload_len - (inner_iph->ihl * 4);  // IP payload minus IP header
+                inner_udph->len = bpf_htons((__u16)udp_payload_len);
+                inner_udph->check = 0;  /* Zero UDP checksum for performance */
             }
         }
+        
+        /* Recalculate IP checksum (your analysis) */
+        inner_iph->check = 0;
+        __u32 sum = 0;
+        __u16 *ip_ptr = (__u16 *)inner_iph;
+        
+        /* Calculate checksum over IP header - unroll for BPF verifier */
+        sum += bpf_ntohs(ip_ptr[0]);
+        sum += bpf_ntohs(ip_ptr[1]);
+        sum += bpf_ntohs(ip_ptr[2]);
+        sum += bpf_ntohs(ip_ptr[3]);
+        sum += bpf_ntohs(ip_ptr[4]);
+        sum += bpf_ntohs(ip_ptr[5]);
+        sum += bpf_ntohs(ip_ptr[6]);
+        sum += bpf_ntohs(ip_ptr[7]);
+        sum += bpf_ntohs(ip_ptr[8]);
+        sum += bpf_ntohs(ip_ptr[9]);
+        
+        while (sum >> 16) {
+            sum = (sum & 0xFFFF) + (sum >> 16);
+        }
+        inner_iph->check = bpf_htons(~sum);
+        
+        skip_length_updates:
         
         /* Calculate packet length AFTER length updates */
         __u32 pkt_len = data_end - data;
