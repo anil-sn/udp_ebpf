@@ -70,7 +70,8 @@ enum stats_index {
     STAT_REDIRECTED = 6,      /* New: packets redirected via XDP_REDIRECT */
     STAT_ERRORS = 7,
     STAT_BYTES_PROCESSED = 8,
-    STAT_MAX_ENTRIES = 9,
+    STAT_IP_LEN_UPDATED = 9,  /* New: packets where IP length was updated */
+    STAT_MAX_ENTRIES = 10,
 };
 
 /* NAT Entry Structure - must match eBPF program */
