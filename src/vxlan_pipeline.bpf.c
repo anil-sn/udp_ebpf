@@ -443,10 +443,12 @@ static __always_inline int apply_nat(struct iphdr *iph, struct udphdr *udph, voi
     iph->daddr = nat->target_ip;           /* e.g., 172.30.82.95 from configuration */
     udph->dest = bpf_htons(nat->target_port);  /* e.g., 8081 from configuration */
     
-    /* Recalculate IP checksum after DNAT modification */
+    /* 
+     * Set IP checksum to 0 - let kernel calculate correct checksum
+     * - tx-checksum-ipv4 offloading handles this automatically
+     * - Eliminates BPF verifier complexity and incorrect checksum calculations
+     */
     iph->check = 0;
-    __s64 ip_csum = bpf_csum_diff(0, 0, (__be32 *)iph, sizeof(struct iphdr), 0);
-    iph->check = (__u16)ip_csum;
     
     /* 
      * UDP checksum: Set to 0 (no checksum computed)
