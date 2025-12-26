@@ -279,6 +279,80 @@ struct packet_event {
 } __attribute__((packed));
 
 /*
+ * Pipeline Context Structure for Tail Call State Management
+ * 
+ * This structure carries state between different stages of the pipeline
+ * when using tail calls. Stored in per-CPU map for zero-contention access.
+ */
+struct pipeline_ctx {
+    /* Packet metadata */
+    __u32 packet_len;           /* Total packet length */
+    __u32 vni;                  /* VXLAN Network Identifier */
+    __u8 stage;                 /* Current pipeline stage (0-3) */
+    __u8 flags;                 /* Processing flags */
+    
+    /* Original packet headers for reference */
+    __u32 original_src_ip;      /* Original source IP */
+    __u32 original_dst_ip;      /* Original destination IP */
+    __u16 original_src_port;    /* Original source port */
+    __u16 original_dst_port;    /* Original destination port */
+    
+    /* NAT translation results */
+    __u32 nat_target_ip;        /* NAT target IP address */
+    __u16 nat_target_port;      /* NAT target port */
+    __u8 nat_applied;           /* 1 if NAT was applied */
+    __u8 df_cleared;            /* 1 if DF bit was cleared */
+    
+    /* Forwarding metadata */
+    __u32 target_ifindex;       /* Target interface for forwarding */
+    __u8 target_mac[MAC_ADDR_LEN]; /* Target MAC address */
+    
+    /* Performance tracking */
+    __u64 start_time;           /* Packet processing start time */
+} __attribute__((packed, aligned(8)));
+
+/* Pipeline stage definitions */
+enum pipeline_stage {
+    STAGE_CLASSIFIER = 0,       /* Packet classification and basic parsing */
+    STAGE_VXLAN_PROCESSOR = 1,  /* VXLAN processing and decapsulation */
+    STAGE_NAT_ENGINE = 2,       /* NAT translation and connection tracking */
+    STAGE_FORWARDING = 3,       /* Final forwarding and statistics */
+    STAGE_MAX = 4
+};
+
+/* Pipeline processing flags */
+#define PIPELINE_FLAG_VXLAN_PACKET  (1 << 0)  /* Packet is VXLAN */
+#define PIPELINE_FLAG_NAT_REQUIRED  (1 << 1)  /* Packet needs NAT */
+#define PIPELINE_FLAG_IP_ALLOWED    (1 << 2)  /* IP is in allowlist */
+#define PIPELINE_FLAG_ERROR         (1 << 3)  /* Processing error occurred */
+
+/*
+ * Pipeline Context Map - Per-CPU storage for tail call state
+ * 
+ * Uses CPU index as key to ensure lock-free access in multi-core environments.
+ * Each CPU maintains its own context, eliminating synchronization overhead.
+ */
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __type(key, __u32);                    /* CPU index */
+    __type(value, struct pipeline_ctx);    /* Pipeline context */
+    __uint(max_entries, MAX_CPU_CORES);    /* One entry per CPU core */
+} pipeline_ctx_map SEC(".maps");
+
+/*
+ * Program Array Map for Tail Calls
+ * 
+ * Contains file descriptors for each stage of the pipeline.
+ * Populated by userspace loader with the appropriate program FDs.
+ */
+struct {
+    __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
+    __type(key, __u32);                    /* Stage index (0-3) */
+    __type(value, __u32);                  /* Program file descriptor */
+    __uint(max_entries, STAGE_MAX);        /* One entry per stage */
+} pipeline_programs SEC(".maps");
+
+/*
  * IP Allowlist Filtering for High-Performance Selective Processing
  * 
  * Check if inner packet source or destination IP is in allowlist.
@@ -300,6 +374,38 @@ static __always_inline int is_ip_allowed(struct iphdr *iph) {
     }
     
     return 0; /* IP not in allowlist */
+}
+
+/*
+ * Pipeline Context Management Functions
+ */
+static __always_inline struct pipeline_ctx *get_pipeline_ctx(void) {
+    __u32 cpu = bpf_get_smp_processor_id();
+    return bpf_map_lookup_elem(&pipeline_ctx_map, &cpu);
+}
+
+static __always_inline int init_pipeline_ctx(struct xdp_md *ctx, struct pipeline_ctx *pctx) {
+    if (!pctx) return -1;
+    
+    /* Initialize context */
+    __builtin_memset(pctx, 0, sizeof(*pctx));
+    
+    /* Set basic packet info */
+    void *data = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+    pctx->packet_len = data_end - data;
+    pctx->stage = STAGE_CLASSIFIER;
+    pctx->start_time = bpf_ktime_get_ns();
+    
+    return 0;
+}
+
+static __always_inline int call_next_stage(struct xdp_md *ctx, __u32 next_stage) {
+    /* Tail call to next stage */
+    bpf_tail_call(ctx, &pipeline_programs, next_stage);
+    
+    /* If tail call fails, return error */
+    return XDP_ABORTED;
 }
 
 /*
@@ -1261,20 +1367,38 @@ static __always_inline int forward_packet(void *data, void *data_end,
 }
 
 /*
- * Main XDP Program Entry Point - Orchestrates the pipeline
+ * Stage 1: Packet Classifier - Fast packet triage and basic parsing
+ * 
+ * RESPONSIBILITIES:
+ * - Basic packet validation and bounds checking
+ * - Parse outer Ethernet, IP, UDP headers  
+ * - Detect VXLAN packets (UDP port 4789)
+ * - Set up pipeline context for subsequent stages
+ * - Fast path processing for non-VXLAN packets
  */
 SEC("xdp")
-int vxlan_pipeline_main(struct xdp_md *ctx)
+int vxlan_classifier(struct xdp_md *ctx)
 {
     void *data_end = (void *)(long)ctx->data_end;
     void *data = (void *)(long)ctx->data;
-    
-    /* Function-scope variables - now used across function calls */
-    struct ethhdr *eth_hdr, *inner_eth;
-    struct iphdr *ip_hdr, *inner_ip; 
-    struct udphdr *udp_hdr, *inner_udp;
-    __u32 packet_len;
+    struct pipeline_ctx *pctx;
+    struct ethhdr *eth_hdr;
+    struct iphdr *ip_hdr;
+    struct udphdr *udp_hdr;
     int result;
+    
+    /* Get pipeline context */
+    pctx = get_pipeline_ctx();
+    if (!pctx) {
+        update_stat(STAT_ERRORS, 1);
+        return XDP_ABORTED;
+    }
+    
+    /* Initialize context for this packet */
+    if (init_pipeline_ctx(ctx, pctx) < 0) {
+        update_stat(STAT_ERRORS, 1);
+        return XDP_ABORTED;
+    }
     
     /* Basic packet validation */
     if (data + sizeof(struct ethhdr) > data_end) {
@@ -1284,52 +1408,252 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     
     update_stat(STAT_TOTAL_PACKETS, 1);
     
-    /* Parse outer packet headers (Ethernet, IP, UDP) */
+    /* Parse outer packet headers */
     result = parse_outer_headers(data, data_end, &eth_hdr, &ip_hdr, &udp_hdr);
     if (result != 0) {
-        return result;  /* Return XDP action code */
+        return result;  /* Non-VXLAN or malformed packet */
     }
     
+    /* Store packet metadata in context */
+    pctx->original_src_ip = ip_hdr->saddr;
+    pctx->original_dst_ip = ip_hdr->daddr;
+    pctx->original_src_port = udp_hdr->source;
+    pctx->original_dst_port = udp_hdr->dest;
+    pctx->flags |= PIPELINE_FLAG_VXLAN_PACKET;
+    
     update_stat(STAT_VXLAN_PACKETS, 1);
+    
+    /* Proceed to VXLAN processor */
+    return call_next_stage(ctx, STAGE_VXLAN_PROCESSOR);
+}
+
+/*
+ * Stage 2: VXLAN Processor - VXLAN-specific operations
+ * 
+ * RESPONSIBILITIES:
+ * - Parse and validate VXLAN headers
+ * - Extract inner packet headers
+ * - Perform VXLAN decapsulation
+ * - Set up context for NAT processing
+ */
+SEC("xdp")
+int vxlan_processor(struct xdp_md *ctx)
+{
+    void *data_end = (void *)(long)ctx->data_end;
+    void *data = (void *)(long)ctx->data;
+    struct pipeline_ctx *pctx;
+    struct ethhdr *inner_eth;
+    struct iphdr *inner_ip;
+    struct udphdr *inner_udp, *udp_hdr;
+    int result;
+    
+    /* Get pipeline context */
+    pctx = get_pipeline_ctx();
+    if (!pctx || pctx->stage != STAGE_CLASSIFIER) {
+        update_stat(STAT_ERRORS, 1);
+        return XDP_ABORTED;
+    }
+    
+    /* Update stage */
+    pctx->stage = STAGE_VXLAN_PROCESSOR;
+    
+    /* Find UDP header using stored offsets if needed */
+    struct ethhdr *eth_hdr = (struct ethhdr *)data;
+    struct iphdr *ip_hdr = (struct iphdr *)(eth_hdr + 1);
+    udp_hdr = (struct udphdr *)((char *)ip_hdr + (ip_hdr->ihl * 4));
     
     /* Parse VXLAN and inner packet headers */
     result = parse_inner_packet(data, data_end, udp_hdr, &inner_eth, &inner_ip, &inner_udp);
     if (result != 0) {
-        return result;  /* Return XDP action code */
+        return result;
     }
     
-    /* Process inner packet (NAT, DF bit clearing) */
-    process_inner_packet(inner_ip, inner_udp, data_end);
+    /* Store VXLAN metadata */
+    struct vxlanhdr *vxlan_hdr = (struct vxlanhdr *)(udp_hdr + 1);
+    pctx->vni = (vxlan_hdr->vni[0] << 16) | (vxlan_hdr->vni[1] << 8) | vxlan_hdr->vni[2];
+    
+    /* Check IP allowlist if configured */
+    if (is_ip_allowed(inner_ip)) {
+        pctx->flags |= PIPELINE_FLAG_IP_ALLOWED;
+    }
+    
+    /* Check if NAT is required */
+    struct nat_key nat_lookup_key = { .src_port = inner_udp->dest };
+    struct nat_entry *nat_entry = bpf_map_lookup_elem(&nat_map, &nat_lookup_key);
+    if (nat_entry) {
+        pctx->flags |= PIPELINE_FLAG_NAT_REQUIRED;
+        pctx->nat_target_ip = nat_entry->target_ip;
+        pctx->nat_target_port = nat_entry->target_port;
+    }
     
     /* Perform VXLAN decapsulation */
     result = decapsulate_vxlan(ctx, (void *)inner_eth);
     if (result != 0) {
-        return result;  /* Return XDP action code on failure */
+        return result;
     }
+    
+    /* Proceed to NAT engine */
+    return call_next_stage(ctx, STAGE_NAT_ENGINE);
+}
+
+/*
+ * Stage 3: NAT Engine - Network address translation
+ * 
+ * RESPONSIBILITIES:
+ * - Apply NAT translations based on context
+ * - Update IP and UDP checksums  
+ * - Clear DF bit if needed
+ * - Prepare packet for forwarding
+ */
+SEC("xdp")
+int nat_engine(struct xdp_md *ctx)
+{
+    void *data_end = (void *)(long)ctx->data_end;
+    void *data = (void *)(long)ctx->data;
+    struct pipeline_ctx *pctx;
+    struct iphdr *ip_hdr;
+    struct udphdr *udp_hdr;
+    int result;
+    
+    /* Get pipeline context */
+    pctx = get_pipeline_ctx();
+    if (!pctx || pctx->stage != STAGE_VXLAN_PROCESSOR) {
+        update_stat(STAT_ERRORS, 1);
+        return XDP_ABORTED;
+    }
+    
+    /* Update stage */
+    pctx->stage = STAGE_NAT_ENGINE;
     
     /* Refresh data pointers after decapsulation */
     data = (void *)(long)ctx->data;
     data_end = (void *)(long)ctx->data_end;
-    packet_len = data_end - data;
+    pctx->packet_len = data_end - data;
     
-    /* Validate new packet boundaries */
-    if (data + sizeof(struct ethhdr) > data_end) {
-        update_stat(STAT_ERRORS, 1);
+    /* Validate packet boundaries after decapsulation */
+    if (data + sizeof(struct ethhdr) + sizeof(struct iphdr) > data_end) {
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
     
-    update_stat(STAT_FORWARDED, 1);
+    /* Parse headers in decapsulated packet */
+    struct ethhdr *eth_hdr = (struct ethhdr *)data;
+    ip_hdr = (struct iphdr *)(eth_hdr + 1);
     
-    /* Update packet headers after decapsulation */
-    result = update_packet_headers(data, data_end, packet_len);
-    if (result < 0) {
-        /* Continue with forwarding even if header updates failed */
-        update_stat(STAT_ERRORS, 1);
+    /* Apply NAT if required */
+    if (pctx->flags & PIPELINE_FLAG_NAT_REQUIRED) {
+        /* Find UDP header */
+        if (ip_hdr->protocol == IPPROTO_UDP) {
+            udp_hdr = (struct udphdr *)((char *)ip_hdr + (ip_hdr->ihl * 4));
+            
+            if ((void *)(udp_hdr + 1) > data_end) {
+                update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
+                return XDP_DROP;
+            }
+            
+            result = apply_nat(ip_hdr, udp_hdr, data_end);
+            if (result == 0) {
+                pctx->nat_applied = 1;
+                update_stat(STAT_NAT_APPLIED, 1);
+            }
+        }
     }
     
+    /* Clear DF bit if needed */
+    result = clear_df_bit(ip_hdr);
+    if (result == 0) {
+        pctx->df_cleared = 1;
+        update_stat(STAT_DF_CLEARED, 1);
+    }
+    
+    /* Proceed to forwarding stage */
+    return call_next_stage(ctx, STAGE_FORWARDING);
+}
+
+/*
+ * Stage 4: Forwarding Logic - Final packet decisions and statistics
+ * 
+ * RESPONSIBILITIES:
+ * - Update packet headers after processing
+ * - Configure MAC addresses for forwarding
+ * - Apply final forwarding decision
+ * - Update performance statistics
+ */
+SEC("xdp")
+int forwarding_stage(struct xdp_md *ctx)
+{
+    void *data_end = (void *)(long)ctx->data_end;
+    void *data = (void *)(long)ctx->data;
+    struct pipeline_ctx *pctx;
+    int result;
+    
+    /* Get pipeline context */
+    pctx = get_pipeline_ctx();
+    if (!pctx || pctx->stage != STAGE_NAT_ENGINE) {
+        update_stat(STAT_ERRORS, 1);
+        return XDP_ABORTED;
+    }
+    
+    /* Update stage */
+    pctx->stage = STAGE_FORWARDING;
+    
+    /* Update packet headers */
+    result = update_packet_headers(data, data_end, pctx->packet_len);
+    if (result < 0) {
+        update_stat(STAT_ERRORS, 1);
+        /* Continue with forwarding even if header updates failed */
+    }
+    
+    update_stat(STAT_FORWARDED, 1);
+    
     /* Configure MAC addresses and forward packet */
-    return forward_packet(data, data_end, packet_len);
+    return forward_packet(data, data_end, pctx->packet_len);
+}
+
+/*
+ * Main XDP Program Entry Point - Tail Call Coordinator
+ * 
+ * This is the entry point that gets attached to the interface.
+ * It initializes the pipeline and starts the tail call chain.
+ */
+SEC("xdp")
+int vxlan_pipeline_main(struct xdp_md *ctx)
+{
+    /* Start the pipeline at the classifier stage */
+    bpf_tail_call(ctx, &pipeline_programs, STAGE_CLASSIFIER);
+    
+    /* If tail call fails, fall back to basic processing */
+    void *data_end = (void *)(long)ctx->data_end;
+    void *data = (void *)(long)ctx->data;
+    
+    /* Basic validation */
+    if (data + sizeof(struct ethhdr) > data_end) {
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
+        return XDP_DROP;
+    }
+    
+    update_stat(STAT_TOTAL_PACKETS, 1);
+    
+    /* Check if this looks like VXLAN */
+    struct ethhdr *eth_hdr = (struct ethhdr *)data;
+    struct iphdr *ip_hdr = (struct iphdr *)(eth_hdr + 1);
+    
+    if ((void *)(ip_hdr + 1) > data_end) {
+        return XDP_PASS;  /* Pass non-IP traffic */
+    }
+    
+    if (ip_hdr->protocol == IPPROTO_UDP) {
+        struct udphdr *udp_hdr = (struct udphdr *)((char *)ip_hdr + (ip_hdr->ihl * 4));
+        if ((void *)(udp_hdr + 1) <= data_end && 
+            bpf_ntohs(udp_hdr->dest) == VXLAN_UDP_PORT) {
+            /* This is VXLAN but tail call failed */
+            update_stat(STAT_ERRORS, 1);
+            return XDP_ABORTED;
+        }
+    }
+    
+    /* Non-VXLAN traffic passes through */
+    return XDP_PASS;
 }
 
 SEC("license")

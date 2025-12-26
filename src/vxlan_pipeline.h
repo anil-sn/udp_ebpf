@@ -28,6 +28,9 @@
 #ifndef BPF_MAP_TYPE_RINGBUF
 #define BPF_MAP_TYPE_RINGBUF            27
 #endif
+#ifndef BPF_MAP_TYPE_PROG_ARRAY
+#define BPF_MAP_TYPE_PROG_ARRAY         3
+#endif
 #ifndef BPF_F_NO_PREALLOC
 #define BPF_F_NO_PREALLOC              0x01UL
 #endif
@@ -62,6 +65,7 @@
 
 /* VXLAN Protocol (RFC 7348) */
 #define VXLAN_PORT                      4789        /* Standard VXLAN UDP port */
+#define VXLAN_UDP_PORT                  4789        /* Standard VXLAN UDP port (alternative name) */
 #define TARGET_VNI                      1           /* AWS Traffic Mirror VNI (always 1) */
 #define VXLAN_VNI_FLAG                  0x08        /* VNI flag in VXLAN header */
 #define VXLAN_HEADER_SIZE               8           /* VXLAN header size in bytes */
