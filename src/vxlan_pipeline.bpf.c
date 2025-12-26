@@ -724,26 +724,27 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
             __u16 old_ip_tot_len = iph->tot_len;
             __u16 new_ip_tot_len_net = bpf_htons((__u16)new_ip_total_len);
             
-            /* Update IP total length if it changed */
-            if (old_ip_tot_len != new_ip_tot_len_net) {
-                iph->tot_len = new_ip_tot_len_net;
-                
-                /* Incrementally update IP checksum for the tot_len field change */
-                __u32 ip_checksum = (~bpf_ntohs(iph->check)) & 0xFFFF;
-                ip_checksum -= bpf_ntohs(old_ip_tot_len);
-                ip_checksum += bpf_ntohs(new_ip_tot_len_net);
-                
-                /* Handle checksum carries properly */
-                while (ip_checksum >> 16) {
-                    ip_checksum = (ip_checksum & 0xFFFF) + (ip_checksum >> 16);
-                }
-                
-                iph->check = bpf_htons((~ip_checksum) & 0xFFFF);
-                
-                /* Track IP length updates for monitoring */
-                update_stat(STAT_IP_LEN_UPDATED, 1);
+            /* 
+             * FORCE UPDATE: Always update IP total length after VXLAN decapsulation
+             * The original inner packet length (1500) must be reduced to account
+             * for the removed VXLAN overhead and new packet boundaries.
+             */
+            iph->tot_len = new_ip_tot_len_net;
+            
+            /* Always recalculate IP checksum after length change */
+            __u32 ip_checksum = (~bpf_ntohs(iph->check)) & 0xFFFF;
+            ip_checksum -= bpf_ntohs(old_ip_tot_len);
+            ip_checksum += bpf_ntohs(new_ip_tot_len_net);
+            
+            /* Handle checksum carries properly */
+            while (ip_checksum >> 16) {
+                ip_checksum = (ip_checksum & 0xFFFF) + (ip_checksum >> 16);
             }
             
+            iph->check = bpf_htons((~ip_checksum) & 0xFFFF);
+            
+            /* Track IP length updates for monitoring */
+            update_stat(STAT_IP_LEN_UPDATED, 1);
             /* 
              * Update UDP length field if this is a UDP packet
              * UDP Length = IP payload length = IP total length - IP header length
@@ -763,17 +764,18 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
                         __u16 old_udp_len = udph->len;
                         __u16 new_udp_len_net = bpf_htons((__u16)new_udp_len);
                         
-                        /* Update UDP length if it changed */
-                        if (old_udp_len != new_udp_len_net) {
-                            udph->len = new_udp_len_net;
-                            
-                            /* 
-                             * Set UDP checksum to 0 (no checksum computed)
-                             * This is valid per RFC 768 and avoids complex pseudo-header
-                             * checksum recalculation in eBPF context
-                             */
-                            udph->check = 0;
-                        }
+                        /* 
+                         * FORCE UPDATE: Always update UDP length after VXLAN decapsulation
+                         * The original inner UDP length must be adjusted to match new IP payload size
+                         */
+                        udph->len = new_udp_len_net;
+                        
+                        /* 
+                         * Set UDP checksum to 0 (no checksum computed)
+                         * This is valid per RFC 768 and avoids complex pseudo-header
+                         * checksum recalculation in eBPF context
+                         */
+                        udph->check = 0;
                     }
                 }
             }
