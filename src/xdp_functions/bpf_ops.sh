@@ -100,19 +100,42 @@ get_nat_rules() {
         return 1
     fi
     
-    # Parse JSON output using jq - fixed for actual bpftool format
+    # First try to get NAT rules from the BPF map using multiple parsing methods
     if command -v jq >/dev/null 2>&1; then
-        # Check if array has entries (correct bpftool format)
-        local has_entries=$(echo "$nat_data" | jq -r 'if (type == "array" and length > 0) then "true" else "false" end' 2>/dev/null)
+        # Method 1: Try parsing as direct array of entries
+        local rules_method1=$(echo "$nat_data" | jq -r '
+            try (
+                .[] | 
+                if .elements then .elements[] else . end |
+                if .key and .value then
+                    "\(.key | if type == "object" then .src_port else . end) -> \(.value | if type == "object" then "\(.target_ip):\(.target_port)" else . end)"
+                else empty end
+            ) catch empty
+        ' 2>/dev/null)
         
-        if [ "$has_entries" = "true" ]; then
-            # Extract from formatted structure: "src_port -> target_ip:target_port"
-            echo "$nat_data" | jq -r '.[] | "\(.key.src_port) -> \(.value.target_ip):\(.value.target_port)"' 2>/dev/null | while read -r rule; do
-                # Convert integer IP to dotted decimal and port from network to host byte order
+        # Method 2: Try parsing as nested structure with elements
+        if [ -z "$rules_method1" ]; then
+            local rules_method2=$(echo "$nat_data" | jq -r '
+                try (
+                    if type == "array" then
+                        .[] | select(.elements) | .elements[] |
+                        if .key and .value then
+                            "\(.key.src_port // .key) -> \(.value.target_ip // .value):\(.value.target_port // .value)"
+                        else empty end
+                    else empty end
+                ) catch empty
+            ' 2>/dev/null)
+            rules_method1="$rules_method2"
+        fi
+        
+        # Process and convert the rules if found
+        if [ -n "$rules_method1" ]; then
+            echo "$rules_method1" | while read -r rule; do
                 if [[ "$rule" =~ ([0-9]+)\ -\>\ ([0-9]+):([0-9]+) ]]; then
                     local src_port_net="${BASH_REMATCH[1]}"
                     local target_ip_int="${BASH_REMATCH[2]}"
                     local target_port="${BASH_REMATCH[3]}"
+                    
                     # Convert network byte order port to host byte order for display
                     local src_port_host=$(python3 -c "import socket; print(socket.ntohs($src_port_net))" 2>/dev/null || echo "$src_port_net")
                     local target_ip=$(int_to_ip "$target_ip_int")
@@ -121,23 +144,24 @@ get_nat_rules() {
             done
             return 0
         fi
-    else
-        # Fallback to text parsing for formatted structure
-        local src_ports=$(echo "$nat_data" | grep -o '"src_port":[0-9]*' | cut -d':' -f2)
-        local target_ips=$(echo "$nat_data" | grep -o '"target_ip":[0-9]*' | cut -d':' -f2) 
-        local target_ports=$(echo "$nat_data" | grep -o '"target_port":[0-9]*' | cut -d':' -f2)
-        
-        if [ -n "$src_ports" ]; then
-            paste <(echo "$src_ports") <(echo "$target_ips") <(echo "$target_ports") | while read -r src_port_net target_ip_int target_port; do
-                if [ -n "$src_port_net" ] && [ -n "$target_ip_int" ] && [ -n "$target_port" ]; then
-                    # Convert network byte order port to host byte order for display
-                    local src_port_host=$(python3 -c "import socket; print(socket.ntohs($src_port_net))" 2>/dev/null || echo "$src_port_net")
-                    local target_ip=$(int_to_ip "$target_ip_int")
-                    echo "$src_port_host -> $target_ip:$target_port"
-                fi
-            done
-        fi
     fi
+    
+    # Fallback: Try to extract directly from raw bpftool output (non-JSON)
+    local raw_nat_data=$(sudo bpftool map dump name nat_map 2>/dev/null)
+    if [ -n "$raw_nat_data" ]; then
+        # Parse raw bpftool output format
+        echo "$raw_data" | grep -E "key:|value:" | paste - - | while read -r key_line value_line; do
+            local src_port=$(echo "$key_line" | grep -o '[0-9a-f]\{2\} [0-9a-f]\{2\}' | head -1)
+            local target_data=$(echo "$value_line" | grep -o '[0-9a-f]\{2\} [0-9a-f]\{2\}')
+            
+            if [ -n "$src_port" ] && [ -n "$target_data" ]; then
+                # This would need proper hex to decimal conversion
+                echo "Raw NAT data found (parsing needed)"
+            fi
+        done
+    fi
+    
+    return 1
     
     return 1
 }

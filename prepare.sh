@@ -69,9 +69,9 @@ install_dependencies() {
                 warn "This is normal for WSL2. XDP functionality may be limited."
             }
             
-            # Network tools
-            sudo apt-get install -y iproute2 net-tools tcpdump
-            log "Network tools installed"
+            # Network tools (including ARP discovery)
+            sudo apt-get install -y iproute2 net-tools tcpdump arping iputils-arping
+            log "Network tools installed (including arping for MAC discovery)"
             
             # Extended XDP development packages
             sudo apt-get install -y git llvm libelf-dev libpcap-dev pkg-config m4 zlib1g-dev libcap-dev
@@ -363,7 +363,134 @@ verify_setup() {
 }
 
 # ============================================================================
-# STEP 6: FINAL STATUS
+# STEP 6: NETWORK CONFIGURATION
+# ============================================================================
+
+configure_network() {
+    section "Configuring Network Routing for XDP Pipeline"
+    
+    # Target configuration from .env or defaults
+    local TARGET_IP="172.30.82.95"
+    local TARGET_PORT="8081"
+    local BRIDGE_INTERFACE="br0"
+    local EGRESS_INTERFACE="ens6"
+    
+    # Source .env if it exists for custom configuration
+    if [ -f ".env" ]; then
+        source .env
+        TARGET_IP="${TARGET_IP:-172.30.82.95}"
+        info "Using configuration from .env file"
+    fi
+    
+    info "Target: $TARGET_IP:$TARGET_PORT"
+    info "Bridge interface: $BRIDGE_INTERFACE"
+    info "Egress interface: $EGRESS_INTERFACE"
+    
+    # Check if interfaces exist
+    if ! ip link show "$BRIDGE_INTERFACE" >/dev/null 2>&1; then
+        warn "Bridge interface $BRIDGE_INTERFACE not found"
+        warn "Skipping network configuration (will configure manually later)"
+        return 0
+    fi
+    
+    if ! ip link show "$EGRESS_INTERFACE" >/dev/null 2>&1; then
+        warn "Egress interface $EGRESS_INTERFACE not found"
+        warn "Skipping network configuration (will configure manually later)"
+        return 0
+    fi
+    
+    # Step 1: Discover MAC address using multiple methods
+    echo ""
+    info "=== Discovering MAC address for $TARGET_IP ==="
+    
+    # Method 1: arping (most reliable)
+    if command -v arping >/dev/null 2>&1; then
+        info "Trying arping discovery..."
+        if sudo arping -c 2 -I "$BRIDGE_INTERFACE" "$TARGET_IP" >/dev/null 2>&1; then
+            log "ARP ping successful"
+        else
+            warn "arping failed, trying alternatives"
+        fi
+    fi
+    
+    # Method 2: netcat connection attempt
+    info "Trying connection-based discovery..."
+    timeout 3 nc -w 1 "$TARGET_IP" "$TARGET_PORT" 2>/dev/null || true
+    timeout 3 nc -w 1 -u "$TARGET_IP" "$TARGET_PORT" 2>/dev/null || true
+    sleep 1
+    
+    # Method 3: Manual ARP probe if needed
+    if ! ip neighbor show "$TARGET_IP" | grep -q "lladdr"; then
+        info "Trying manual ARP probe..."
+        sudo ip neighbor add "$TARGET_IP" dev "$BRIDGE_INTERFACE" nud incomplete >/dev/null 2>&1 || true
+        sleep 2
+    fi
+    
+    # Check what we discovered
+    TARGET_MAC=$(ip neighbor show "$TARGET_IP" | awk '{print $5}' | head -1)
+    
+    if [ ! -z "$TARGET_MAC" ] && [ "$TARGET_MAC" != "" ]; then
+        log "Discovered MAC: $TARGET_MAC"
+        echo ""
+        
+        # Step 2: Configure routing for egress via specific interface
+        info "=== Configuring routing for $EGRESS_INTERFACE egress ==="
+        
+        # Remove any existing route for this IP
+        sudo ip route del "$TARGET_IP/32" >/dev/null 2>&1 || true
+        sudo ip neighbor del "$TARGET_IP" dev "$EGRESS_INTERFACE" >/dev/null 2>&1 || true
+        
+        # Add specific route with high priority (low metric)
+        if sudo ip route add "$TARGET_IP/32" dev "$EGRESS_INTERFACE" metric 50; then
+            log "Route added: $TARGET_IP/32 dev $EGRESS_INTERFACE"
+        else
+            warn "Failed to add route"
+            return 1
+        fi
+        
+        # Add neighbor entry for L2 forwarding
+        if sudo ip neighbor add "$TARGET_IP" lladdr "$TARGET_MAC" dev "$EGRESS_INTERFACE"; then
+            log "Neighbor entry added: $TARGET_IP -> $TARGET_MAC on $EGRESS_INTERFACE"
+        else
+            warn "Failed to add neighbor entry"
+        fi
+        
+        # Verify the configuration
+        echo ""
+        info "Verifying network configuration:"
+        local route_info=$(ip route get "$TARGET_IP" 2>/dev/null)
+        echo "  Route: $route_info"
+        
+        if echo "$route_info" | grep -q "$EGRESS_INTERFACE"; then
+            log "✓ Traffic to $TARGET_IP will egress via $EGRESS_INTERFACE"
+        else
+            warn "⚠ Route verification failed - check manual configuration"
+        fi
+        
+        # Test connectivity
+        if nc -zv "$TARGET_IP" "$TARGET_PORT" -u 2>/dev/null; then
+            log "✓ UDP connectivity to $TARGET_IP:$TARGET_PORT confirmed"
+        else
+            warn "⚠ Could not verify UDP connectivity"
+        fi
+        
+    else
+        warn "Could not discover MAC address for $TARGET_IP"
+        warn "You may need to configure network routing manually:"
+        echo ""
+        echo "  # Discover MAC address:"
+        echo "  sudo arping -c 2 -I $BRIDGE_INTERFACE $TARGET_IP"
+        echo "  TARGET_MAC=\$(ip neighbor show $TARGET_IP | awk '{print \$5}' | head -1)"
+        echo ""
+        echo "  # Configure routing:"
+        echo "  sudo ip route add $TARGET_IP/32 dev $EGRESS_INTERFACE metric 50"
+        echo "  sudo ip neighbor add $TARGET_IP lladdr \$TARGET_MAC dev $EGRESS_INTERFACE"
+        echo ""
+    fi
+}
+
+# ============================================================================
+# STEP 7: FINAL STATUS
 # ============================================================================
 
 show_status() {
@@ -401,6 +528,7 @@ main() {
     setup_venv
     build_project
     verify_setup
+    configure_network
     show_status
     
     log "Preparation completed successfully!"
