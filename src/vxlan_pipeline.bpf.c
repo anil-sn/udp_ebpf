@@ -1217,12 +1217,25 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
      * Validate that calculated lengths make sense and support large packets
      * MAX_PACKET_SIZE (9000) supports jumbo frames and AWS Traffic Mirror
      */
-    if (packet_len < ETH_HLEN + sizeof(struct iphdr) || 
-        temp_len < sizeof(struct iphdr) || temp_len > MAX_PACKET_SIZE) {
-        /* SECURITY: Invalid length calculation - potential corruption */
+    if (packet_len < ETH_HLEN + sizeof(struct iphdr)) {
+        /* SECURITY: Packet too small to contain IP header */
         update_stat(STAT_ERRORS, 1);
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return -1;  /* Critical failure - cannot proceed */
+    }
+    
+    if (temp_len < sizeof(struct iphdr)) {
+        /* SECURITY: IP length too small */
+        update_stat(STAT_ERRORS, 1);
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
+        return -1;  /* Critical failure - cannot proceed */
+    }
+    
+    /* Relax the maximum size check - allow up to 65535 for large packets */
+    if (temp_len > 65535) {
+        /* This should have been caught earlier, but handle gracefully */
+        update_stat(STAT_ERRORS, 1);
+        return -1;  /* Cannot fit in 16-bit field */
     }
     
     /* 
@@ -1235,9 +1248,13 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     ip_hdr->tot_len = bpf_htons((__u16)temp_len);  /* Set correct length */
     new_len = bpf_ntohs(ip_hdr->tot_len);  /* Verify the update */
     
+    /* Always count length updates since we're modifying after decapsulation */
+    update_stat(STAT_IP_LEN_UPDATED, 1);
+    
+    /* Debug: Track if the length actually changed */
     if (old_len != new_len) {
-        /* Track length updates for monitoring */
-        update_stat(STAT_IP_LEN_UPDATED, 1);
+        /* Length was different - this is expected after VXLAN decapsulation */
+        update_stat(STAT_PACKET_SIZE_DEBUG, (old_len << 16) | new_len);
     }
     
     /* 
@@ -1259,7 +1276,6 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
             
             __u32 udp_len = temp_len - ip_hdr_len;  /* Calculate UDP payload + header */
             __u32 remaining_bytes = (char *)data_end - (char *)udp_hdr;
-            __u32 max_udp_len = MAX_PACKET_SIZE - ETH_HLEN - ip_hdr_len;
             
             /* Additional safety: UDP length cannot exceed 16-bit field */
             if (udp_len > 65535) {
@@ -1268,13 +1284,11 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
             }
             
             /* 
-             * UDP LENGTH VALIDATION
-             * ====================
-             * Ensure calculated UDP length is valid and within bounds
+             * UDP LENGTH VALIDATION - More permissive
+             * =====================================
+             * Ensure calculated UDP length is reasonable
              */
-            if (udp_len >= sizeof(struct udphdr) && 
-                udp_len <= max_udp_len && 
-                udp_len <= remaining_bytes) {
+            if (udp_len >= sizeof(struct udphdr) && udp_len <= remaining_bytes) {
                 
                 old_len = bpf_ntohs(udp_hdr->len);      /* Store for monitoring */
                 udp_hdr->len = bpf_htons((__u16)udp_len);  /* Update UDP length */
