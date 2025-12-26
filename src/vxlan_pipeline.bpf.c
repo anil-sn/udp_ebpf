@@ -1246,26 +1246,22 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     old_len = bpf_ntohs(ip_hdr->tot_len);  /* Get current IP length */
     __u32 expected_ip_len = temp_len;      /* Expected: packet_len - ETH_HLEN */
     
-    /* CRITICAL VALIDATION: Check for the exact truncation issue */
-    if (old_len == packet_len && expected_ip_len == (packet_len - ETH_HLEN)) {
-        /* FOUND THE BUG! IP length includes Ethernet header (should not) */
+    /* ALWAYS update IP length to correct value after decapsulation */
+    ip_hdr->tot_len = bpf_htons((__u16)expected_ip_len);
+    update_stat(STAT_IP_LEN_UPDATED, 1);
+    
+    /* DETECT the specific truncation bug: IP length == total packet length */
+    if (old_len == packet_len) {
+        /* FOUND THE TRUNCATION BUG! */
+        /* IP header claims entire packet length including Ethernet header */
         update_stat(STAT_ERRORS, 1);  /* Count this as the truncation error */
-        
-        /* Fix the length */
-        ip_hdr->tot_len = bpf_htons((__u16)expected_ip_len);
-        update_stat(STAT_IP_LEN_UPDATED, 1);  /* Count the fix */
         
         /* Store debug info: old_len in high 16 bits, new_len in low 16 bits */
         update_stat(STAT_PACKET_SIZE_DEBUG, (old_len << 16) | expected_ip_len);
         
     } else if (old_len != expected_ip_len) {
-        /* Other length mismatch */
-        ip_hdr->tot_len = bpf_htons((__u16)expected_ip_len);
-        update_stat(STAT_IP_LEN_UPDATED, 1);
-        
-    } else {
-        /* Length is already correct */
-        update_stat(STAT_IP_LEN_UPDATED, 1);  /* Count as processed */
+        /* Other types of length mismatches */
+        update_stat(STAT_PACKET_SIZE_DEBUG, (old_len << 16) | expected_ip_len);
     }
     
     /* 
