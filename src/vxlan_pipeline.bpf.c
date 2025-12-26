@@ -1457,10 +1457,30 @@ int vxlan_processor(struct xdp_md *ctx)
     /* Update stage */
     pctx->stage = STAGE_VXLAN_PROCESSOR;
     
-    /* Find UDP header using stored offsets if needed */
+    /* Re-validate packet boundaries for this stage */
     struct ethhdr *eth_hdr = (struct ethhdr *)data;
+    if ((void *)(eth_hdr + 1) > data_end) {
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
+        return XDP_DROP;
+    }
+    
     struct iphdr *ip_hdr = (struct iphdr *)(eth_hdr + 1);
+    if ((void *)(ip_hdr + 1) > data_end) {
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
+        return XDP_DROP;
+    }
+    
+    /* Validate IP header length */
+    if (ip_hdr->ihl < 5) {
+        update_stat(STAT_ERRORS, 1);
+        return XDP_DROP;
+    }
+    
     udp_hdr = (struct udphdr *)((char *)ip_hdr + (ip_hdr->ihl * 4));
+    if ((void *)(udp_hdr + 1) > data_end) {
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
+        return XDP_DROP;
+    }
     
     /* Parse VXLAN and inner packet headers */
     result = parse_inner_packet(data, data_end, udp_hdr, &inner_eth, &inner_ip, &inner_udp);
@@ -1531,19 +1551,30 @@ int nat_engine(struct xdp_md *ctx)
     pctx->packet_len = data_end - data;
     
     /* Validate packet boundaries after decapsulation */
-    if (data + sizeof(struct ethhdr) + sizeof(struct iphdr) > data_end) {
+    if (data + sizeof(struct ethhdr) > data_end) {
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
     
-    /* Parse headers in decapsulated packet */
+    /* Parse headers in decapsulated packet with full bounds checking */
     struct ethhdr *eth_hdr = (struct ethhdr *)data;
     ip_hdr = (struct iphdr *)(eth_hdr + 1);
+    
+    if ((void *)(ip_hdr + 1) > data_end) {
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
+        return XDP_DROP;
+    }
     
     /* Apply NAT if required */
     if (pctx->flags & PIPELINE_FLAG_NAT_REQUIRED) {
         /* Find UDP header */
         if (ip_hdr->protocol == IPPROTO_UDP) {
+            /* Validate IP header length before calculating UDP offset */
+            if (ip_hdr->ihl < 5) {
+                update_stat(STAT_ERRORS, 1);
+                return XDP_DROP;
+            }
+            
             udp_hdr = (struct udphdr *)((char *)ip_hdr + (ip_hdr->ihl * 4));
             
             if ((void *)(udp_hdr + 1) > data_end) {
