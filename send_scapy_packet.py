@@ -46,19 +46,29 @@ def send_exact_packet_scapy():
     # Show packet summary
     packet.show2()
     
-    print(f"\n🚀 Sending packet via ens5...")
+    print(f"\n🚀 Sending packets continuously via ens5...")
+    print("Press Ctrl+C to stop...")
     
-    # Send packet on Layer 2 via specific interface
+    # Send packet continuously on Layer 2 via specific interface
     try:
-        sendp(packet, iface="ens5", verbose=1)
-        print(f"✅ Packet sent successfully!")
-        print(f"Check tcpdump on 172.30.82.95 for incoming packet...")
+        # Send packets in a loop with small delay
+        import time
+        count = 0
+        while True:
+            sendp(packet, iface="ens5", verbose=0)  # verbose=0 to reduce output spam
+            count += 1
+            if count % 10 == 0:  # Print every 10 packets
+                print(f"📤 Sent {count} packets...")
+            time.sleep(0.1)  # 100ms delay = 10 packets per second
+            
+    except KeyboardInterrupt:
+        print(f"\n⏹️  Stopped after sending {count} packets")
+        print(f"Check tcpdump on 172.30.82.95 for any received packets...")
+        return True
         
     except Exception as e:
         print(f"❌ Error sending packet: {e}")
         return False
-        
-    return True
 
 if __name__ == "__main__":
     print("=== Scapy Layer 2 Packet Sender ===")
