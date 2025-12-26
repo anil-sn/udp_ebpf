@@ -332,10 +332,6 @@ show_statistics() {
     printf "└─ Overall Status:     %s %s (%s%% success rate)\n" "$status_emoji" "$status_text" "$success_rate"
     
     echo "=============================================================="
-        echo "└─────────────────────────────────────────┘"
-    else
-        print_color "yellow" "Stats map not found"
-    fi
     
     # Process status
     echo ""
