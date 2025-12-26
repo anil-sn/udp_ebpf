@@ -1436,12 +1436,20 @@ static __always_inline int forward_packet(void *data, void *data_end,
                     copy_len = PACKET_DATA_MAX_SIZE;
                 }
                 
-                /* Perform the copy - don't treat truncation as error */
+                /* Perform the copy with original data */
                 long ret = bpf_probe_read_kernel(event->data, copy_len & (PACKET_DATA_MAX_SIZE - 1), data);
                 if (ret < 0) {
                     /* Only count actual copy failures as errors */
                     event->len = 0;  /* Mark as failed copy */
                     update_stat(STAT_ERRORS, 1);
+                } else {
+                    /* CRITICAL FIX: Update IP length in ring buffer copy */
+                    if (copy_len >= sizeof(struct ethhdr) + sizeof(struct iphdr)) {
+                        struct iphdr *ring_ip = (struct iphdr *)(event->data + sizeof(struct ethhdr));
+                        __u16 correct_len = temp_len - sizeof(struct ethhdr);
+                        ring_ip->tot_len = bpf_htons(correct_len);
+                        ring_ip->check = 0;  /* Clear checksum */
+                    }
                 }
             } else {
                 event->len = 0;  /* Mark as failed - insufficient data */
