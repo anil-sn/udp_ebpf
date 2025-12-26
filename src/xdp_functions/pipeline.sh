@@ -113,8 +113,8 @@ start_pipeline() {
             nohup sudo ./packet_injector vxlan_pipeline.bpf.o "$TARGET_INTERFACE" \
                 </dev/null >"/tmp/packet_injector.log" 2>&1 &
             
-            # Wait a moment for packet_injector startup
-            sleep 2
+            # Wait longer for packet_injector startup (needs time to initialize workers, memory pools)
+            sleep 5
             
             # Verify packet_injector startup
             if pgrep -f "packet_injector" >/dev/null; then

@@ -103,14 +103,16 @@ get_nat_rules() {
         
         if [ "$has_entries" = "true" ]; then
             # Extract from formatted structure: "src_port -> target_ip:target_port"
-            echo "$nat_data" | jq -r '.[] | "\(.formatted.key.src_port) -> \(.formatted.value.target_ip):\(.formatted.value.target_port)"' 2>/dev/null | while read -r rule; do
-                # Convert integer IP to dotted decimal
+            echo "$nat_data" | jq -r '.[] | "\(.key.src_port) -> \(.value.target_ip):\(.value.target_port)"' 2>/dev/null | while read -r rule; do
+                # Convert integer IP to dotted decimal and port from network to host byte order
                 if [[ "$rule" =~ ([0-9]+)\ -\>\ ([0-9]+):([0-9]+) ]]; then
-                    local src_port="${BASH_REMATCH[1]}"
+                    local src_port_net="${BASH_REMATCH[1]}"
                     local target_ip_int="${BASH_REMATCH[2]}"
                     local target_port="${BASH_REMATCH[3]}"
+                    # Convert network byte order port to host byte order for display
+                    local src_port_host=$(python3 -c "import socket; print(socket.ntohs($src_port_net))" 2>/dev/null || echo "$src_port_net")
                     local target_ip=$(int_to_ip "$target_ip_int")
-                    echo "$src_port -> $target_ip:$target_port"
+                    echo "$src_port_host -> $target_ip:$target_port"
                 fi
             done
             return 0
@@ -122,10 +124,12 @@ get_nat_rules() {
         local target_ports=$(echo "$nat_data" | grep -o '"target_port":[0-9]*' | cut -d':' -f2)
         
         if [ -n "$src_ports" ]; then
-            paste <(echo "$src_ports") <(echo "$target_ips") <(echo "$target_ports") | while read -r src_port target_ip_int target_port; do
-                if [ -n "$src_port" ] && [ -n "$target_ip_int" ] && [ -n "$target_port" ]; then
+            paste <(echo "$src_ports") <(echo "$target_ips") <(echo "$target_ports") | while read -r src_port_net target_ip_int target_port; do
+                if [ -n "$src_port_net" ] && [ -n "$target_ip_int" ] && [ -n "$target_port" ]; then
+                    # Convert network byte order port to host byte order for display
+                    local src_port_host=$(python3 -c "import socket; print(socket.ntohs($src_port_net))" 2>/dev/null || echo "$src_port_net")
                     local target_ip=$(int_to_ip "$target_ip_int")
-                    echo "$src_port -> $target_ip:$target_port"
+                    echo "$src_port_host -> $target_ip:$target_port"
                 fi
             done
         fi
