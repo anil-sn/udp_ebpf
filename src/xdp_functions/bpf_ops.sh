@@ -222,7 +222,31 @@ get_bpf_map_list() {
 # Get XDP attachment status
 get_xdp_attachment() {
     local iface="$1"
-    sudo bpftool net list 2>/dev/null | grep -E "^xdp:" | grep "$iface"
+    local attachment_info=$(sudo bpftool net list 2>/dev/null)
+    
+    if [ -n "$attachment_info" ]; then
+        # Show XDP attachments for the interface
+        local xdp_info=$(echo "$attachment_info" | grep -E "xdp.*$iface")
+        if [ -n "$xdp_info" ]; then
+            echo "XDP Programs attached to $iface:"
+            echo "$xdp_info" | while read -r line; do
+                echo "  $line"
+            done
+        else
+            # Check if XDP is attached but not showing interface name properly
+            local all_xdp=$(echo "$attachment_info" | grep "xdp:")
+            if [ -n "$all_xdp" ]; then
+                echo "XDP Programs detected:"
+                echo "$all_xdp" | while read -r line; do
+                    echo "  $line"
+                done
+            else
+                echo "No XDP programs attached to any interfaces"
+            fi
+        fi
+    else
+        echo "No network attachment information available"
+    fi
 }
 
 # Clean up BPF maps and programs - ENHANCED to remove all XDP programs
