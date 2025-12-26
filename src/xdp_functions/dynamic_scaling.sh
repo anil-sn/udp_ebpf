@@ -114,12 +114,28 @@ optimize_queue_count() {
     if [ "$target_queues" != "$CURRENT_QUEUES" ]; then
         print_color "yellow" "Scaling queues: $CURRENT_QUEUES → $target_queues ($reason)"
         
+        # Try different approaches for AWS ENA
+        local scaling_success=false
+        
+        # Method 1: Direct ethtool scaling
         if sudo ethtool -L "$INTERFACE" combined "$target_queues" 2>/dev/null; then
+            scaling_success=true
+        else
+            # Method 2: Try bringing interface down/up (more aggressive)
+            print_color "yellow" "Trying interface reset method..."
+            if sudo ip link set "$INTERFACE" down && \
+               sudo ethtool -L "$INTERFACE" combined "$target_queues" 2>/dev/null && \
+               sudo ip link set "$INTERFACE" up; then
+                scaling_success=true
+            fi
+        fi
+        
+        if [ "$scaling_success" = "true" ]; then
             print_color "green" "✓ Scaled to $target_queues queues"
             CURRENT_QUEUES="$target_queues"
             return 0
         else
-            print_color "red" "✗ Failed to scale queues"
+            print_color "red" "✗ Failed to scale queues (AWS ENA limitation)"
             return 1
         fi
     fi
@@ -165,31 +181,36 @@ start_multicore_injectors() {
     fi
     
     # Kill existing injectors first
-    pkill -f "packet_injector" 2>/dev/null || true
-    sleep 0.5
+    sudo pkill -f "packet_injector" 2>/dev/null || true
+    sleep 1
     
     print_color "blue" "Starting $cpu_count packet_injector instances with CPU affinity..."
     
-    # Start one injector per CPU core
+    # Start one injector per CPU core - use nohup to ensure proper backgrounding
     for ((cpu=0; cpu<cpu_count; cpu++)); do
-        # Start injector with CPU affinity
-        taskset -c "$cpu" "$injector_binary" &
+        # Start injector with CPU affinity using taskset and nohup
+        nohup taskset -c "$cpu" "$injector_binary" vxlan_pipeline.bpf.o ens6 >/dev/null 2>&1 &
         local pid=$!
         
-        # Verify process started and has correct affinity
-        sleep 0.1
-        if kill -0 "$pid" 2>/dev/null; then
-            local actual_affinity=$(taskset -p "$pid" 2>/dev/null | grep -o 'ffinity mask: [0-9a-f]*' | awk '{print $3}')
-            print_color "green" "✓ Started packet_injector PID $pid on CPU $cpu (mask: $actual_affinity)"
+        # Small delay and verification
+        sleep 0.2
+        
+        # Verify the actual worker process started (not just the shell)
+        local worker_pid=$(pgrep -f "packet_injector.*vxlan_pipeline" | tail -1)
+        if [ -n "$worker_pid" ]; then
+            # Set CPU affinity for the worker process
+            sudo taskset -cp "$cpu" "$worker_pid" >/dev/null 2>&1
+            local actual_affinity=$(taskset -p "$worker_pid" 2>/dev/null | grep -o 'ffinity mask: [0-9a-f]*' | awk '{print $3}')
+            print_color "green" "✓ Started packet_injector worker PID $worker_pid on CPU $cpu (mask: $actual_affinity)"
         else
-            print_color "red" "✗ Failed to start packet_injector on CPU $cpu"
+            print_color "red" "✗ Failed to start packet_injector worker on CPU $cpu"
         fi
-        sleep 0.1  # Small delay between starts
     done
     
-    # Show final count
-    local running_injectors=$(pgrep -f "packet_injector" | wc -l)
-    print_color "blue" "Total packet_injector instances running: $running_injectors"
+    # Show final count after all processes start
+    sleep 1
+    local running_injectors=$(pgrep -f "packet_injector.*vxlan_pipeline" | wc -l)
+    print_color "blue" "Total packet_injector worker processes: $running_injectors"
 }
 
 # Set process affinity for XDP components
@@ -331,14 +352,23 @@ case "${1:-status}" in
         ;;
     "scale-up")
         get_system_info
-        if [ "$CURRENT_QUEUES" -lt "$MAX_QUEUES" ]; then
-            target=$((CURRENT_QUEUES + 1))
-            print_color "blue" "Manual scale up: $CURRENT_QUEUES → $target queues"
-            sudo ethtool -L "$INTERFACE" combined "$target"
-            optimize_interrupt_affinity "$target"
-            optimize_process_affinity "$target"
+        local target=8  # Always try to get to 8 queues
+        if [ "$CURRENT_QUEUES" -lt 8 ]; then
+            print_color "blue" "Scaling up to maximum queues: $CURRENT_QUEUES → $target"
+            
+            # Use aggressive scaling method
+            if sudo ip link set "$INTERFACE" down && \
+               sudo ethtool -L "$INTERFACE" combined "$target" && \
+               sudo ip link set "$INTERFACE" up; then
+                print_color "green" "✓ Scaled to $target queues"
+                get_system_info
+                optimize_interrupt_affinity "$target"
+                optimize_process_affinity "$target"
+            else
+                print_color "red" "✗ Failed to scale to $target queues"
+            fi
         else
-            print_color "yellow" "Already at maximum queues ($MAX_QUEUES)"
+            print_color "yellow" "Already at 8 queues"
         fi
         ;;
     "scale-down") 
@@ -361,45 +391,62 @@ case "${1:-status}" in
         ;;
     "start-injectors")
         get_system_info
-        cpu_count=${2:-$CURRENT_QUEUES}
+        local cpu_count=${2:-$(nproc)}  # Default to all CPUs if not specified
         start_multicore_injectors "$cpu_count"
         ;;
     "max-performance")
         get_system_info
-        print_color "blue" "Configuring for maximum performance..."
-        # Scale to maximum queues
-        if [ "$CURRENT_QUEUES" -lt "$MAX_QUEUES" ]; then
-            print_color "yellow" "Scaling network queues: $CURRENT_QUEUES → $MAX_QUEUES"
-            if sudo ethtool -L "$INTERFACE" combined "$MAX_QUEUES" 2>/dev/null; then
-                CURRENT_QUEUES="$MAX_QUEUES"
-                print_color "green" "✓ Scaled to $MAX_QUEUES queues"
+        print_color "blue" "Configuring for maximum performance (forcing 8 queues)..."
+        
+        # Always force 8 queues - this is required for maximum performance
+        if [ "$CURRENT_QUEUES" -lt 8 ]; then
+            print_color "yellow" "Force scaling network queues: $CURRENT_QUEUES → 8 (may cause brief disconnection)"
+            
+            # Use aggressive method for AWS ENA - bring interface down/up
+            if sudo ip link set "$INTERFACE" down && \
+               sudo ethtool -L "$INTERFACE" combined 8 && \
+               sudo ip link set "$INTERFACE" up; then
+                print_color "green" "✓ Successfully forced 8 queues"
+                # Update our tracking
+                get_system_info
             else
-                print_color "yellow" "⚠ Queue scaling failed, continuing with $CURRENT_QUEUES queues"
+                # Fallback: try without bringing interface down
+                print_color "yellow" "Trying fallback method..."
+                if sudo ethtool -L "$INTERFACE" combined 8 2>/dev/null; then
+                    print_color "green" "✓ Successfully set 8 queues (fallback method)"
+                    get_system_info
+                else
+                    print_color "red" "✗ Failed to force 8 queues - AWS ENA driver limitation"
+                    print_color "yellow" "Continuing with current $CURRENT_QUEUES queues"
+                fi
             fi
         else
-            print_color "green" "✓ Already using maximum queues ($MAX_QUEUES)"
+            print_color "green" "✓ Already using 8 queues"
         fi
         
-        # Optimize IRQ affinity
-        optimize_interrupt_affinity "$CURRENT_QUEUES"
+        # Always optimize for 8 CPUs regardless of queue scaling success
+        local target_cpus=8
         
-        # Start multi-core injectors
-        start_multicore_injectors "$CURRENT_QUEUES"
+        # Optimize IRQ affinity for 8 CPUs
+        optimize_interrupt_affinity "$target_cpus"
         
-        # Optimize any existing processes
-        optimize_process_affinity "$CURRENT_QUEUES"
+        # Start 8 packet injector instances
+        start_multicore_injectors "$target_cpus"
         
-        print_color "green" "✓ Maximum performance configuration complete!"
+        # Optimize any existing processes for 8 CPUs
+        optimize_process_affinity "$target_cpus"
+        
+        print_color "green" "✓ Maximum performance configuration complete (8-CPU optimized)!"
         ;;
     "help")
         echo "Dynamic XDP Scaling Usage:"
-        echo "  $0 start           - Start dynamic scaling monitor"  
+        echo "  $0 start           - Start dynamic scaling monitor"
         echo "  $0 status          - Show current scaling status"
-        echo "  $0 scale-up        - Manually add one queue"
+        echo "  $0 scale-up        - Scale to 8 queues (maximum performance)"
         echo "  $0 scale-down      - Manually remove one queue"
         echo "  $0 optimize        - Optimize CPU affinity"
         echo "  $0 start-injectors [N] - Start N packet_injector instances"
-        echo "  $0 max-performance - Scale to max queues + multi-core injectors"
+        echo "  $0 max-performance - Force 8 queues + 8-core injectors (default)"
         ;;
     *)
         print_color "red" "Unknown command: $1"

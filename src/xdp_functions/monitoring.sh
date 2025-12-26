@@ -248,8 +248,13 @@ show_detailed_info() {
     print_color "yellow" "=== NAT CONFIGURATION ==="
     
     local nat_rules=$(get_nat_rules 2>/dev/null)
-    if [ -n "$nat_rules" ]; then
-        local nat_count=$(echo "$nat_rules" | wc -l)
+    local nat_count=0
+    
+    if [ -n "$nat_rules" ] && [ "$nat_rules" != "" ]; then
+        nat_count=$(echo "$nat_rules" | grep -c "->" 2>/dev/null || echo "0")
+    fi
+    
+    if [ "$nat_count" -gt 0 ]; then
         echo "Active NAT Rules: $nat_count"
         echo ""
         echo "┌─────────────┬─────────────────┬──────────────┬────────────────────┐"
@@ -267,7 +272,19 @@ show_detailed_info() {
         done
         echo "└─────────────┴─────────────────┴──────────────┴────────────────────┘"
     else
-        echo "No NAT rules configured"
+        # Try to get NAT info from BPF map directly
+        local nat_map_data=$(dump_bpf_map "nat_map" "json" 2>/dev/null)
+        if [ -n "$nat_map_data" ] && command -v jq >/dev/null 2>&1; then
+            local nat_entries=$(echo "$nat_map_data" | jq -r 'if (type == "array") then [.[] | select(.elements != null and (.elements | length) > 0) | .elements[]] else [] end | length' 2>/dev/null)
+            if [ "$nat_entries" -gt 0 ]; then
+                echo "NAT rules detected in BPF map: $nat_entries entries"
+                echo "(Use './xdp.sh stats' for detailed NAT information)"
+            else
+                echo "No NAT rules configured"
+            fi
+        else
+            echo "No NAT rules configured"
+        fi
     fi
     
     # IP Allowlist Table
