@@ -780,6 +780,13 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         struct ethhdr *inner_eth = (struct ethhdr *)data;
         struct iphdr *inner_iph = (struct iphdr *)(data + sizeof(struct ethhdr));
         
+        /* Additional validation: ensure IP header is accessible */
+        if ((void *)(inner_iph + 1) > data_end) {
+            update_stat(STAT_ERRORS, 1);
+            update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
+            goto skip_length_updates;
+        }
+        
         /* CRITICAL FIX: Calculate correct lengths after VXLAN decapsulation */
         __u32 decap_packet_len = data_end - data;  // Actual packet size after decapsulation
         __u32 decap_ip_len = decap_packet_len - ETH_HLEN;  // IP packet length after decap
