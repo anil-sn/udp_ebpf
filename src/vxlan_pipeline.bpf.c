@@ -801,7 +801,6 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         eth->h_dest[3] = nat_config->mac_addr[3];
         eth->h_dest[4] = nat_config->mac_addr[4];
         eth->h_dest[5] = nat_config->mac_addr[5];
-    }
     
     update_stat(STAT_FORWARDED, 1);
     
