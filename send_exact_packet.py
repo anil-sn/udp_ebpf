@@ -49,16 +49,57 @@ def build_exact_packet():
         flags_fragment, ttl, protocol, checksum_val
     ) + src_ip + dst_ip
     
-    # UDP Header (8 bytes) - Use port 1035 (confirmed working)
+    # UDP Header (8 bytes) - Will calculate proper checksum
     src_port = 19458         # Source Port
     dst_port = 1035          # Port 1035 (TCP works, try UDP)
     udp_length = 1341        # UDP Length  
-    udp_checksum = 0x0000    # Checksum (zero-value)
+    udp_checksum = 0x0000    # Will calculate proper checksum
     
+    # Build initial UDP header with zero checksum
     udp_header = struct.pack('!HHHH', src_port, dst_port, udp_length, udp_checksum)
     
     # UDP Payload (1333 bytes) - create dummy payload
     payload = b'\x00' * 1333
+    
+    # Calculate proper UDP checksum with pseudo-header
+    def calculate_udp_checksum(src_ip_bytes, dst_ip_bytes, udp_header, payload):
+        # Create pseudo-header for UDP checksum
+        pseudo_header = struct.pack('!4s4sBBH',
+            src_ip_bytes,        # Source IP (4 bytes)
+            dst_ip_bytes,        # Dest IP (4 bytes)  
+            0,                   # Reserved (1 byte)
+            17,                  # Protocol UDP (1 byte)
+            udp_length           # UDP length (2 bytes)
+        )
+        
+        # Combine pseudo-header + UDP header + payload
+        checksum_data = pseudo_header + udp_header + payload
+        
+        # Add padding if odd length
+        if len(checksum_data) % 2:
+            checksum_data += b'\x00'
+            
+        # Calculate checksum
+        sum_val = 0
+        for i in range(0, len(checksum_data), 2):
+            word = (checksum_data[i] << 8) + checksum_data[i+1]
+            sum_val += word
+            
+        # Add carry bits
+        while sum_val >> 16:
+            sum_val = (sum_val & 0xFFFF) + (sum_val >> 16)
+            
+        # One's complement
+        checksum = (~sum_val) & 0xFFFF
+        
+        # If checksum is 0, use 0xFFFF (per RFC 768)
+        return 0xFFFF if checksum == 0 else checksum
+    
+    # Calculate UDP checksum
+    udp_checksum_val = calculate_udp_checksum(src_ip, dst_ip, udp_header, payload)
+    
+    # Rebuild UDP header with correct checksum
+    udp_header = struct.pack('!HHHH', src_port, dst_port, udp_length, udp_checksum_val)
     
     # Assemble complete packet
     packet = dst_mac + src_mac + ethertype + ip_header + udp_header + payload
@@ -87,6 +128,7 @@ def send_exact_packet():
         print(f"IP Total Length: {struct.unpack('!H', packet[16:18])[0]} (should be 1361)")
         print(f"UDP Src Port: {struct.unpack('!H', packet[34:36])[0]} (should be 19458)")
         print(f"UDP Dst Port: {struct.unpack('!H', packet[36:38])[0]} (should be 1035)")
+        print(f"UDP Checksum: {hex(struct.unpack('!H', packet[40:42])[0])} (calculated)")
         
         # Create raw socket
         sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0800))
