@@ -1729,6 +1729,9 @@ int forwarding_stage(struct xdp_md *ctx)
     /* Update stage */
     pctx->stage = STAGE_FORWARDING;
     
+    /* Recalculate packet length after decapsulation */
+    pctx->packet_len = data_end - data;
+    
     /* Update packet headers */
     result = update_packet_headers(data, data_end, pctx->packet_len);
     if (result < 0) {
