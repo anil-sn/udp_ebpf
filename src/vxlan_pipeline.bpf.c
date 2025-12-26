@@ -794,9 +794,9 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
         /* DEBUG: Track packet size for analysis */
         update_stat(STAT_PACKET_SIZE_DEBUG, decap_packet_len);
         
-        /* Validate decapsulated length makes sense (1472 = 1500-14-14 max IP after ETH removal) */
+        /* Validate decapsulated length makes sense (1500 = standard MTU IP size) */
         if (decap_packet_len < ETH_HLEN + sizeof(struct iphdr) || 
-            decap_ip_len < sizeof(struct iphdr) || decap_ip_len > 1472) {
+            decap_ip_len < sizeof(struct iphdr) || decap_ip_len > 1500) {
             update_stat(STAT_ERRORS, 1);
             update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
             goto skip_length_updates;
@@ -824,8 +824,8 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
             if ((void *)(inner_udph + 1) <= data_end) {
                 __u32 decap_udp_len = decap_ip_len - ip_hdr_len;  // UDP length after decap
                 
-                /* Validate UDP length is reasonable */
-                if (decap_udp_len >= sizeof(struct udphdr) && decap_udp_len <= 1466) {
+                /* Validate UDP length is reasonable (1480 = 1500 IP - 20 IP header) */
+                if (decap_udp_len >= sizeof(struct udphdr) && decap_udp_len <= 1480) {
                     __u16 old_udp_len = bpf_ntohs(inner_udph->len);  /* DEBUG: Save old value */
                     inner_udph->len = bpf_htons((__u16)decap_udp_len);
                     inner_udph->check = 0;  /* Zero UDP checksum for performance */
