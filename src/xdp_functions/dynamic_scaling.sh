@@ -29,13 +29,13 @@ get_bpf_statistics() {
     
     case "$stat_type" in
         "total")
-            echo "$stats_json" | jq -r '[.[] | select(.key == 0) | .values[].value] | add // 0' 2>/dev/null || echo "0"
+            echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 0) | .formatted.values[].value] | add // 0' 2>/dev/null || echo "0"
             ;;
         "vxlan")
-            echo "$stats_json" | jq -r '[.[] | select(.key == 1) | .values[].value] | add // 0' 2>/dev/null || echo "0"
+            echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 1) | .formatted.values[].value] | add // 0' 2>/dev/null || echo "0"
             ;;
         "dropped"|"errors")
-            echo "$stats_json" | jq -r '[.[] | select(.key == 7) | .values[].value] | add // 0' 2>/dev/null || echo "0"
+            echo "$stats_json" | jq -r '[.[] | select(.formatted.key == 7) | .formatted.values[].value] | add // 0' 2>/dev/null || echo "0"
             ;;
         *)
             echo "0"
