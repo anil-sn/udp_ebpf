@@ -714,8 +714,7 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     struct iphdr *iph = (struct iphdr *)ip_start;
     
     /* Step 3: Calculate new lengths after VXLAN decapsulation */
-    __u32 total_packet_size = (char *)data_end - (char *)data;
-    __u32 new_ip_total_len = total_packet_size - 14;  /* Subtract Ethernet header */
+    __u32 new_ip_total_len = ((char *)data_end - (char *)data) - 14;  /* Subtract Ethernet header */
     
     /* Step 4: Validate calculated IP length is reasonable */
     if (new_ip_total_len < 20 || new_ip_total_len > 1500) {
@@ -766,8 +765,8 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
             }
         }
     }
-        
-        /* Get interface and NAT target configurations */
+    
+    /* Get interface and NAT target configurations */
         __u32 if_key = 0;  /* Always use key 0 for single interface config */
         struct interface_config *if_config = bpf_map_lookup_elem(&interface_map, &if_key);
         
