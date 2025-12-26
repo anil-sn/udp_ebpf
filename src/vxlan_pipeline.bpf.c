@@ -884,25 +884,32 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
             if (pkt_len <= 1500) {
                 /* Try kernel probe read first (most efficient) */
                 if (bpf_probe_read_kernel(event->data, pkt_len, data) != 0) {
-                    /* Fallback: Simple memcpy with fixed small loop */
+                    /* Fallback: Simple memcpy with proper bounds checking */
                     __u32 copy_bytes = pkt_len;
                     if (copy_bytes > 1500) copy_bytes = 1500;
                     
-                    /* Copy in 256-byte chunks to reduce BPF complexity */
-                    for (__u32 offset = 0; offset < copy_bytes; offset += 256) {
-                        __u32 chunk_size = 256;
+                    /* Copy in 128-byte chunks to reduce BPF complexity and ensure bounds safety */
+                    for (__u32 offset = 0; offset < copy_bytes; offset += 128) {
+                        __u32 chunk_size = 128;
                         if (offset + chunk_size > copy_bytes) {
                             chunk_size = copy_bytes - offset;
                         }
-                        if (chunk_size > 256) chunk_size = 256;
+                        if (chunk_size > 128) chunk_size = 128;
                         
-                        /* Bounds check before copy */
+                        /* Critical bounds check: ensure we don't exceed destination buffer */
+                        if (offset + chunk_size > 1500) {
+                            break; /* Stop if we would exceed buffer */
+                        }
+                        
+                        /* Bounds check source before copy */
                         if ((char *)data + offset + chunk_size > (char *)data_end) {
                             break;
                         }
                         
-                        /* Copy this chunk using bpf_probe_read_kernel */
-                        bpf_probe_read_kernel(event->data + offset, chunk_size, (char *)data + offset);
+                        /* Copy this chunk using bpf_probe_read_kernel with verified bounds */
+                        if (chunk_size > 0 && offset < 1500) {
+                            bpf_probe_read_kernel(event->data + offset, chunk_size, (char *)data + offset);
+                        }
                     }
                 }
             }
