@@ -225,9 +225,9 @@ get_xdp_attachment() {
 cleanup_bpf() {
     print_color "yellow" "Cleaning up BPF resources..."
     
-    # Kill processes first to stop new activity
+    # Kill processes first to stop new activity (but preserve if just started during pipeline startup)
     sudo pkill -KILL -f "vxlan_loader" 2>/dev/null || true
-    sudo pkill -KILL -f "packet_injector" 2>/dev/null || true
+    # Note: Don't kill packet_injector here - it should only be killed during explicit stop
     
     # Detach XDP from ALL interfaces (not just target ones)
     sudo ip link set "$INTERFACE" xdp off 2>/dev/null || true
