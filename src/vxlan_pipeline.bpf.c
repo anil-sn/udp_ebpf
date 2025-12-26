@@ -735,6 +735,14 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
                 /* Track IP length updates for monitoring */
                 update_stat(STAT_IP_LEN_UPDATED, 1);
             }
+        }
+        
+        /* Get interface and NAT target configurations */
+        __u32 if_key = 0;  /* Always use key 0 for single interface config */
+        struct interface_config *if_config = bpf_map_lookup_elem(&interface_map, &if_key);
+        
+        __u32 nat_key = 0;  /* Always use key 0 for single NAT target config */
+        struct nat_target_config *nat_config = bpf_map_lookup_elem(&nat_target_map, &nat_key);
         
         /* Validate that both configurations are available and valid */
         if (!if_config || if_config->ifindex == 0) {
@@ -812,4 +820,5 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     return XDP_DROP;
 }
 
-char _license[] SEC("license") = "GPL";
+SEC("license")
+char _license[] = "GPL";
