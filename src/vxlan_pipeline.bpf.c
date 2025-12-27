@@ -1533,6 +1533,7 @@ static __always_inline int forward_packet(void *data, void *data_end,
                 }
                 
 copy_done:
+                ; /* Required statement after label */
                 long ret = 0;  /* Manual copy always succeeds with proper bounds */
                 update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_PROBE_READ_KERNEL_RESULT | (copied & DEBUG_VALUE_MASK));  /* DEBUG: actual copied bytes */
                 if (copied == 0) {
