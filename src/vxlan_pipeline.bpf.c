@@ -1525,8 +1525,8 @@ static __always_inline int forward_packet(void *data, void *data_end,
         
         /* Copy packet data with consistent size */
         if (final_copy_len > 0) {
-            /* Use fixed size for verifier compatibility - captures headers + some payload */
-            const __u32 COPY_SIZE = 256; /* Fixed 256 bytes - verifier friendly */
+            /* Use larger fixed size to capture full packets - verifier friendly */
+            const __u32 COPY_SIZE = 1536; /* Fixed 1536 bytes - covers jumbo Ethernet frames */
             
             /* Copy complete packet data using bpf_probe_read_kernel for safety */
             long ret = bpf_probe_read_kernel(event->data, COPY_SIZE, data);
