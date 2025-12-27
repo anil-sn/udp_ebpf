@@ -386,7 +386,8 @@ static int resolve_ip_to_mac(const char* ip_str, __u8 mac_addr[6])
         snprintf(arp_cmd, sizeof(arp_cmd), "ip neigh add %s dev %s nud probe >/dev/null 2>&1 || ip neigh replace %s dev %s nud probe >/dev/null 2>&1", 
                 ip_str, cfg.target_interface, ip_str, cfg.target_interface);
         printf("Trying ip neigh probe method...\n");
-        system(arp_cmd);
+        int arp_result = system(arp_cmd);
+        (void)arp_result; /* Suppress unused variable warning */
         
         /* Method 3: Try connecting to common ports (TCP SYN packets) */
         char connect_cmd[512];
@@ -398,7 +399,8 @@ static int resolve_ip_to_mac(const char* ip_str, __u8 mac_addr[6])
                 "timeout 2 nc -w 1 %s 8081 </dev/null >/dev/null 2>&1", 
                 ip_str, ip_str, ip_str, ip_str, ip_str);
         printf("Trying TCP connection method...\n");
-        system(connect_cmd);
+        int connect_result = system(connect_cmd);
+        (void)connect_result; /* Suppress unused variable warning */
         
         /* Method 4: Try UDP connection to target port */
         if (cfg.nat_target_port > 0) {
@@ -406,7 +408,8 @@ static int resolve_ip_to_mac(const char* ip_str, __u8 mac_addr[6])
             snprintf(udp_cmd, sizeof(udp_cmd), "timeout 2 nc -u -w 1 %s %d </dev/null >/dev/null 2>&1", 
                     ip_str, cfg.nat_target_port);
             printf("Trying UDP connection to port %d...\n", cfg.nat_target_port);
-            system(udp_cmd);
+            int udp_result = system(udp_cmd);
+            (void)udp_result; /* Suppress unused variable warning */
         }
         
         /* Wait for ARP resolution */
