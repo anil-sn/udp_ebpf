@@ -148,8 +148,29 @@ def load_from_json(json_file):
         return 0
 
 def display_loaded_ips():
-    """Display all IPs currently loaded in the BPF map with enhanced parsing and debugging"""
+    """Display all IPs currently loaded in the BPF map with organization information"""
     try:
+        # Load organization information from JSON file
+        org_mapping = {}
+        try:
+            with open('ip_allowlist.json', 'r') as f:
+                data = json.load(f)
+                for org in data.get('organizations', []):
+                    org_name = org.get('org_name', 'Unknown')
+                    org_id = org.get('org_id', 'N/A')
+                    # Truncate long org names for display
+                    if len(org_name) > 30:
+                        org_name = org_name[:27] + "..."
+                    for ip in org.get('ips', []):
+                        org_mapping[ip] = {
+                            'name': org_name,
+                            'id': org_id
+                        }
+        except FileNotFoundError:
+            print("Warning: ip_allowlist.json not found, showing IPs without organization info")
+        except Exception as e:
+            print(f"Warning: Could not load organization info: {e}")
+        
         # Use JSON format directly instead of parsing text
         cmd = ['bpftool', 'map', 'dump', 'name', 'ip_allowlist', '--json']
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -189,24 +210,30 @@ def display_loaded_ips():
             print(f"Warning: Could not sort IPs: {e}")
             ip_addresses.sort()  # Fallback to string sort
         
-        # Display IPs in a professional table format
+        # Display IPs with organization information in a table format
         if ip_addresses:
             print("=== IP ALLOWLIST ===")
             print(f"Allowed IP Addresses: {len(ip_addresses)} total")
             print()
-            print("┌─────────────────┬────────────────────────────────────────────────┐")
-            print("│   IP Address    │                   Status                       │")
-            print("├─────────────────┼────────────────────────────────────────────────┤")
+            print("┌─────────────────┬──────────────────────────────┬─────────────┐")
+            print("│   IP Address    │         Organization         │   Org ID    │")
+            print("├─────────────────┼──────────────────────────────┼─────────────┤")
             
             for ip in ip_addresses:
-                print(f"│ {ip:<15} │                    Active                      │")
+                org_info = org_mapping.get(ip, {'name': 'Unknown', 'id': 'N/A'})
+                org_name = org_info['name']
+                org_id = org_info['id']
+                
+                print(f"│ {ip:<15} │ {org_name:<28} │ {org_id:<11} │")
             
-            print("└─────────────────┴────────────────────────────────────────────────┘")
+            print("└─────────────────┴──────────────────────────────┴─────────────┘")
             print()
-            # Show IP range summary for quick reference
+            # Show IP range and organization summary
             first_ip = ipaddress.IPv4Address(ip_addresses[0])
             last_ip = ipaddress.IPv4Address(ip_addresses[-1])
+            unique_orgs = len(set(org_mapping[ip]['name'] for ip in ip_addresses if ip in org_mapping))
             print(f"IP Range: {first_ip} → {last_ip}")
+            print(f"Organizations: {unique_orgs} unique organizations represented")
         else:
             print("No IP addresses found in allowlist")
         
