@@ -396,7 +396,8 @@ static __always_inline int init_pipeline_ctx(struct xdp_md *ctx, struct pipeline
     void *data_end = (void *)(long)ctx->data_end;
     pctx->packet_len = data_end - data;
     pctx->stage = STAGE_CLASSIFIER;
-    pctx->start_time = bpf_ktime_get_ns();
+    /* Temporarily store original length in start_time for length calculation */
+    pctx->start_time = data_end - data;  /* Will be overwritten with actual time later */
     
     return 0;
 }
@@ -1779,7 +1780,9 @@ int nat_engine(struct xdp_md *ctx)
     /* Refresh data pointers after decapsulation */
     data = (void *)(long)ctx->data;
     data_end = (void *)(long)ctx->data_end;
-    pctx->packet_len = data_end - data;
+    /* Don't overwrite packet_len here - it causes systematic temp_len=0 errors!
+     * The length was already set correctly in forwarding_stage() */
+    // pctx->packet_len = data_end - data;  /* DISABLED: This causes 1:1 systematic error */
     
     /* Validate packet boundaries after decapsulation */
     if (data + sizeof(struct ethhdr) > data_end) {
@@ -1899,29 +1902,21 @@ int forwarding_stage(struct xdp_md *ctx)
     /* Update stage */
     pctx->stage = STAGE_FORWARDING;
     
-    /* Calculate proper decapsulated packet length
-     * bpf_xdp_adjust_head() invalidates data_end - data calculation
-     * Use IP header total length field for accurate size */
-    struct ethhdr *eth = (struct ethhdr *)data;
-    struct iphdr *ip = (struct iphdr *)(eth + 1);
-    __u32 decap_packet_len = 1500;  /* Safe default */
+    /* Calculate decapsulated packet length using stored original length
+     * pctx->start_time temporarily holds the original packet length */
+    __u32 original_packet_len = (__u32)pctx->start_time;
+    __u32 vxlan_overhead = ETH_HLEN + sizeof(struct iphdr) + 
+                          sizeof(struct udphdr) + sizeof(struct vxlanhdr);
     
-    if ((void *)(ip + 1) <= data_end) {
-        /* Use IP total length + Ethernet header for accurate size */
-        decap_packet_len = bpf_ntohs(ip->tot_len) + ETH_HLEN;
-        /* Validate calculated length */
-        if (decap_packet_len >= ETH_HLEN && decap_packet_len <= 9000) {
-            pctx->packet_len = decap_packet_len;
-        } else {
-            /* Fallback to safe default if calculation seems wrong */
-            pctx->packet_len = 1500;
-            update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0050);  /* Invalid calculated length marker */
-        }
+    if (original_packet_len > vxlan_overhead) {
+        pctx->packet_len = original_packet_len - vxlan_overhead;
     } else {
-        /* Can't access IP header safely, use default */
-        pctx->packet_len = 1500; 
-        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0051);  /* No IP header access marker */
+        /* Fallback: use minimum valid ethernet frame */
+        pctx->packet_len = ETH_HLEN + sizeof(struct iphdr);
     }
+    
+    /* Now set the actual start time for performance tracking */
+    pctx->start_time = bpf_ktime_get_ns();
     
     /* Update packet headers */
     result = update_packet_headers(data, data_end, pctx->packet_len);
