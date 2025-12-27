@@ -179,12 +179,13 @@ def display_loaded_ips():
                         # Handle integer keys (most common case)
                         if isinstance(key_data, int):
                             try:
-                                # Convert from network byte order integer to IP
+                                # Convert from little-endian integer to IP (BPF uses host byte order)
                                 ip_int = key_data
-                                ip_bytes = ip_int.to_bytes(4, byteorder='big')
+                                ip_bytes = ip_int.to_bytes(4, byteorder='little')
                                 ip = ipaddress.IPv4Address(ip_bytes)
                                 ip_addresses.append(str(ip))
                             except (ValueError, OverflowError) as e:
+                                parse_errors += 1
                                 print(f"Warning: Could not parse IP from integer {key_data}: {e}")
                                 
                         elif isinstance(key_data, list) and len(key_data) == 4:

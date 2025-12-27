@@ -109,37 +109,31 @@ get_nat_rules() {
     
     # Use jq to parse the JSON and convert to human readable format
     if command -v jq >/dev/null 2>&1; then
-        echo "$nat_data" | jq -r '
+        # Parse the specific JSON format from bpftool
+        local parsed_rules=$(echo "$nat_data" | jq -r '
             .[] | 
             if .key and .value then
-                # Handle both direct format and nested format
+                # Handle object format: {"key": {"src_port": 5500}, "value": {"target_ip": 844242604, "target_port": 8081}}
                 if (.key | type) == "object" and (.value | type) == "object" then
                     "\(.key.src_port) -> \(.value.target_ip):\(.value.target_port)"
-                elif (.key | type) == "array" and (.value | type) == "array" then
-                    # Extract from hex array format
-                    ((.key[0] | tonumber) + ((.key[1] | tonumber) * 256)) as $src_port |
-                    ((.value[0] | tonumber) + ((.value[1] | tonumber) * 256) + ((.value[2] | tonumber) * 65536) + ((.value[3] | tonumber) * 16777216)) as $target_ip |
-                    ((.value[4] | tonumber) + ((.value[5] | tonumber) * 256)) as $target_port |
-                    "\($src_port) -> \($target_ip):\($target_port)"
-                else
-                    "\(.key) -> \(.value)"
-                end
+                else empty end
             else empty end
-        ' 2>/dev/null | while read -r rule; do
-            if [[ "$rule" =~ ([0-9]+)\ -\>\ ([0-9]+):([0-9]+) ]]; then
-                local src_port="${BASH_REMATCH[1]}"
-                local target_ip_int="${BASH_REMATCH[2]}"
-                local target_port="${BASH_REMATCH[3]}"
-                
-                # Convert integer IP to dotted decimal
-                local target_ip=$(int_to_ip "$target_ip_int")
-                echo "$src_port -> $target_ip:$target_port"
-            else
-                # Handle cases where parsing might have different format
-                echo "$rule"
-            fi
-        done
-        return 0
+        ' 2>/dev/null)
+        
+        if [ -n "$parsed_rules" ]; then
+            echo "$parsed_rules" | while read -r rule; do
+                if [[ "$rule" =~ ([0-9]+)\ -\>\ ([0-9]+):([0-9]+) ]]; then
+                    local src_port="${BASH_REMATCH[1]}"
+                    local target_ip_int="${BASH_REMATCH[2]}"
+                    local target_port="${BASH_REMATCH[3]}"
+                    
+                    # Convert integer IP to dotted decimal using corrected function
+                    local target_ip=$(printf "%d.%d.%d.%d" $((target_ip_int & 0xFF)) $(((target_ip_int >> 8) & 0xFF)) $(((target_ip_int >> 16) & 0xFF)) $(((target_ip_int >> 24) & 0xFF)))
+                    echo "$src_port -> $target_ip:$target_port"
+                fi
+            done
+            return 0
+        fi
     fi
     
     return 1
