@@ -269,11 +269,17 @@ def check_specific_debug_markers():
         
         # Target markers that are likely systematic error sources
         target_markers = {
+            0xDEAD0040: "temp_len zero error marker - SYSTEMATIC ERROR SOURCE",
+            0xDEAD0041: "Insufficient data error marker - SYSTEMATIC ERROR SOURCE",
+            0xDEAD0042: "Ring buffer copy failure marker - SYSTEMATIC ERROR SOURCE",
             0xDEAD0100: "IP header length validation failure - SYSTEMATIC ERROR SOURCE",
             0xDEAD0200: "IP header bounds after decapsulation - SYSTEMATIC ERROR SOURCE", 
             0xDEAD0201: "IP header length validation after decapsulation - SYSTEMATIC ERROR SOURCE",
             0xDEAD0600: "Invalid stage number - SYSTEMATIC ERROR SOURCE",
-            0xDEAD0601: "Tail call failure - SYSTEMATIC ERROR SOURCE"
+            0xDEAD0601: "Tail call failure - SYSTEMATIC ERROR SOURCE",
+            0xBAD00001: "Interface config failure - SYSTEMATIC ERROR SOURCE",
+            0xBAD00002: "NAT config failure - SYSTEMATIC ERROR SOURCE", 
+            0xBAD00003: "Target ifindex failure - SYSTEMATIC ERROR SOURCE"
         }
         
         found_any = False
