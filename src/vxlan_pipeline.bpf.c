@@ -1516,16 +1516,26 @@ static __always_inline int forward_packet(void *data, void *data_end,
                 }
                 
                 /* Perform the copy with exact packet length to prevent corruption */
-                /* Manual copy for eBPF - must use bounded loop for verifier */
+                /* Manual copy for eBPF - use small bounded loops that verifier can handle */
+                __u32 copied = 0;
+                
+                /* Copy in chunks of 256 bytes - verifier-friendly */
                 #pragma unroll
-                for (__u32 i = 0; i < PACKET_DATA_MAX_SIZE; i++) {
-                    if (i >= copy_len) break;
-                    if ((char *)data + i >= (char *)data_end) break;
-                    event->data[i] = *((char *)data + i);
+                for (__u32 chunk = 0; chunk < 12; chunk++) {  /* 12 * 256 = 3072 bytes max */
+                    #pragma unroll
+                    for (__u32 i = 0; i < 256; i++) {
+                        __u32 offset = chunk * 256 + i;
+                        if (offset >= copy_len) goto copy_done;
+                        if ((char *)data + offset >= (char *)data_end) goto copy_done;
+                        event->data[offset] = *((char *)data + offset);
+                        copied = offset + 1;
+                    }
                 }
+                
+copy_done:
                 long ret = 0;  /* Manual copy always succeeds with proper bounds */
-                update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_PROBE_READ_KERNEL_RESULT | (copy_len & DEBUG_VALUE_MASK));  /* DEBUG: copy length */
-                if (copy_len == 0) {
+                update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_PROBE_READ_KERNEL_RESULT | (copied & DEBUG_VALUE_MASK));  /* DEBUG: actual copied bytes */
+                if (copied == 0) {
                     /* Only count actual copy failures as errors */
                     update_stat(STAT_BOUNDS_CHECK_FAILED, 4);  /* Track ring buffer copy systematic error */
                     update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_RING_BUFFER_COPY_FAILURE);  /* Ring buffer copy failure marker */
