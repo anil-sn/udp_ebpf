@@ -844,7 +844,7 @@ show_detailed_info() {
         local nat_count=0
         
         if [ -n "$nat_rules" ] && [ "$nat_rules" != "" ]; then
-            nat_count=$(echo "$nat_rules" | grep -c "->")
+            nat_count=$(echo "$nat_rules" | grep -c "=>")
         fi
         
         if [ "$nat_count" -gt 0 ]; then
