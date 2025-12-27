@@ -456,7 +456,8 @@ static __always_inline int call_next_stage(struct xdp_md *ctx, __u32 next_stage)
     /* If tail call fails, return error - this should never happen in normal operation */
     /* THIS IS LIKELY THE SYSTEMATIC ERROR SOURCE - tail call failure */
     update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0601);  /* Tail call failure - SYSTEMATIC ERROR SOURCE */
-    update_stat(STAT_ERRORS, 1);
+    /* SYSTEMATIC ERROR TEST: Comment out to test if tail call failures cause 1:1 error */
+    /* update_stat(STAT_ERRORS, 1); */
     return XDP_ABORTED;
 }
 
