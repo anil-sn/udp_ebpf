@@ -98,12 +98,12 @@ def load_from_json(json_file):
                 subprocess.run(cmd, check=True, capture_output=True, text=True)
                 loaded_count += 1
                 
-                # Enhanced progress reporting with ETA
+                # Enhanced progress reporting with ETA (overwrite same line)
                 if loaded_count % 25 == 0 or i == total_expected:
                     elapsed = time.time() - start_time
                     rate = loaded_count / elapsed if elapsed > 0 else 0
                     eta = (total_expected - loaded_count) / rate if rate > 0 else 0
-                    print(f"Progress: {loaded_count}/{total_expected} IPs ({rate:.1f}/sec, ETA: {eta:.1f}s)")
+                    print(f"\rProgress: {loaded_count}/{total_expected} IPs ({rate:.1f}/sec, ETA: {eta:.1f}s)", end="", flush=True)
                     
             except subprocess.CalledProcessError as e:
                 failed_count += 1
@@ -113,6 +113,9 @@ def load_from_json(json_file):
                 # Show command for first failure only
                 if failed_count == 1:
                     print(f"Debug: First failure command: {' '.join(cmd)}")
+        
+        # Finalize progress line before summary
+        print()
         
         # Summary report
         elapsed_total = time.time() - start_time
