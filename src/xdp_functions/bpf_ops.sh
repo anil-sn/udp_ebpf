@@ -99,60 +99,132 @@ count_bpf_map_entries() {
     fi
 }
 
-# Get NAT rules from BPF map - Enhanced debugging version
+# Get NAT rules from BPF map - Clean and reliable version
 get_nat_rules() {
-    # Get JSON data directly from bpftool
+    # Get NAT map data
     local nat_json=$(sudo bpftool map dump name nat_map --json 2>/dev/null)
     
-    if [ -z "$nat_json" ]; then
+    if [ -z "$nat_json" ] || [ "$nat_json" = "[]" ]; then
+        echo "No NAT rules found"
         return 1
     fi
     
-    # Check if we have jq
+    # Check if we have jq for proper JSON parsing
     if ! command -v jq >/dev/null 2>&1; then
+        echo "jq not available for JSON parsing"
         return 1
     fi
     
-    # Try to parse and extract NAT rules
-    local rules_output=""
-    rules_output=$(echo "$nat_json" | jq -r '
-        .[] | 
-        if .key and .value then
-            if (.key | type) == "object" and (.value | type) == "object" then
-                (.key.src_port // 0) as $src_port |
-                (.value.target_ip // 0) as $target_ip_int |
-                (.value.target_port // 0) as $target_port |
-                "\($src_port)->\($target_ip_int):\($target_port)"
-            else empty end
-        else empty end
-    ' 2>/dev/null)
+    # Parse NAT entries with proper error handling
+    local rule_count=$(echo "$nat_json" | jq 'length' 2>/dev/null)
     
-    if [ -n "$rules_output" ]; then
-        echo "$rules_output" | while IFS= read -r rule; do
-            if [[ "$rule" =~ ([0-9]+)-\>([0-9]+):([0-9]+) ]]; then
-                local src_port="${BASH_REMATCH[1]}"
-                local target_ip_int="${BASH_REMATCH[2]}" 
-                local target_port="${BASH_REMATCH[3]}"
-                
-                # Convert integer IP to dotted decimal
-                local target_ip=$(printf "%d.%d.%d.%d" \
-                    $((target_ip_int & 0xFF)) \
-                    $(((target_ip_int >> 8) & 0xFF)) \
-                    $(((target_ip_int >> 16) & 0xFF)) \
-                    $(((target_ip_int >> 24) & 0xFF)))
-                
-                echo "$src_port -> $target_ip:$target_port"
-            fi
-        done
-        return 0
-    else
+    if [ -z "$rule_count" ] || [ "$rule_count" = "0" ] || [ "$rule_count" = "null" ]; then
+        echo "No NAT rules configured"
         return 1
+    fi
+    
+    echo "Found $rule_count NAT rule(s):"
+    echo "─────────────────────────────────"
+    
+    # Process each NAT rule
+    echo "$nat_json" | jq -r '.[] | 
+        if (.formatted and .formatted.key and .formatted.value) then
+            (.formatted.key.src_port // 0) as $src_port |
+            (.formatted.value.target_ip // 0) as $target_ip_int |
+            (.formatted.value.target_port // 0) as $target_port |
+            (.formatted.value.flags // 0) as $flags |
+            "\($src_port) -> \($target_ip_int) : \($target_port) (flags: \($flags))"
+        else
+            "Invalid NAT entry format"
+        end
+    ' 2>/dev/null | while IFS= read -r line; do
+        if [[ "$line" =~ ([0-9]+)\ -\>\ ([0-9]+)\ :\ ([0-9]+)\ \(flags:\ ([0-9]+)\) ]]; then
+            local src_port="${BASH_REMATCH[1]}"
+            local target_ip_int="${BASH_REMATCH[2]}"
+            local target_port="${BASH_REMATCH[3]}"
+            local flags="${BASH_REMATCH[4]}"
+            
+            # Convert little-endian integer IP to dotted decimal notation
+            local ip1=$((target_ip_int & 0xFF))
+            local ip2=$(((target_ip_int >> 8) & 0xFF))
+            local ip3=$(((target_ip_int >> 16) & 0xFF))
+            local ip4=$(((target_ip_int >> 24) & 0xFF))
+            local target_ip="$ip1.$ip2.$ip3.$ip4"
+            
+            printf "  %-8s -> %-15s:%-5s (flags: %s)\n" "$src_port" "$target_ip" "$target_port" "$flags"
+        else
+            echo "  $line"
+        fi
+    done
+    
+    return 0
+}
+
+# Get IP allowlist count with better error handling
+get_ip_allowlist_count() {
+    local count=$(count_bpf_map_entries "ip_allowlist")
+    # Ensure we return a valid number
+    if [[ "$count" =~ ^[0-9]+$ ]]; then
+        echo "$count"
+    else
+        echo "0"
     fi
 }
 
-# Get IP allowlist count
-get_ip_allowlist_count() {
-    count_bpf_map_entries "ip_allowlist"
+# Get and display IP allowlist entries
+get_ip_allowlist_entries() {
+    # Get IP allowlist data
+    local ip_json=$(sudo bpftool map dump name ip_allowlist --json 2>/dev/null)
+    
+    if [ -z "$ip_json" ] || [ "$ip_json" = "[]" ]; then
+        echo "No IP addresses found in allowlist"
+        return 1
+    fi
+    
+    # Check if we have jq for proper JSON parsing
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "jq not available for JSON parsing"
+        return 1
+    fi
+    
+    # Parse IP entries
+    local ip_count=$(echo "$ip_json" | jq 'length' 2>/dev/null)
+    
+    if [ -z "$ip_count" ] || [ "$ip_count" = "0" ] || [ "$ip_count" = "null" ]; then
+        echo "No IP addresses configured in allowlist"
+        return 1
+    fi
+    
+    echo "Found $ip_count IP address(es) in allowlist:"
+    echo "──────────────────────────────────────────"
+    
+    # Process and sort IP addresses
+    local sorted_ips=$(echo "$ip_json" | jq -r '.[] | 
+        if (.formatted and .formatted.key) then
+            (.formatted.key.ip // 0) as $ip_int |
+            "\($ip_int)"
+        else
+            "Invalid IP entry"
+        end
+    ' 2>/dev/null | while IFS= read -r ip_int; do
+        if [[ "$ip_int" =~ ^[0-9]+$ ]]; then
+            # Convert integer IP to dotted decimal notation
+            local ip1=$((ip_int & 0xFF))
+            local ip2=$(((ip_int >> 8) & 0xFF))
+            local ip3=$(((ip_int >> 16) & 0xFF))
+            local ip4=$(((ip_int >> 24) & 0xFF))
+            echo "$ip1.$ip2.$ip3.$ip4"
+        fi
+    done | sort -V)
+    
+    if [ -n "$sorted_ips" ]; then
+        echo "$sorted_ips" | nl -w4 -s'. '
+    else
+        echo "No valid IP addresses found"
+        return 1
+    fi
+    
+    return 0
 }
 
 # Get statistics from stats map with proper error handling
