@@ -125,8 +125,8 @@
 
 /* Memory and Buffer Size Constants */
 #define RINGBUF_SIZE_BYTES             (1024 * 1024) /* 1MB ring buffer for high throughput */
-#define PACKET_DATA_MAX_SIZE           1500         /* Maximum packet data in ring buffer events */
-#define RINGBUF_RESERVE_SIZE           1506         /* Ring buffer reservation size (packet + metadata) */
+#define PACKET_DATA_MAX_SIZE           3000         /* Maximum packet data in ring buffer events (supports ens5 MTU + VXLAN overhead) */
+#define RINGBUF_RESERVE_SIZE           3006         /* Ring buffer reservation size (packet + metadata) */
 #define IP_ALLOWLIST_MAX_ENTRIES       10000        /* Support up to 10K allowed IPs */
 
 /* =================================================================== */
