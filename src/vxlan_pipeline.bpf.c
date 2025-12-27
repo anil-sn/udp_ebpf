@@ -1474,9 +1474,8 @@ static __always_inline int forward_packet(void *data, void *data_end,
         return XDP_DROP;
     }
     
-    /* Optimized ring buffer allocation with smaller reservation */
-    __u32 reserve_size = (temp_len > PACKET_DATA_MAX_SIZE) ? RINGBUF_RESERVE_SIZE : (temp_len + 6);
-    event = bpf_ringbuf_reserve(&packet_ringbuf, reserve_size, 0);
+    /* Use fixed ring buffer reservation size for verifier compatibility */
+    event = bpf_ringbuf_reserve(&packet_ringbuf, RINGBUF_RESERVE_SIZE, 0);
     if (event) {
         event->ifindex = *target_ifindex;
         event->len = (__u16)temp_len;
