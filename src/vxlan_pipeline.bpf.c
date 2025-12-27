@@ -526,22 +526,6 @@ static __always_inline __u16 udp_checksum(struct iphdr *iph, struct udphdr *udph
  * @param index: Statistics counter index (see enum stats_index)
  * @param value: Value to add to the counter (typically 1 for counts, packet size for bytes)
  */
-static __always_inline void update_stat(__u32 index, __u64 value)
-{
-    /* Look up per-CPU counter for this statistics index */
-    __u64 *stat = bpf_map_lookup_elem(&stats_map, &index);
-    if (stat) {
-        /* 
-         * Atomic increment operation
-         * Since this is a per-CPU map, no cross-CPU synchronization needed
-         */
-        *stat += value;
-    }
-    /* 
-     * Note: No error logging here to maintain performance
-     * Userspace monitoring can detect missing updates via rate analysis
-     */
-}
 
 /*
  * Parse and Validate VXLAN Header with Expert Security Analysis
