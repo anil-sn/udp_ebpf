@@ -47,6 +47,18 @@ case "$CMD" in
     "maps") 
         show_bpf_maps "$@"
         ;;
+    "ips")
+        # Display IP allowlist in sorted order
+        print_color "blue" "Displaying IP allowlist in sorted order..."
+        if [ -f "src/load_ip_allowlist.py" ]; then
+            cd src && sudo python3 load_ip_allowlist.py --display
+        elif [ -f "load_ip_allowlist.py" ]; then
+            sudo python3 load_ip_allowlist.py --display  
+        else
+            print_color "red" "ERROR: load_ip_allowlist.py not found"
+            print_color "yellow" "Expected locations: ./src/load_ip_allowlist.py or ./load_ip_allowlist.py"
+        fi
+        ;;
     "logs") 
         show_logs "$@"
         ;;
@@ -141,6 +153,8 @@ COMMANDS:
     stats           Show real-time packet statistics (compact format)
     config          Show current pipeline configuration
     maps            Show detailed eBPF maps status and contents
+    ips             Display IP allowlist in sorted order
+                   Shows all currently loaded allowed IPs from the BPF map
     logs            Show recent pipeline log entries
                    Usage: logs [count] [filter]
     info            Show detailed system and configuration info
@@ -161,6 +175,7 @@ EXAMPLES:
     ./xdp.sh start                          # Start pipeline with default config
     ./xdp.sh config                         # Show current configuration  
     ./xdp.sh maps                           # Show eBPF maps with live data
+    ./xdp.sh ips                            # Show sorted IP allowlist
     ./xdp.sh logs 50 ALERT                  # Show last 50 log entries with alerts
     ./xdp.sh stats                          # Show live statistics
     ./xdp.sh cleanup --reset-interfaces     # Full cleanup + reset network

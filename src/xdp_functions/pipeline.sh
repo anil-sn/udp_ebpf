@@ -97,6 +97,8 @@ start_pipeline() {
         # Ensure clean terminal state after background process
         printf "\r"
         print_color "green" "SUCCESS: Pipeline started (PID: $new_pid)"
+        # Reset cursor position before next message
+        printf "\r"
         print_color "green" "Log file: $LOG_FILE"
         
         # Load IP allowlist after successful pipeline start
