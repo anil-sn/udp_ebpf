@@ -189,24 +189,24 @@ def display_loaded_ips():
             print(f"Warning: Could not sort IPs: {e}")
             ip_addresses.sort()  # Fallback to string sort
         
-        # Display IPs in a clean, searchable format
+        # Display IPs in a clean, visually scannable format
         if ip_addresses:
             print(f"Found {len(ip_addresses)} IP addresses (sorted numerically):")
             print()
             
-            # Display in organized columns with indexing for easy reference
+            # Display in 2 columns with better spacing for visual scanning
             for i, ip in enumerate(ip_addresses, 1):
-                if i % 4 == 1:
-                    print(f"{i:3d}. {ip:<15}", end="")
-                elif i % 4 == 2:
-                    print(f" {i:3d}. {ip:<15}", end="")
-                elif i % 4 == 3:
-                    print(f" {i:3d}. {ip:<15}", end="")
+                if i % 20 == 1 and i > 1:
+                    # Add separator line every 20 IPs for easier scanning
+                    print("    " + "─" * 60)
+                
+                if i % 2 == 1:
+                    print(f"  {i:3d}. {ip:<17}", end="")
                 else:
-                    print(f" {i:3d}. {ip:<15}")
+                    print(f"  {i:3d}. {ip:<17}")
             
             # Handle incomplete last line
-            if len(ip_addresses) % 4 != 0:
+            if len(ip_addresses) % 2 != 0:
                 print()
                 
             print()
