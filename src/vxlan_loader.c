@@ -401,11 +401,11 @@ static int resolve_ip_to_mac(const char* ip_str, __u8 mac_addr[6])
         system(connect_cmd);
         
         /* Method 4: Try UDP connection to target port */
-        if (cfg.nat_port > 0) {
+        if (cfg.nat_target_port > 0) {
             char udp_cmd[256];
             snprintf(udp_cmd, sizeof(udp_cmd), "timeout 2 nc -u -w 1 %s %d </dev/null >/dev/null 2>&1", 
-                    ip_str, cfg.nat_port);
-            printf("Trying UDP connection to port %d...\n", cfg.nat_port);
+                    ip_str, cfg.nat_target_port);
+            printf("Trying UDP connection to port %d...\n", cfg.nat_target_port);
             system(udp_cmd);
         }
         
