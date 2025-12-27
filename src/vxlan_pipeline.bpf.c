@@ -1404,7 +1404,7 @@ static __always_inline int forward_packet(void *data, void *data_end,
         /* Truncate to ring buffer capacity - should be rare with increased buffer size */
         temp_len = PACKET_DATA_MAX_SIZE;
         /* Count truncation for monitoring - should not occur with 3000-byte buffer for normal VXLAN */
-        update_stat(STAT_ERRORS, 1);
+        update_stat(STAT_LENGTH_CORRECTIONS, 1);  /* Use different counter to identify this specific error */
     }
     
     /* Ensure temp_len is within valid range for ring buffer */
