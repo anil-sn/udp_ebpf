@@ -12,6 +12,10 @@ source "$SCRIPT_DIR/xdp_functions/bpf_ops.sh"
 source "$SCRIPT_DIR/xdp_functions/monitoring.sh"
 source "$SCRIPT_DIR/xdp_functions/pipeline.sh"
 
+# Parse command line first
+CMD="${1:-status}"
+shift 2>/dev/null || true
+
 # Load configuration
 load_configuration
 
@@ -23,10 +27,6 @@ fi
 
 # Ensure terminal is fixed on exit
 trap fix_terminal EXIT INT TERM
-
-# Parse command line
-CMD="${1:-status}"
-shift 2>/dev/null || true
 
 case "$CMD" in
     "start") 
