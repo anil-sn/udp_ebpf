@@ -189,26 +189,19 @@ def display_loaded_ips():
             print(f"Warning: Could not sort IPs: {e}")
             ip_addresses.sort()  # Fallback to string sort
         
-        # Display IPs in a clean, visually scannable format
+        # Display IPs in a professional table format
         if ip_addresses:
-            print(f"Found {len(ip_addresses)} IP addresses (sorted numerically):")
+            print("=== IP ALLOWLIST ===")
+            print(f"Allowed IP Addresses: {len(ip_addresses)} total")
             print()
+            print("┌─────────────────┬────────────────────────────────────────────────┐")
+            print("│   IP Address    │                   Status                       │")
+            print("├─────────────────┼────────────────────────────────────────────────┤")
             
-            # Display in 2 columns with better spacing for visual scanning
-            for i, ip in enumerate(ip_addresses, 1):
-                if i % 20 == 1 and i > 1:
-                    # Add separator line every 20 IPs for easier scanning
-                    print("    " + "─" * 60)
-                
-                if i % 2 == 1:
-                    print(f"  {i:3d}. {ip:<17}", end="")
-                else:
-                    print(f"  {i:3d}. {ip:<17}")
+            for ip in ip_addresses:
+                print(f"│ {ip:<15} │                    Active                      │")
             
-            # Handle incomplete last line
-            if len(ip_addresses) % 2 != 0:
-                print()
-                
+            print("└─────────────────┴────────────────────────────────────────────────┘")
             print()
             # Show IP range summary for quick reference
             first_ip = ipaddress.IPv4Address(ip_addresses[0])
