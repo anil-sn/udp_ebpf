@@ -396,8 +396,8 @@ static __always_inline int init_pipeline_ctx(struct xdp_md *ctx, struct pipeline
     void *data_end = (void *)(long)ctx->data_end;
     pctx->packet_len = data_end - data;
     pctx->stage = STAGE_CLASSIFIER;
-    /* Temporarily store original length in start_time for length calculation */
-    pctx->start_time = data_end - data;  /* Will be overwritten with actual time later */
+    /* Initialize start time to zero, will be set when forwarding begins */
+    pctx->start_time = 0;  /* Initialize to zero */
     
     return 0;
 }
@@ -1932,9 +1932,9 @@ int forwarding_stage(struct xdp_md *ctx)
     /* Update stage */
     pctx->stage = STAGE_FORWARDING;
     
-    /* Calculate decapsulated packet length using stored original length
-     * pctx->start_time temporarily holds the original packet length */
-    __u32 original_packet_len = (__u32)pctx->start_time;
+    /* Calculate decapsulated packet length using original packet_len
+     * The packet_len field contains the original VXLAN packet length */
+    __u32 original_packet_len = pctx->packet_len;
     __u32 vxlan_overhead = ETH_HLEN + sizeof(struct iphdr) + 
                           sizeof(struct udphdr) + sizeof(struct vxlanhdr);
     
