@@ -145,7 +145,6 @@ get_nat_rules() {
     
     [ "$rules_found" = "1" ] && return 0 || return 1
 }
-}
 
 # Get IP allowlist count
 get_ip_allowlist_count() {
