@@ -1507,6 +1507,7 @@ static __always_inline int forward_packet(void *data, void *data_end,
                 
                 /* Perform the copy with available data */
                 long ret = bpf_probe_read_kernel(event->data, copy_len & (PACKET_DATA_MAX_SIZE - 1), data);
+                update_stat(STAT_PACKET_SIZE_DEBUG, 0xA0000000 | (ret & 0xFFFF));  /* DEBUG: probe_read_kernel result */
                 if (ret < 0) {
                     /* Only count actual copy failures as errors */
                     update_stat(STAT_BOUNDS_CHECK_FAILED, 4);  /* Track ring buffer copy systematic error */
