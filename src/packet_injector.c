@@ -568,7 +568,7 @@ static int handle_ring_buffer_event(void *ctx __attribute__((unused)), void *dat
     }
     
     /* Additional consistency check - ensure length matches ring buffer allocation */
-    if (data_sz < sizeof(struct packet_event) + len_snap) {
+    if (len < sizeof(struct packet_event) + len_snap) {
         /* Ring buffer data truncated - drop to prevent corruption */
         return 0;
     }
