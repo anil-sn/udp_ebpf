@@ -175,7 +175,19 @@ def display_loaded_ips():
                 for entry in json_data:
                     if 'key' in entry:
                         key_data = entry['key']
-                        if isinstance(key_data, list) and len(key_data) == 4:
+                        
+                        # Handle integer keys (most common case)
+                        if isinstance(key_data, int):
+                            try:
+                                # Convert from network byte order integer to IP
+                                ip_int = key_data
+                                ip_bytes = ip_int.to_bytes(4, byteorder='big')
+                                ip = ipaddress.IPv4Address(ip_bytes)
+                                ip_addresses.append(str(ip))
+                            except (ValueError, OverflowError) as e:
+                                print(f"Warning: Could not parse IP from integer {key_data}: {e}")
+                                
+                        elif isinstance(key_data, list) and len(key_data) == 4:
                             # Convert from byte array to IP
                             ip_bytes = bytes(key_data)
                             ip = ipaddress.IPv4Address(ip_bytes)
@@ -215,18 +227,33 @@ def display_loaded_ips():
         except:
             ip_addresses.sort()  # Fallback to string sort
         
-        # Display IPs in columns for better readability
-        for i, ip in enumerate(ip_addresses, 1):
-            if i % 3 == 1:
-                print(f"{i:3d}. {ip:<15}", end="")
-            elif i % 3 == 2:
-                print(f" {i:3d}. {ip:<15}", end="")
-            else:
-                print(f" {i:3d}. {ip:<15}")
-        
-        # Handle last line if not complete
-        if len(ip_addresses) % 3 != 0:
+        # Display IPs in a clean, searchable format
+        if ip_addresses:
+            print(f"Found {len(ip_addresses)} IP addresses (sorted numerically):")
             print()
+            
+            # Display in organized columns with indexing for easy reference
+            for i, ip in enumerate(ip_addresses, 1):
+                if i % 4 == 1:
+                    print(f"{i:3d}. {ip:<15}", end="")
+                elif i % 4 == 2:
+                    print(f" {i:3d}. {ip:<15}", end="")
+                elif i % 4 == 3:
+                    print(f" {i:3d}. {ip:<15}", end="")
+                else:
+                    print(f" {i:3d}. {ip:<15}")
+            
+            # Handle incomplete last line
+            if len(ip_addresses) % 4 != 0:
+                print()
+                
+            print()
+            # Show IP range summary for quick reference
+            first_ip = ipaddress.IPv4Address(ip_addresses[0])
+            last_ip = ipaddress.IPv4Address(ip_addresses[-1])
+            print(f"IP Range: {first_ip} → {last_ip}")
+        else:
+            print("No IP addresses found in allowlist")
         
         print("-" * 50)
         print(f"Total IPs loaded: {len(ip_addresses)}")
