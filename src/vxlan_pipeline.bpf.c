@@ -1820,6 +1820,8 @@ int forwarding_stage(struct xdp_md *ctx)
     
     /* Validate we're coming from the correct previous stage */
     if (pctx->stage != STAGE_NAT_ENGINE) {
+        /* DEBUG: Track stage validation failure - potential systematic error source */
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xFAIL0001);  /* Stage validation failure marker */
         update_stat(STAT_ERRORS, 1);
         return XDP_ABORTED;
     }
