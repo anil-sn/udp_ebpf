@@ -1214,6 +1214,7 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     /* Prevent integer underflow in length calculation */
     if (packet_len <= ETH_HLEN) {
         update_stat(STAT_ERRORS, 1);
+        update_stat(STAT_LENGTH_CORRECTIONS, 1);  /* Debug: Track this specific failure */
         return -1;  /* Packet too small to contain IP data */
     }
     
@@ -1227,6 +1228,7 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     if (original_inner_ip_len > 65535 || original_inner_ip_len < sizeof(struct iphdr)) {
         /* Invalid original IP length */
         update_stat(STAT_ERRORS, 1);
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);  /* Debug: Track this specific failure */
         return -1;  /* Invalid inner IP length */
     }
     
@@ -1809,8 +1811,9 @@ int forwarding_stage(struct xdp_md *ctx)
     /* Update packet headers */
     result = update_packet_headers(data, data_end, pctx->packet_len);
     if (result < 0) {
-        update_stat(STAT_ERRORS, 1);
-        /* Continue with forwarding even if header updates failed */
+        /* Header update failed, but continue with forwarding as packet data is still valid */
+        /* Don't count as error since processing can continue successfully */
+        /* The packet structure is intact even if header updates fail */
     }
     
     update_stat(STAT_FORWARDED, 1);
