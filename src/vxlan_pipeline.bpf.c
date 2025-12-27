@@ -1445,7 +1445,8 @@ static __always_inline int forward_packet(void *data, void *data_end,
     eth_hdr->h_dest[5] = nat_config->mac_addr[5];
     
     update_stat(STAT_REDIRECTED, 1);
-    update_stat(STAT_PACKET_SIZE_DEBUG, packet_len);
+    /* Temporarily comment out to see debug markers instead of packet lengths */
+    /* update_stat(STAT_PACKET_SIZE_DEBUG, packet_len); */
     
     /* Use the tracked packet length for ring buffer copy - support large packets */
     temp_len = packet_len;
