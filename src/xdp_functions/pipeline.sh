@@ -13,6 +13,12 @@ start_pipeline() {
         return 1
     fi
     
+    # Apply system tuning for optimal performance
+    apply_system_tuning
+    
+    # Create persistent tuning configuration (survives reboots)
+    create_persistent_tuning
+    
     # Check if already running
     if pgrep -f "vxlan_loader.*-i.*$INTERFACE" >/dev/null; then
         local pid=$(pgrep -f "vxlan_loader.*-i.*$INTERFACE" | head -1)
@@ -65,6 +71,10 @@ start_pipeline() {
     
     # Start background process with comprehensive redirection
     print_color "blue" "Launching vxlan_loader..."
+    
+    # Pre-populate ARP table for better MAC resolution reliability
+    print_color "blue" "Pre-resolving MAC address for NAT target..."
+    populate_arp_table "$NAT_IP" "$TARGET_INTERFACE"
     
     # Change to src directory where .bpf.o file is located
     cd "$SCRIPT_DIR" || {

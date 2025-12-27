@@ -366,24 +366,54 @@ static int resolve_ip_to_mac(const char* ip_str, __u8 mac_addr[6])
     fclose(arp_table);
     
     if (!found) {
-        /* IP not in ARP table, try to populate it with ARP probe */
-        printf("MAC address for %s not found in ARP table, attempting to resolve via ARP probe...\n", ip_str);
+        /* IP not in ARP table, try multiple methods to populate it */
+        printf("MAC address for %s not found in ARP table, attempting to resolve via multiple methods...\n", ip_str);
         
-        /* Use ip neigh to add a probe entry which triggers ARP resolution */
-        char arp_cmd[256];
-        snprintf(arp_cmd, sizeof(arp_cmd), "ip neigh add %s dev %s proxy >/dev/null 2>&1 || ip neigh replace %s dev %s nud probe >/dev/null 2>&1", 
-                ip_str, cfg.target_interface, ip_str, cfg.target_interface);
-        
-        int arp_result = system(arp_cmd);
-        if (arp_result != 0) {
-            printf("Warning: ARP probe for %s failed (exit code: %d)\n", ip_str, arp_result);
-            /* Continue anyway, maybe ARP entry exists from other sources */
+        /* Method 1: Try arping (primary method since ping/ICMP often blocked) */
+        char arping_cmd[256];
+        snprintf(arping_cmd, sizeof(arping_cmd), "which arping >/dev/null 2>&1 && arping -c 3 -w 3 -I %s %s >/dev/null 2>&1", 
+                cfg.target_interface, ip_str);
+        printf("Trying arping method (primary)...\n");
+        int arping_result = system(arping_cmd);
+        if (arping_result == 0) {
+            printf("arping succeeded for %s\n", ip_str);
+        } else {
+            printf("arping failed for %s (exit code: %d)\n", ip_str, arping_result);
         }
         
-        /* Wait briefly for ARP resolution */
-        usleep(500000); /* 500ms delay for ARP resolution */
+        /* Method 2: Use ip neigh to add a probe entry */
+        char arp_cmd[256];
+        snprintf(arp_cmd, sizeof(arp_cmd), "ip neigh add %s dev %s nud probe >/dev/null 2>&1 || ip neigh replace %s dev %s nud probe >/dev/null 2>&1", 
+                ip_str, cfg.target_interface, ip_str, cfg.target_interface);
+        printf("Trying ip neigh probe method...\n");
+        system(arp_cmd);
         
-        /* Try ARP table lookup again after ping */
+        /* Method 3: Try connecting to common ports (TCP SYN packets) */
+        char connect_cmd[512];
+        snprintf(connect_cmd, sizeof(connect_cmd), 
+                "timeout 2 nc -w 1 %s 80 </dev/null >/dev/null 2>&1 || "
+                "timeout 2 nc -w 1 %s 443 </dev/null >/dev/null 2>&1 || "
+                "timeout 2 nc -w 1 %s 22 </dev/null >/dev/null 2>&1 || "
+                "timeout 2 nc -w 1 %s 8080 </dev/null >/dev/null 2>&1 || "
+                "timeout 2 nc -w 1 %s 8081 </dev/null >/dev/null 2>&1", 
+                ip_str, ip_str, ip_str, ip_str, ip_str);
+        printf("Trying TCP connection method...\n");
+        system(connect_cmd);
+        
+        /* Method 4: Try UDP connection to target port */
+        if (cfg.nat_port > 0) {
+            char udp_cmd[256];
+            snprintf(udp_cmd, sizeof(udp_cmd), "timeout 2 nc -u -w 1 %s %d </dev/null >/dev/null 2>&1", 
+                    ip_str, cfg.nat_port);
+            printf("Trying UDP connection to port %d...\n", cfg.nat_port);
+            system(udp_cmd);
+        }
+        
+        /* Wait for ARP resolution */
+        printf("Waiting for ARP resolution...\n");
+        usleep(3000000); /* 3 second delay for ARP resolution */
+        
+        /* Try ARP table lookup again after all attempts */
         arp_table = fopen("/proc/net/arp", "r");
         if (!arp_table) {
             perror("Failed to re-open /proc/net/arp");

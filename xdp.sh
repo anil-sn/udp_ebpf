@@ -15,6 +15,12 @@ source "$SCRIPT_DIR/xdp_functions/pipeline.sh"
 # Load configuration
 load_configuration
 
+# Apply system tuning by default for optimal performance
+if [ "$CMD" != "help" ] && [ "$CMD" != "--help" ] && [ "$CMD" != "-h" ]; then
+    apply_system_tuning >/dev/null 2>&1 || true
+    create_persistent_tuning >/dev/null 2>&1 || true
+fi
+
 # Ensure terminal is fixed on exit
 trap fix_terminal EXIT INT TERM
 
@@ -83,6 +89,23 @@ case "$CMD" in
             scale_performance "balanced"
         fi
         ;;
+    "tune")
+        print_color "blue" "Applying comprehensive system tuning for XDP VXLAN pipeline..."
+        apply_system_tuning
+        create_persistent_tuning
+        print_color "green" "System tuning complete! Settings applied immediately and will persist after reboot."
+        ;;
+    "arp")
+        # Manual ARP resolution for troubleshooting
+        if [ -n "${1:-}" ]; then
+            TARGET_IP="${1}"
+            print_color "blue" "Manually populating ARP table for $TARGET_IP..."
+            populate_arp_table "$TARGET_IP" "${TARGET_INTERFACE:-ens6}"
+        else
+            print_color "blue" "Populating ARP table for configured NAT target $NAT_IP..."
+            populate_arp_table "$NAT_IP" "$TARGET_INTERFACE"
+        fi
+        ;;
     "cleanup") 
         cleanup_pipeline "$@"
         ;;
@@ -126,6 +149,12 @@ COMMANDS:
                    Use --reset-interfaces to reset network config
     scale           Dynamic performance scaling
                    Use 'max-performance' for maximum throughput
+    tune            Apply comprehensive system tuning for optimal packet processing
+                   Creates persistent configuration and applies immediately
+                   NOTE: Basic tuning is applied automatically with all commands
+    arp [IP]        Manually populate ARP table for MAC resolution
+                   If no IP specified, uses configured NAT target IP
+                   Useful for troubleshooting MAC resolution issues in fresh VMs
     help            Show this help message
 
 EXAMPLES:
@@ -136,6 +165,7 @@ EXAMPLES:
     ./xdp.sh stats                          # Show live statistics
     ./xdp.sh cleanup --reset-interfaces     # Full cleanup + reset network
     ./xdp.sh scale max-performance          # Scale for maximum performance
+    ./xdp.sh tune                           # Apply system performance tuning
 
 CONFIGURATION:
     Edit .env file in project root or use environment variables

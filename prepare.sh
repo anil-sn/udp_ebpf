@@ -4,6 +4,11 @@
 
 set -e
 
+# Make script fully non-interactive
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a  # Restart services automatically
+export UCF_FORCE_CONFFNEW=1  # Use new config files without prompting
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
@@ -23,6 +28,92 @@ error() { echo -e "${RED}[$(timestamp)] ✗${NC} $1"; }
 info() { echo -e "${BLUE}[$(timestamp)] ℹ${NC} $1"; }
 section() { echo -e "${CYAN}=== $1 ===${NC}"; }
 
+# Progress indicator for long operations
+show_progress() {
+    local pid=$1
+    local message=$2
+    local spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local i=0
+    
+    echo -n "  $message "
+    while kill -0 "$pid" 2>/dev/null; do
+        printf "\b%s" "${spin:i++%${#spin}:1}"
+        sleep 0.1
+    done
+    printf "\b✓\n"
+}
+
+# Check sudo access and handle authentication issues
+check_sudo() {
+    section "Checking Sudo Access"
+    
+    # Test sudo without password prompt first
+    if sudo -n true 2>/dev/null; then
+        log "Sudo access confirmed (passwordless)"
+        return 0
+    fi
+    
+    # Check if we can get sudo with a timeout
+    info "Testing sudo access..."
+    if timeout 10 sudo -v 2>/dev/null; then
+        log "Sudo access confirmed"
+        return 0
+    else
+        error "Sudo access required but not available"
+        error "Please ensure you can run 'sudo -v' successfully"
+        echo ""
+        info "Common solutions:"
+        echo "  1. Run: sudo -v    (to authenticate)"
+        echo "  2. Add your user to sudoers: sudo usermod -aG sudo \$USER"
+        echo "  3. Configure passwordless sudo for your user"
+        echo ""
+        return 1
+    fi
+}
+
+# Pre-flight checks
+preflight_checks() {
+    section "Pre-flight System Checks"
+    
+    local issues=0
+    
+    # Check internet connectivity
+    info "Checking internet connectivity..."
+    if ping -c 1 8.8.8.8 >/dev/null 2>&1 || ping -c 1 1.1.1.1 >/dev/null 2>&1; then
+        log "Internet connectivity confirmed"
+    else
+        error "No internet connectivity detected"
+        issues=1
+    fi
+    
+    # Check disk space (need at least 2GB)
+    info "Checking available disk space..."
+    local available
+    available=$(df / | awk 'NR==2 {print $4}')
+    if [ "$available" -gt 2097152 ] 2>/dev/null; then  # 2GB in KB
+        log "Sufficient disk space available"
+    else
+        warn "Low disk space detected (less than 2GB free)"
+        issues=1
+    fi
+    
+    # Check if running in a container
+    if [ -f /.dockerenv ] || grep -q docker /proc/1/cgroup 2>/dev/null; then
+        warn "Running in Docker container - XDP functionality will be limited"
+    fi
+    
+    # Check kernel version for XDP support
+    local kernel_version
+    kernel_version=$(uname -r | cut -d. -f1,2)
+    if awk "BEGIN {exit !($kernel_version >= 4.18)}"; then
+        log "Kernel version supports XDP ($(uname -r))"
+    else
+        warn "Kernel version may have limited XDP support ($(uname -r))"
+    fi
+    
+    return $issues
+}
+
 # Project paths
 PROJECT_ROOT="$SCRIPT_DIR"
 VENV_PATH="$PROJECT_ROOT/.venv"
@@ -30,6 +121,37 @@ SRC_DIR="$PROJECT_ROOT/src"
 
 echo -e "${BLUE}XDP VXLAN Pipeline - Environment Preparation${NC}"
 echo "============================================"
+echo ""
+
+# Check for common hostname issues
+if ! hostname -f >/dev/null 2>&1; then
+    warn "Hostname resolution issues detected"
+    info "Attempting to fix hostname resolution..."
+    
+    # Get the current hostname
+    current_hostname=$(hostname)
+    current_ip=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "127.0.1.1")
+    
+    # Add to /etc/hosts if not present
+    if ! grep -q "$current_hostname" /etc/hosts 2>/dev/null; then
+        info "Adding hostname to /etc/hosts..."
+        echo "$current_ip $current_hostname" | sudo tee -a /etc/hosts >/dev/null
+        log "Hostname resolution configured"
+    fi
+fi
+
+echo -e "${CYAN}This script will automatically:${NC}"
+echo "  • Install system dependencies (apt/yum packages)"
+echo "  • Build and install XDP tools from source"
+echo "  • Set up Python virtual environment"
+echo "  • Build the XDP pipeline"
+echo "  • Configure network routing"
+echo ""
+echo -e "${GREEN}Running in non-interactive mode - no user input required${NC}"
+echo ""
+
+# Brief pause to let user read
+sleep 1
 
 # ============================================================================
 # STEP 1: SYSTEM DEPENDENCIES
@@ -57,45 +179,91 @@ install_dependencies() {
     case $OS in
         "ubuntu"|"debian")
             info "Installing for Ubuntu/Debian..."
-            sudo apt-get update -qq
+            info "Updating package lists (non-interactive mode)..."
+            if ! sudo apt-get update -y -qq 2>/dev/null; then
+                warn "Package update failed, trying with different approach..."
+                # Try without quiet mode to see errors
+                sudo apt-get update -y || {
+                    error "Failed to update package lists"
+                    error "Please check your internet connection and try again"
+                    return 1
+                }
+            fi
             
-            # Core build dependencies
-            sudo apt-get install -y build-essential clang gcc make libbpf-dev
-            log "Core build tools installed"
+            # Core build dependencies (non-interactive)
+            info "Installing core build dependencies..."
+            if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential clang gcc make libbpf-dev 2>/dev/null; then
+                log "Core build tools installed"
+            else
+                warn "Retrying core dependencies installation..."
+                if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential clang gcc make libbpf-dev; then
+                    log "Core build tools installed (retry successful)"
+                else
+                    error "Failed to install core build dependencies"
+                    return 1
+                fi
+            fi
             
             # Kernel headers (optional for WSL2)
-            sudo apt-get install -y linux-headers-$(uname -r) || {
+            info "Installing kernel headers for $(uname -r)..."
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "linux-headers-$(uname -r)" || {
                 warn "Could not install kernel headers for $(uname -r)"
                 warn "This is normal for WSL2. XDP functionality may be limited."
+                info "Continuing with setup..."
             }
             
             # Network tools (including ARP discovery)
-            sudo apt-get install -y iproute2 net-tools tcpdump iputils-arping
-            log "Network tools installed (including arping for MAC discovery)"
+            info "Installing network analysis tools..."
+            if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq iproute2 net-tools tcpdump iputils-arping 2>/dev/null; then
+                log "Network tools installed (including arping for MAC discovery)"
+            else
+                warn "Some network tools may not be available, continuing..."
+                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y iproute2 net-tools || true
+                log "Basic network tools installed"
+            fi
             
             # Extended XDP development packages
-            sudo apt-get install -y git llvm libelf-dev libpcap-dev pkg-config m4 zlib1g-dev libcap-dev
-            log "Extended XDP development packages installed"
+            info "Installing extended XDP development packages..."
+            if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git llvm libelf-dev libpcap-dev pkg-config m4 zlib1g-dev libcap-dev 2>/dev/null; then
+                log "Extended XDP development packages installed"
+            else
+                warn "Retrying extended packages installation..."
+                if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git llvm libelf-dev libpcap-dev pkg-config m4 zlib1g-dev libcap-dev; then
+                    log "Extended XDP development packages installed (retry successful)"
+                else
+                    warn "Some extended packages may not be available, continuing..."
+                fi
+            fi
             
             # BPF tools - Build from source for reliability (AWS kernels often need this)
             if ! command -v bpftool >/dev/null 2>&1 || bpftool version 2>&1 | grep -q "WARNING.*not found"; then
                 info "Installing bpftool from source..."
                 
-                # Install build dependencies
-                sudo apt-get install -y build-essential libssl-dev binutils-dev libcap-dev git
-                log "Build dependencies installed"
+                # Install build dependencies (non-interactive)
+                info "Installing bpftool build dependencies..."
+                if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential libssl-dev binutils-dev libcap-dev git 2>/dev/null; then
+                    log "Build dependencies installed"
+                else
+                    warn "Retrying build dependencies installation..."
+                    if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential libssl-dev binutils-dev libcap-dev git; then
+                        log "Build dependencies installed (retry successful)"
+                    else
+                        error "Failed to install bpftool build dependencies"
+                        return 1
+                    fi
+                fi
                 
                 # Build bpftool from source
                 local bpftool_dir="/tmp/bpftool"
                 [ -d "$bpftool_dir" ] && rm -rf "$bpftool_dir"
                 
-                info "Cloning bpftool repository..."
+                info "Cloning bpftool repository (this may take a moment)..."
                 cd /tmp
-                if git clone --recurse-submodules https://github.com/libbpf/bpftool.git; then
+                if git clone --quiet --recurse-submodules https://github.com/libbpf/bpftool.git; then
                     cd bpftool/src
                     
                     info "Building bpftool from source (this may take a few minutes)..."
-                    if make -j$(nproc) && sudo make install; then
+                    if make -j"$(nproc)" && sudo make install; then
                         log "bpftool built and installed successfully"
                         
                         # Verify installation
@@ -107,7 +275,7 @@ install_dependencies() {
                             
                             # Update shell profile for future sessions
                             if ! grep -q "/usr/local/sbin.*PATH" ~/.bashrc 2>/dev/null; then
-                                echo 'export PATH="/usr/local/sbin:$PATH"' >> ~/.bashrc
+                                echo "export PATH=\"/usr/local/sbin:\$PATH\"" >> ~/.bashrc
                                 info "Updated ~/.bashrc to prioritize /usr/local/sbin"
                             fi
                             
@@ -115,7 +283,8 @@ install_dependencies() {
                             sudo ln -sf /usr/local/sbin/bpftool /usr/local/bin/bpftool
                             
                             # Verify the new version works
-                            local bpftool_version=$(/usr/local/sbin/bpftool version 2>/dev/null | head -1)
+                            local bpftool_version
+                            bpftool_version=$(/usr/local/sbin/bpftool version 2>/dev/null | head -1)
                             log "bpftool version: $bpftool_version"
                             info "bpftool features: $(bpftool version 2>/dev/null | grep features | cut -d: -f2)"
                         else
@@ -135,16 +304,28 @@ install_dependencies() {
                 info "bpftool version: $(bpftool version 2>/dev/null | head -1 || echo 'installed')"
             fi
             
-            # Python development
-            sudo apt-get install -y python3 python3-dev python3-pip
-            log "Python development tools installed"
+            # Python development tools
+            info "Installing Python development environment..."
+            if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 python3-dev python3-pip 2>/dev/null; then
+                log "Python development tools installed"
+            else
+                warn "Retrying Python installation..."
+                if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-dev python3-pip; then
+                    log "Python development tools installed (retry successful)"
+                else
+                    error "Failed to install Python development tools"
+                    return 1
+                fi
+            fi
             ;;
             
         "centos"|"rhel"|"fedora")
-            info "Installing for RedHat/CentOS/Fedora..."
-            sudo yum update -y || sudo dnf update -y
-            sudo yum install -y clang gcc make libbpf-devel kernel-headers kernel-devel || \
-            sudo dnf install -y clang gcc make libbpf-devel kernel-headers kernel-devel
+            info "Installing for RedHat/CentOS/Fedora (non-interactive)..."
+            info "Updating system packages..."
+            sudo yum update -y -q || sudo dnf update -y -q
+            info "Installing development dependencies..."
+            sudo yum install -y -q clang gcc make libbpf-devel kernel-headers kernel-devel || \
+            sudo dnf install -y -q clang gcc make libbpf-devel kernel-headers kernel-devel
             log "Dependencies installed via yum/dnf"
             ;;
             
@@ -175,9 +356,10 @@ install_xdp_tools() {
     # Remove existing directory if it exists
     [ -d "$xdp_tools_dir" ] && rm -rf "$xdp_tools_dir"
     
-    # Clone xdp-tools
-    if git clone https://github.com/xdp-project/xdp-tools.git "$xdp_tools_dir"; then
-        log "XDP tools repository cloned"
+    # Clone xdp-tools (non-interactive)
+    info "Downloading XDP tools source code..."
+    if git clone --quiet https://github.com/xdp-project/xdp-tools.git "$xdp_tools_dir"; then
+        log "XDP tools repository cloned successfully"
     else
         warn "Failed to clone xdp-tools repository"
         return 1
@@ -188,15 +370,15 @@ install_xdp_tools() {
     info "Cleaning previous build..."
     make clean >/dev/null 2>&1 || true
     
-    info "Updating submodules..."
-    git submodule update --init --recursive
+    info "Updating submodules (this may take a moment)..."
+    git submodule update --quiet --init --recursive
     
     info "Configuring with bundled libbpf..."
     export FORCE_SUBDIR_LIBBPF=1
     ./configure
     
     info "Building xdp-tools (this may take a few minutes)..."
-    if make -j$(nproc); then
+    if make -j"$(nproc)"; then
         log "XDP tools built successfully"
     else
         error "Failed to build xdp-tools"
@@ -241,14 +423,23 @@ setup_venv() {
             export PATH="$HOME/.local/bin:$PATH"
             log "Added uv to PATH"
         else
-            info "Installing uv package manager..."
-            curl -LsSf https://astral.sh/uv/install.sh | sh
-            export PATH="$HOME/.local/bin:$PATH"
-            log "uv installed"
+            info "Installing uv package manager (non-interactive)..."
+            if curl -LsSf https://astral.sh/uv/install.sh | sh -s -- --no-modify-path; then
+                export PATH="$HOME/.local/bin:$PATH"
+                log "uv installed successfully"
+            else
+                warn "uv installation failed, continuing with pip"
+                return 1
+            fi
         fi
     fi
     
-    info "Using uv version: $(uv --version)"
+    # Check uv version safely
+    if command -v uv >/dev/null 2>&1; then
+        info "Using uv version: $(uv --version 2>/dev/null || echo 'unknown')"
+    else
+        warn "uv not available, falling back to pip"
+    fi
     
     # Create virtual environment
     if [ ! -d "$VENV_PATH" ]; then
@@ -260,16 +451,29 @@ setup_venv() {
     fi
     
     # Install Python dependencies
-    source "$VENV_PATH/bin/activate"
-    info "Installing Python packages..."
-    
-    if [ -f "requirements.txt" ]; then
-        uv pip install -r requirements.txt
-        log "Requirements installed from requirements.txt"
+    if [ -f "$VENV_PATH/bin/activate" ]; then
+        source "$VENV_PATH/bin/activate"
+        info "Installing Python packages..."
+        
+        if [ -f "requirements.txt" ]; then
+            if command -v uv >/dev/null 2>&1; then
+                uv pip install -r requirements.txt
+            else
+                pip install -r requirements.txt
+            fi
+            log "Requirements installed from requirements.txt"
+        else
+            # Essential packages only
+            if command -v uv >/dev/null 2>&1; then
+                uv pip install scapy psutil
+            else
+                pip install scapy psutil
+            fi
+            log "Essential packages installed"
+        fi
     else
-        # Essential packages only
-        uv pip install scapy psutil
-        log "Essential packages installed"
+        error "Virtual environment activation script not found"
+        return 1
     fi
 }
 
@@ -429,7 +633,7 @@ configure_network() {
     # Check what we discovered
     TARGET_MAC=$(ip neighbor show "$TARGET_IP" | awk '{print $5}' | head -1)
     
-    if [ ! -z "$TARGET_MAC" ] && [ "$TARGET_MAC" != "" ]; then
+    if [ -n "$TARGET_MAC" ] && [ "$TARGET_MAC" != "" ]; then
         log "Discovered MAC: $TARGET_MAC"
         echo ""
         
@@ -458,7 +662,8 @@ configure_network() {
         # Verify the configuration
         echo ""
         info "Verifying network configuration:"
-        local route_info=$(ip route get "$TARGET_IP" 2>/dev/null)
+        local route_info
+        route_info=$(ip route get "$TARGET_IP" 2>/dev/null)
         echo "  Route: $route_info"
         
         if echo "$route_info" | grep -q "$EGRESS_INTERFACE"; then
@@ -515,6 +720,14 @@ show_status() {
 # ============================================================================
 
 main() {
+    local start_time
+    start_time=$(date +%s)
+    
+    echo -e "${CYAN}=========================================${NC}"
+    echo -e "${BLUE} XDP VXLAN Pipeline - Auto Setup${NC}"
+    echo -e "${CYAN}=========================================${NC}"
+    echo ""
+    
     # Verify we're in the right directory
     if [ ! -f "xdp.sh" ] || [ ! -d "src" ]; then
         error "Please run this script from the project root directory"
@@ -522,16 +735,57 @@ main() {
         exit 1
     fi
     
-    # Run all setup steps
+    info "Starting automated setup (non-interactive mode)..."
+    echo ""
+    
+    # Run pre-flight checks
+    if ! preflight_checks; then
+        warn "Pre-flight checks detected issues, but continuing..."
+        echo ""
+    fi
+    
+    # Check sudo access
+    if ! check_sudo; then
+        exit 1
+    fi
+    echo ""
+    
+    # Run all setup steps with progress
+    log "Step 1/7: Installing system dependencies..."
     install_dependencies
+    echo ""
+    
+    log "Step 2/7: Installing XDP tools..."
     install_xdp_tools
+    echo ""
+    
+    log "Step 3/7: Setting up Python environment..."
     setup_venv
+    echo ""
+    
+    log "Step 4/7: Building project..."
     build_project
+    echo ""
+    
+    log "Step 5/7: Verifying setup..."
     verify_setup
+    echo ""
+    
+    log "Step 6/7: Configuring network..."
     configure_network
+    echo ""
+    
+    log "Step 7/7: Finalizing..."
     show_status
     
-    log "Preparation completed successfully!"
+    local end_time
+    end_time=$(date +%s)
+    local duration=$((end_time - start_time))
+    
+    echo ""
+    echo -e "${GREEN}=========================================${NC}"
+    log "Setup completed successfully in ${duration}s!"
+    echo -e "${GREEN}=========================================${NC}"
 }
 
 # Run if executed directly
