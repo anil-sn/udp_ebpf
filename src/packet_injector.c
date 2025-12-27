@@ -326,7 +326,7 @@ static void* worker_thread(void *arg) {
         /* Continue anyway - performance will be reduced but functional */
     }
     
-    printf("[+] Worker %d started with full CPU access (0-%d)\n", 
+    printf("[+] Worker %d started with full CPU access (0-%ld)\n", 
            ctx->thread_id, sysconf(_SC_NPROCESSORS_ONLN) - 1);
     
     /*
