@@ -212,13 +212,13 @@ install_dependencies() {
                 info "Continuing with setup..."
             }
             
-            # Network tools (including ARP discovery)
+            # Network tools (including ARP discovery and JSON processing)
             info "Installing network analysis tools..."
-            if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq iproute2 net-tools tcpdump iputils-arping 2>/dev/null; then
-                log "Network tools installed (including arping for MAC discovery)"
+            if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq iproute2 net-tools tcpdump iputils-arping jq 2>/dev/null; then
+                log "Network tools installed (including arping for MAC discovery and jq for JSON processing)"
             else
                 warn "Some network tools may not be available, continuing..."
-                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y iproute2 net-tools || true
+                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y iproute2 net-tools jq || true
                 log "Basic network tools installed"
             fi
             
