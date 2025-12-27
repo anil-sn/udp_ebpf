@@ -1516,31 +1516,30 @@ static __always_inline int forward_packet(void *data, void *data_end,
                 }
                 
                 /* Perform the copy with exact packet length to prevent corruption */
-                /* Efficient 8-byte chunk copying - much simpler and faster */
+                /* Simple bounded copy - keep it small for eBPF verifier */
                 __u32 copied = 0;
-                __u64 *src_ptr = (__u64 *)data;
-                __u64 *dst_ptr = (__u64 *)event->data;
                 
-                /* Copy 8 bytes at a time - verifier friendly and efficient */
+                /* Copy up to 1024 bytes in 8-byte chunks - verifier friendly */
                 #pragma unroll
-                for (__u32 i = 0; i < 384; i++) {  /* 384 * 8 = 3072 bytes max */
+                for (__u32 i = 0; i < 128; i++) {  /* 128 * 8 = 1024 bytes */
                     __u32 byte_offset = i * 8;
                     if (byte_offset >= copy_len) break;
+                    if (byte_offset + 8 > copy_len) {
+                        /* Handle remaining bytes */
+                        __u32 remaining = copy_len - byte_offset;
+                        if ((char *)data + byte_offset + remaining <= (char *)data_end) {
+                            for (__u32 j = 0; j < remaining && j < 8; j++) {
+                                event->data[byte_offset + j] = *((char *)data + byte_offset + j);
+                            }
+                            copied = copy_len;
+                        }
+                        break;
+                    }
                     if ((char *)data + byte_offset + 8 > (char *)data_end) break;
                     
-                    dst_ptr[i] = src_ptr[i];
+                    /* Copy 8 bytes */
+                    *((__u64 *)(event->data + byte_offset)) = *((__u64 *)((char *)data + byte_offset));
                     copied = byte_offset + 8;
-                }
-                
-                /* Handle remaining bytes if copy_len is not 8-byte aligned */
-                if (copied < copy_len && copied + 8 > copy_len) {
-                    __u32 remaining = copy_len - copied;
-                    if ((char *)data + copied + remaining <= (char *)data_end && remaining <= 7) {
-                        for (__u32 j = 0; j < remaining; j++) {
-                            event->data[copied + j] = *((char *)data + copied + j);
-                        }
-                        copied = copy_len;
-                    }
                 }
                 
                 long ret = 0;  /* Direct copy always succeeds with proper bounds */
