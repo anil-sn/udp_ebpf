@@ -561,9 +561,6 @@ def print_debug_analysis(debug_markers: List[Tuple[str, int]]):
         if len(unknown_markers) > 5:
             print(f"   ... and {len(unknown_markers) - 5} more unknown markers")
             print()
-        
-        if len(other_markers) > 5:
-            print(f"      ... and {len(other_markers) - 5} more debug markers")
     
     # Provide specific guidance based on detected markers
     if systematic_errors:
