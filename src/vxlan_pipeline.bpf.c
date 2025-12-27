@@ -404,6 +404,8 @@ static __always_inline int init_pipeline_ctx(struct xdp_md *ctx, struct pipeline
 static __always_inline int call_next_stage(struct xdp_md *ctx, __u32 next_stage) {
     /* Validate stage number to prevent out-of-bounds access */
     if (next_stage >= STAGE_MAX) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0600);  /* Invalid stage number - SYSTEMATIC ERROR SOURCE */
+        update_stat(STAT_ERRORS, 1);
         return XDP_ABORTED;
     }
     
@@ -411,6 +413,9 @@ static __always_inline int call_next_stage(struct xdp_md *ctx, __u32 next_stage)
     bpf_tail_call(ctx, &pipeline_programs, next_stage);
     
     /* If tail call fails, return error - this should never happen in normal operation */
+    /* THIS IS LIKELY THE SYSTEMATIC ERROR SOURCE - tail call failure */
+    update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0601);  /* Tail call failure - SYSTEMATIC ERROR SOURCE */
+    update_stat(STAT_ERRORS, 1);
     return XDP_ABORTED;
 }
 
