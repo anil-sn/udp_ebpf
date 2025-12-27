@@ -1215,6 +1215,7 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     /* CRITICAL: Validate IP header is accessible with NEW pointer */
     if ((void *)(ip_hdr + 1) > data_end) {
         /* SECURITY: Packet corrupted or truncated during decapsulation */
+        update_stat(STAT_IP_LEN_UPDATED, 0xDEAD0200);  /* Track with different counter - SYSTEMATIC ERROR SOURCE */
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0200);  /* SYSTEMATIC ERROR SOURCE: IP header bounds after decaps */
         update_stat(STAT_ERRORS, 1);
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
@@ -1230,6 +1231,7 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     ip_hdr_len = ip_hdr->ihl * 4;
     if (ip_hdr_len < IP_HEADER_MIN_SIZE || ip_hdr_len > IP_HEADER_MAX_SIZE) {
         /* SECURITY: Invalid IP header length after decapsulation */
+        update_stat(STAT_UDP_LEN_UPDATED, 0xDEAD0201);  /* Track with different counter - SYSTEMATIC ERROR SOURCE */
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0201);  /* SYSTEMATIC ERROR SOURCE: IP header length validation */
         update_stat(STAT_ERRORS, 1);
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
@@ -1239,6 +1241,7 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     /* CRITICAL: Ensure complete IP header (including options) is readable */
     if ((char *)ip_hdr + ip_hdr_len > (char *)data_end) {
         /* SECURITY: IP header with options extends beyond packet boundary */
+        update_stat(STAT_IP_CHECKSUM_UPDATED, 0xDEAD0202);  /* Track with different counter - SYSTEMATIC ERROR SOURCE */
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0202);  /* SYSTEMATIC ERROR SOURCE: IP header options bounds */
         update_stat(STAT_ERRORS, 1);
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
