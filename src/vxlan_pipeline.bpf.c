@@ -994,7 +994,7 @@ static __always_inline int parse_inner_packet(void *data, void *data_end,
     inner_data = parse_vxlan(data, data_end, outer_udp);
     if (!inner_data) {
         /* DEBUG: Track specific parse_vxlan failure for systematic error analysis */
-        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0001);  /* Specific marker for parse_vxlan failure */
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0010);  /* parse_vxlan failure marker */
         update_stat(STAT_ERRORS, 1);
         return XDP_DROP;
     }
@@ -1002,6 +1002,7 @@ static __always_inline int parse_inner_packet(void *data, void *data_end,
     /* Parse inner Ethernet header */
     eth_hdr = (struct ethhdr *)inner_data;
     if ((void *)(eth_hdr + 1) > data_end) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0011);  /* Inner eth bounds failure marker */
         update_stat(STAT_ERRORS, 1);
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
@@ -1015,6 +1016,7 @@ static __always_inline int parse_inner_packet(void *data, void *data_end,
     /* Parse inner IP header */
     ip_hdr = (struct iphdr *)(eth_hdr + 1);
     if ((void *)(ip_hdr + 1) > data_end) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0012);  /* Inner IP bounds failure marker */
         update_stat(STAT_ERRORS, 1);
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
@@ -1047,6 +1049,7 @@ static __always_inline int parse_inner_packet(void *data, void *data_end,
     /* Parse inner UDP header */
     udp_hdr = (struct udphdr *)((char *)ip_hdr + ip_hdr_len);
     if ((void *)(udp_hdr + 1) > data_end) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0013);  /* Inner UDP bounds failure marker */
         update_stat(STAT_ERRORS, 1);
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
@@ -1100,6 +1103,7 @@ static __always_inline int decapsulate_vxlan(struct xdp_md *ctx,
     
     /* Use bpf_xdp_adjust_head to remove outer headers */
     if (bpf_xdp_adjust_head(ctx, outer_headers_size) < 0) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0014);  /* Decapsulation failure marker */
         update_stat(STAT_ERRORS, 1);
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
@@ -1821,7 +1825,7 @@ int forwarding_stage(struct xdp_md *ctx)
     /* Validate we're coming from the correct previous stage */
     if (pctx->stage != STAGE_NAT_ENGINE) {
         /* DEBUG: Track stage validation failure - potential systematic error source */
-        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0001);  /* Stage validation failure marker */
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0020);  /* Stage validation failure marker */
         update_stat(STAT_ERRORS, 1);
         return XDP_ABORTED;
     }
@@ -1847,6 +1851,7 @@ int forwarding_stage(struct xdp_md *ctx)
     result = update_packet_headers(data, data_end, pctx->packet_len);
     if (result < 0) {
         /* Header update failed, but continue with forwarding as packet data is still valid */
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0015);  /* Header update failure marker - NOT counted as error */
         /* Don't count as error since processing can continue successfully */
         /* The packet structure is intact even if header updates fail */
     }
