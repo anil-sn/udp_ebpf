@@ -99,7 +99,7 @@ count_bpf_map_entries() {
     fi
 }
 
-# Get NAT rules from BPF map
+# Get NAT rules from BPF map - Enhanced for human-readable format
 get_nat_rules() {
     local nat_data=$(dump_bpf_map "nat_map" "json")
     
@@ -107,68 +107,40 @@ get_nat_rules() {
         return 1
     fi
     
-    # First try to get NAT rules from the BPF map using multiple parsing methods
+    # Use jq to parse the JSON and convert to human readable format
     if command -v jq >/dev/null 2>&1; then
-        # Method 1: Try parsing as direct array of entries
-        local rules_method1=$(echo "$nat_data" | jq -r '
-            try (
-                .[] | 
-                if .elements then .elements[] else . end |
-                if .key and .value then
-                    "\(.key | if type == "object" then .src_port else . end) -> \(.value | if type == "object" then "\(.target_ip):\(.target_port)" else . end)"
-                else empty end
-            ) catch empty
-        ' 2>/dev/null)
-        
-        # Method 2: Try parsing as nested structure with elements
-        if [ -z "$rules_method1" ]; then
-            local rules_method2=$(echo "$nat_data" | jq -r '
-                try (
-                    if type == "array" then
-                        .[] | select(.elements) | .elements[] |
-                        if .key and .value then
-                            "\(.key.src_port // .key) -> \(.value.target_ip // .value):\(.value.target_port // .value)"
-                        else empty end
-                    else empty end
-                ) catch empty
-            ' 2>/dev/null)
-            rules_method1="$rules_method2"
-        fi
-        
-        # Process and convert the rules if found
-        if [ -n "$rules_method1" ]; then
-            echo "$rules_method1" | while read -r rule; do
-                if [[ "$rule" =~ ([0-9]+)\ -\>\ ([0-9]+):([0-9]+) ]]; then
-                    local src_port_net="${BASH_REMATCH[1]}"
-                    local target_ip_int="${BASH_REMATCH[2]}"
-                    local target_port="${BASH_REMATCH[3]}"
-                    
-                    # Convert network byte order port to host byte order for display
-                    local src_port_host=$(python3 -c "import socket; print(socket.ntohs($src_port_net))" 2>/dev/null || echo "$src_port_net")
-                    local target_ip=$(int_to_ip "$target_ip_int")
-                    echo "$src_port_host -> $target_ip:$target_port"
-                fi
-            done
-            return 0
-        fi
-    fi
-    
-    # Fallback: Try to extract directly from raw bpftool output (non-JSON)
-    local raw_nat_data=$(sudo bpftool map dump name nat_map 2>/dev/null)
-    if [ -n "$raw_nat_data" ]; then
-        # Parse raw bpftool output format
-        echo "$raw_data" | grep -E "key:|value:" | paste - - | while read -r key_line value_line; do
-            local src_port=$(echo "$key_line" | grep -o '[0-9a-f]\{2\} [0-9a-f]\{2\}' | head -1)
-            local target_data=$(echo "$value_line" | grep -o '[0-9a-f]\{2\} [0-9a-f]\{2\}')
-            
-            if [ -n "$src_port" ] && [ -n "$target_data" ]; then
-                # This would need proper hex to decimal conversion
-                echo "Raw NAT data found (parsing needed)"
+        echo "$nat_data" | jq -r '
+            .[] | 
+            if .key and .value then
+                # Handle both direct format and nested format
+                if (.key | type) == "object" and (.value | type) == "object" then
+                    "\(.key.src_port) -> \(.value.target_ip):\(.value.target_port)"
+                elif (.key | type) == "array" and (.value | type) == "array" then
+                    # Extract from hex array format
+                    ((.key[0] | tonumber) + ((.key[1] | tonumber) * 256)) as $src_port |
+                    ((.value[0] | tonumber) + ((.value[1] | tonumber) * 256) + ((.value[2] | tonumber) * 65536) + ((.value[3] | tonumber) * 16777216)) as $target_ip |
+                    ((.value[4] | tonumber) + ((.value[5] | tonumber) * 256)) as $target_port |
+                    "\($src_port) -> \($target_ip):\($target_port)"
+                else
+                    "\(.key) -> \(.value)"
+                end
+            else empty end
+        ' 2>/dev/null | while read -r rule; do
+            if [[ "$rule" =~ ([0-9]+)\ -\>\ ([0-9]+):([0-9]+) ]]; then
+                local src_port="${BASH_REMATCH[1]}"
+                local target_ip_int="${BASH_REMATCH[2]}"
+                local target_port="${BASH_REMATCH[3]}"
+                
+                # Convert integer IP to dotted decimal
+                local target_ip=$(int_to_ip "$target_ip_int")
+                echo "$src_port -> $target_ip:$target_port"
+            else
+                # Handle cases where parsing might have different format
+                echo "$rule"
             fi
         done
+        return 0
     fi
-    
-    return 1
     
     return 1
 }
