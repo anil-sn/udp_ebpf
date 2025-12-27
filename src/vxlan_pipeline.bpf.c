@@ -571,6 +571,8 @@ static __always_inline void *parse_vxlan(void *data, void *data_end,
      * Network byte order: vni[0]=0x00, vni[1]=0x00, vni[2]=0x01
      */
     if (vxlanh->vni[VNI_BYTE_0_INDEX] != 0 || vxlanh->vni[VNI_BYTE_1_INDEX] != 0 || vxlanh->vni[VNI_BYTE_2_INDEX] != TARGET_VNI) {
+        /* DEBUG: Track VNI validation failure */
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0002);  /* VNI validation failure marker */
         /* FILTERING: Wrong VNI - not our target traffic */
         return NULL;
     }
@@ -991,6 +993,8 @@ static __always_inline int parse_inner_packet(void *data, void *data_end,
     /* Parse VXLAN header and get inner packet */
     inner_data = parse_vxlan(data, data_end, outer_udp);
     if (!inner_data) {
+        /* DEBUG: Track specific parse_vxlan failure for systematic error analysis */
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0001);  /* Specific marker for parse_vxlan failure */
         update_stat(STAT_ERRORS, 1);
         return XDP_DROP;
     }
@@ -1496,6 +1500,29 @@ int vxlan_classifier(struct xdp_md *ctx)
     if (!pctx) {
         update_stat(STAT_ERRORS, 1);
         return XDP_ABORTED;
+    }
+    
+    /* Initialize all statistics counters on first packet to ensure clean state */
+    static volatile int stats_initialized = 0;
+    if (!stats_initialized) {
+        /* Initialize all statistics to 0 for clean baseline */
+        __u32 stat_indices[] = {
+            STAT_TOTAL_PACKETS, STAT_VXLAN_PACKETS, STAT_INNER_PACKETS,
+            STAT_NAT_APPLIED, STAT_DF_CLEARED, STAT_FORWARDED,
+            STAT_REDIRECTED, STAT_ERRORS, STAT_BYTES_PROCESSED,
+            STAT_IP_LEN_UPDATED, STAT_UDP_LEN_UPDATED, STAT_IP_CHECKSUM_UPDATED,
+            STAT_BOUNDS_CHECK_FAILED, STAT_RINGBUF_SUBMITTED, 
+            STAT_PACKET_SIZE_DEBUG, STAT_LENGTH_CORRECTIONS
+        };
+        
+        #pragma unroll
+        for (int i = 0; i < 16; i++) {
+            __u64 *stat = bpf_map_lookup_elem(&stats_map, &stat_indices[i]);
+            if (stat) {
+                *stat = 0;
+            }
+        }
+        stats_initialized = 1;
     }
     
     /* Initialize context for this packet */
