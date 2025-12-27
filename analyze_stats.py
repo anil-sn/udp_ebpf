@@ -254,6 +254,74 @@ def analyze_debug_markers(stats: Dict[int, int]) -> List[Tuple[str, int]]:
     
     return found_markers
 
+def check_specific_debug_markers():
+    """Check for specific debug markers that might indicate systematic errors."""
+    try:
+        result = subprocess.run(
+            ['sudo', 'bpftool', 'map', 'dump', 'name', 'stats_map', '--json'],
+            capture_output=True, text=True, check=True
+        )
+        data = json.loads(result.stdout)
+        
+        print("\n" + "=" * 60)
+        print("SPECIFIC DEBUG MARKER DETECTION")
+        print("=" * 60)
+        
+        # Target markers that are likely systematic error sources
+        target_markers = {
+            0xDEAD0100: "IP header length validation failure - SYSTEMATIC ERROR SOURCE",
+            0xDEAD0200: "IP header bounds after decapsulation - SYSTEMATIC ERROR SOURCE", 
+            0xDEAD0201: "IP header length validation after decapsulation - SYSTEMATIC ERROR SOURCE",
+            0xDEAD0600: "Invalid stage number - SYSTEMATIC ERROR SOURCE",
+            0xDEAD0601: "Tail call failure - SYSTEMATIC ERROR SOURCE"
+        }
+        
+        found_any = False
+        
+        for item in data:
+            if int(item['key'][0], 16) == 0x0e:  # PACKET_SIZE_DEBUG
+                print("Checking PACKET_SIZE_DEBUG values per CPU:")
+                
+                for cpu_idx, cpu_data in enumerate(item['formatted']['values']):
+                    val = cpu_data['value']
+                    if val == 0:
+                        continue
+                        
+                    print(f"\nCPU{cpu_idx}: {val} (0x{val:x})")
+                    
+                    # Check for exact matches first
+                    for marker_val, marker_desc in target_markers.items():
+                        if val == marker_val:
+                            print(f"  *** EXACT MATCH: {marker_desc} ***")
+                            found_any = True
+                    
+                    # Check if this large value contains our target markers
+                    if val > 0xFFFFFFFF:
+                        hex_str = hex(val).lower()
+                        for marker_val, marker_desc in target_markers.items():
+                            marker_hex = hex(marker_val)[2:]  # Remove '0x'
+                            if marker_hex in hex_str:
+                                print(f"  *** EMBEDDED: {marker_desc} ***")
+                                found_any = True
+                    
+                    # Check for any DEAD markers
+                    hex_str = hex(val).lower()
+                    if 'dead' in hex_str:
+                        print(f"  Contains DEAD marker pattern")
+                        found_any = True
+                
+                break
+        
+        if not found_any:
+            print("No target systematic error markers detected.")
+            print("This suggests the systematic error is in an uninstrumented code path.")
+        
+        return found_any
+        
+    except Exception as e:
+        print(f"Error checking specific markers: {e}")
+        return False
+
 def print_performance_summary(stats: Dict[int, int]):
     """Print high-level performance metrics."""
     total = stats.get(0x00, 0)
@@ -515,6 +583,10 @@ def main():
     print_performance_summary(stats)
     print_detailed_stats(stats)
     print_debug_analysis(debug_markers)
+    
+    # Check for specific systematic error markers
+    check_specific_debug_markers()
+    
     print_recommendations(stats, debug_markers)
     
     print("\n" + "=" * 60)
