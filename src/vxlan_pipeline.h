@@ -78,6 +78,9 @@
 
 /* Ethernet Protocol */
 #define ETH_HEADER_SIZE                14           /* Ethernet header size */
+#define MIN_ETH_FRAME_SIZE             64           /* Minimum Ethernet frame size */
+#define MAX_ETH_FRAME_SIZE             1518         /* Maximum standard Ethernet frame size */
+#define STANDARD_PAYLOAD_SIZE          1472         /* Standard payload size for fallback */
 
 /* UDP Protocol */
 #define UDP_HEADER_SIZE                8            /* UDP header size */
@@ -145,6 +148,72 @@
 /* Memory Performance */
 #define CACHE_LINE_SIZE                64           /* CPU cache line size */
 #define PREFETCH_DISTANCE              3            /* Prefetch locality (0-3) */
+
+/* =================================================================== */
+/* DEBUG MARKER CONSTANTS FOR STATISTICS                              */
+/* =================================================================== */
+
+/* Error Markers (0xDEAD prefix) */
+#define DEBUG_VNI_VALIDATION_FAILURE          0xDEAD0002   /* VNI validation failure */
+#define DEBUG_PARSE_VXLAN_FAILURE             0xDEAD0010   /* parse_vxlan failure */
+#define DEBUG_INNER_ETH_BOUNDS_FAILURE        0xDEAD0011   /* Inner eth bounds failure */
+#define DEBUG_INNER_IP_BOUNDS_FAILURE         0xDEAD0012   /* Inner IP bounds failure */
+#define DEBUG_INNER_UDP_BOUNDS_FAILURE        0xDEAD0013   /* Inner UDP bounds failure */
+#define DEBUG_DECAPSULATION_FAILURE           0xDEAD0014   /* Decapsulation failure */
+#define DEBUG_HEADER_UPDATE_FAILURE           0xDEAD0015   /* Header update failure */
+#define DEBUG_STAGE_VALIDATION_FAILURE        0xDEAD0020   /* Stage validation failure */
+#define DEBUG_INIT_PIPELINE_CTX_FAILURE       0xDEAD0030   /* init_pipeline_ctx failure */
+#define DEBUG_VXLAN_PROCESSOR_STAGE_FAILURE   0xDEAD0032   /* vxlan_processor stage failure */
+#define DEBUG_TEMP_LEN_ZERO_ERROR             0xDEAD0040   /* temp_len zero error */
+#define DEBUG_INSUFFICIENT_DATA_ERROR         0xDEAD0041   /* Insufficient data error */
+#define DEBUG_RING_BUFFER_COPY_FAILURE        0xDEAD0042   /* Ring buffer copy failure */
+#define DEBUG_FORWARD_PACKET_ETH_BOUNDS       0xDEAD0043   /* Forward packet eth bounds failure */
+#define DEBUG_NAT_ENGINE_CONTEXT_FAILURE      0xDEAD0050   /* nat_engine context failure */
+#define DEBUG_NAT_ENGINE_STAGE_FAILURE        0xDEAD0051   /* nat_engine stage failure */
+#define DEBUG_RING_BUFFER_ALLOC_FAILURE       0xDEAD0060   /* Ring buffer allocation failure */
+#define DEBUG_FORWARDING_STAGE_CONTEXT_FAILURE 0xDEAD0060  /* forwarding_stage context failure */
+#define DEBUG_ZERO_PACKET_LEN_RECEIVED        0xDEAD0099   /* ZERO packet_len received */
+#define DEBUG_IP_HEADER_LENGTH_VALIDATION     0xDEAD0100   /* IP header length validation failure */
+#define DEBUG_NAT_ENGINE_IP_HEADER_LENGTH     0xDEAD0101   /* NAT engine IP header length failure */
+#define DEBUG_NAT_APPLY_FAILURE               0xDEAD0102   /* NAT apply failure */
+#define DEBUG_IP_HEADER_BOUNDS_AFTER_DECAPS   0xDEAD0200   /* IP header bounds after decaps */
+#define DEBUG_IP_HEADER_LENGTH_POST_DECAPS    0xDEAD0201   /* IP header length validation post-decaps */
+#define DEBUG_IP_HEADER_OPTIONS_BOUNDS        0xDEAD0202   /* IP header options bounds */
+#define DEBUG_DECAPSULATION_BOUNDS_VALIDATION 0xDEAD0300   /* Decapsulation bounds validation failure */
+#define DEBUG_OUTER_ETH_HEADER_BOUNDS         0xDEAD0400   /* Outer eth header bounds failure */
+#define DEBUG_OUTER_IP_HEADER_BOUNDS          0xDEAD0401   /* Outer IP header bounds failure */
+#define DEBUG_OUTER_IP_HEADER_LENGTH          0xDEAD0402   /* Outer IP header length validation failure */
+#define DEBUG_OUTER_UDP_HEADER_BOUNDS         0xDEAD0403   /* Outer UDP header bounds failure */
+#define DEBUG_VXLAN_CLASSIFIER_CONTEXT        0xDEAD0500   /* vxlan_classifier context failure */
+#define DEBUG_VXLAN_PROCESSOR_ETH_BOUNDS      0xDEAD0501   /* vxlan_processor eth bounds failure */
+#define DEBUG_VXLAN_PROCESSOR_IP_BOUNDS       0xDEAD0502   /* vxlan_processor IP bounds failure */
+#define DEBUG_VXLAN_PROCESSOR_UDP_BOUNDS      0xDEAD0503   /* vxlan_processor UDP bounds failure */
+#define DEBUG_VXLAN_PROCESSOR_VXLAN_BOUNDS    0xDEAD0504   /* vxlan_processor VXLAN header bounds failure */
+#define DEBUG_NAT_ENGINE_UDP_BOUNDS           0xDEAD0505   /* nat_engine UDP bounds failure */
+#define DEBUG_NAT_ENGINE_POST_DECAPS_IP       0xDEAD0506   /* nat_engine post-decaps IP bounds failure */
+#define DEBUG_FORWARDING_STAGE_POST_DECAPS    0xDEAD0507   /* forwarding_stage post-decaps bounds failure */
+#define DEBUG_INVALID_STAGE_NUMBER            0xDEAD0600   /* Invalid stage number */
+#define DEBUG_TAIL_CALL_FAILURE               0xDEAD0601   /* Tail call failure */
+
+/* Configuration Error Markers (0xBAD prefix) */
+#define DEBUG_INTERFACE_CONFIG_FAILURE        0xBAD00001   /* Interface config failure */
+#define DEBUG_NAT_CONFIG_FAILURE              0xBAD00002   /* NAT config failure */
+#define DEBUG_TARGET_IFINDEX_FAILURE          0xBAD00003   /* Target ifindex failure */
+#define DEBUG_INVALID_LENGTH_MARKER           0xBAD00000   /* Invalid length marker (base) */
+
+/* Success/Fallback Markers (0xFAB and 0x900D prefix) */
+#define DEBUG_FALLBACK_USED_MARKER            0xFAB00000   /* Fallback used marker (base) */
+#define DEBUG_GOOD_LENGTH_MARKER              0x900D0000   /* Good length marker (base) */
+
+/* Debug Flag Markers */
+#define DEBUG_ACTUAL_PACKET_LEN_MARKER        0x80000000   /* Actual packet_len marker */
+#define DEBUG_NON_ZERO_PACKET_LEN_MARKER      0x90000000   /* Non-zero packet_len marker */
+#define DEBUG_PROBE_READ_KERNEL_RESULT        0xA0000000   /* probe_read_kernel result marker */
+#define DEBUG_PACKET_LEN_WITH_MARKER          0x50000000   /* packet_len with marker */
+#define DEBUG_NAT_RECOVERED_FLAG               0x80000000   /* Recovered NAT flag */
+
+/* Bit Masks for combined values */
+#define DEBUG_VALUE_MASK                      0x0000FFFF   /* Mask for extracting 16-bit values */
 
 /* Network Performance */
 #define RING_BUFFER_SIZE               4096         /* Optimal ring buffer size */
