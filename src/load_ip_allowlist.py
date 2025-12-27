@@ -158,9 +158,7 @@ def display_loaded_ips():
                 for org in data.get('organizations', []):
                     org_name = org.get('org_name', 'Unknown')
                     org_id = org.get('org_id', 'N/A')
-                    # Truncate long org names for display
-                    if len(org_name) > 30:
-                        org_name = org_name[:27] + "..."
+                    # Don't truncate org names - let table handle full width
                     for ip in org.get('ips', []):
                         org_mapping[ip] = {
                             'name': org_name,
@@ -210,30 +208,63 @@ def display_loaded_ips():
             print(f"Warning: Could not sort IPs: {e}")
             ip_addresses.sort()  # Fallback to string sort
         
-        # Display IPs with organization information in a table format
+        # Group IPs by organization and display in a grouped table format
         if ip_addresses:
             print("=== IP ALLOWLIST ===")
             print(f"Allowed IP Addresses: {len(ip_addresses)} total")
             print()
-            print("┌─────────────────┬──────────────────────────────┬─────────────┐")
-            print("│   IP Address    │         Organization         │   Org ID    │")
-            print("├─────────────────┼──────────────────────────────┼─────────────┤")
+            
+            # Group IPs by organization
+            org_groups = {}
+            unmatched_ips = []
             
             for ip in ip_addresses:
-                org_info = org_mapping.get(ip, {'name': 'Unknown', 'id': 'N/A'})
-                org_name = org_info['name']
-                org_id = org_info['id']
-                
-                print(f"│ {ip:<15} │ {org_name:<28} │ {org_id:<11} │")
+                if ip in org_mapping:
+                    org_info = org_mapping[ip]
+                    org_key = f"{org_info['name']} (ID: {org_info['id']})"
+                    if org_key not in org_groups:
+                        org_groups[org_key] = []
+                    org_groups[org_key].append(ip)
+                else:
+                    unmatched_ips.append(ip)
             
-            print("└─────────────────┴──────────────────────────────┴─────────────┘")
-            print()
-            # Show IP range and organization summary
+            # Display grouped by organization
+            for org_name, org_ips in sorted(org_groups.items()):
+                print(f"┌{'─' * 80}┐")
+                print(f"│ {org_name:<78} │")
+                print(f"├{'─' * 80}┤")
+                
+                # Display IPs in rows of 4 for this organization
+                for i in range(0, len(org_ips), 4):
+                    row_ips = org_ips[i:i+4]
+                    ip_row = "  ".join(f"{ip:<17}" for ip in row_ips)
+                    print(f"│ {ip_row:<78} │")
+                
+                print(f"└{'─' * 80}┘")
+                print()
+            
+            # Display unmatched IPs if any
+            if unmatched_ips:
+                print(f"┌{'─' * 80}┐")
+                print(f"│ {'Unknown Organizations':<78} │")
+                print(f"├{'─' * 80}┤")
+                
+                for i in range(0, len(unmatched_ips), 4):
+                    row_ips = unmatched_ips[i:i+4]
+                    ip_row = "  ".join(f"{ip:<17}" for ip in row_ips)
+                    print(f"│ {ip_row:<78} │")
+                
+                print(f"└{'─' * 80}┘")
+                print()
+            
+            # Show summary
             first_ip = ipaddress.IPv4Address(ip_addresses[0])
             last_ip = ipaddress.IPv4Address(ip_addresses[-1])
-            unique_orgs = len(set(org_mapping[ip]['name'] for ip in ip_addresses if ip in org_mapping))
-            print(f"IP Range: {first_ip} → {last_ip}")
-            print(f"Organizations: {unique_orgs} unique organizations represented")
+            unique_orgs = len(org_groups)
+            print(f"Summary:")
+            print(f"  • IP Range: {first_ip} → {last_ip}")
+            print(f"  • Organizations: {unique_orgs} unique organizations")
+            print(f"  • Unmatched IPs: {len(unmatched_ips)}")
         else:
             print("No IP addresses found in allowlist")
         
