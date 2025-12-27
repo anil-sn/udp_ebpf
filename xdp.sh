@@ -55,17 +55,13 @@ COMMANDS:
                    target   - Monitor target interface only  
                    both     - Monitor both interfaces with detailed stats (default)
                    simple   - Simple pipeline monitoring with performance thresholds
-    pps             Monitor packets per second (DEPRECATED - use monitor instead)
-                   Usage: pps [incoming|target|both] [interval] [duration]
-                   incoming - Monitor incoming interface only
-                   target   - Monitor target interface only
-                   both     - Monitor both interfaces (default)
     cleanup         Comprehensive cleanup of all resources (logs, temp files, maps)
                    Use --reset-interfaces to reset network config
-    scale           Dynamic performance scaling
-                   Use 'max-performance' for maximum throughput
-                   Use 'monitor' for monitoring mode
-    tune            Apply comprehensive system tuning for optimal packet processing
+    scale           Dynamic performance scaling (queue management and CPU affinity)
+                   Use 'max-performance' for maximum CPU utilization
+                   Use 'monitor' for performance monitoring mode
+                   Use 'balanced' for optimal resource balance
+    tune            Apply comprehensive system tuning (network buffers, IRQ, persistence)
                    Creates persistent configuration and applies immediately
                    NOTE: Basic tuning is applied automatically with all commands
     arp [IP]        Manually populate ARP table for MAC resolution
@@ -155,29 +151,6 @@ case "$CMD" in
             *)
                 print_color "red" "ERROR: Invalid monitor option. Use: incoming, target, both, dual, simple, or pipeline"
                 echo "Usage: ./xdp.sh monitor [incoming|target|both|simple] [interval] [duration]"
-                exit 1
-                ;;
-        esac
-        ;;
-    "pps")
-        # PPS monitoring - kept for backward compatibility, redirects to monitor
-        print_color "yellow" "Note: 'pps' command is deprecated. Use 'monitor' instead."
-        case "${1:-}" in
-            "incoming")
-                shift 2>/dev/null || true
-                monitor_interface_pps_single "${INTERFACE:-ens5}" "$@"
-                ;;
-            "target")  
-                shift 2>/dev/null || true
-                monitor_interface_pps_single "${TARGET_INTERFACE:-ens6}" "$@"
-                ;;
-            "both"|"dual"|"")
-                shift 2>/dev/null || true
-                monitor_interface_pps "$@"
-                ;;
-            *)
-                print_color "red" "ERROR: Invalid pps option. Use: incoming, target, both, or dual"
-                echo "Usage: ./xdp.sh pps [incoming|target|both] [interval] [duration]"
                 exit 1
                 ;;
         esac
