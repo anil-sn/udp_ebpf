@@ -150,82 +150,37 @@ def load_from_json(json_file):
 def display_loaded_ips():
     """Display all IPs currently loaded in the BPF map with enhanced parsing and debugging"""
     try:
-        cmd = ['bpftool', 'map', 'dump', 'name', 'ip_allowlist']
+        # Use JSON format directly instead of parsing text
+        cmd = ['bpftool', 'map', 'dump', 'name', 'ip_allowlist', '--json']
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         
-        lines = result.stdout.strip().split('\n')
         ip_addresses = []
-        parse_errors = 0
         
+        try:
+            json_data = json.loads(result.stdout)
+            
+            for entry in json_data:
+                if 'key' in entry and isinstance(entry['key'], int):
+                    try:
+                        # Convert integer to IP using struct for proper byte order
+                        import struct
+                        ip_bytes = struct.pack('<I', entry['key'])  # Little-endian
+                        ip = ipaddress.IPv4Address(ip_bytes)
+                        ip_addresses.append(str(ip))
+                    except (ValueError, struct.error) as e:
+                        print(f"Warning: Could not parse IP from {entry['key']}: {e}")
+                        
+        except json.JSONDecodeError as e:
+            print(f"ERROR: JSON parsing failed: {e}")
+            return
         print("Currently loaded IP addresses:")
         print("-" * 50)
-        
-        # Debug: show raw output if verbose
-        if len(lines) <= 3 or not any('key:' in line for line in lines):
-            print("DEBUG: Raw bpftool output:")
-            print(result.stdout)
-            
-            # Try alternative JSON format
-            cmd_json = ['bpftool', 'map', 'dump', 'name', 'ip_allowlist', '--json']
-            try:
-                result_json = subprocess.run(cmd_json, capture_output=True, text=True, check=True)
-                json_data = json.loads(result_json.stdout)
-                print(f"DEBUG: Found {len(json_data)} entries in JSON format")
-                
-                for entry in json_data:
-                    if 'key' in entry:
-                        key_data = entry['key']
-                        
-                        # Handle integer keys (most common case)
-                        if isinstance(key_data, int):
-                            try:
-                                # Convert from little-endian integer to IP (BPF uses host byte order)
-                                ip_int = key_data
-                                ip_bytes = ip_int.to_bytes(4, byteorder='little')
-                                ip = ipaddress.IPv4Address(ip_bytes)
-                                ip_addresses.append(str(ip))
-                            except (ValueError, OverflowError) as e:
-                                parse_errors += 1
-                                print(f"Warning: Could not parse IP from integer {key_data}: {e}")
-                                
-                        elif isinstance(key_data, list) and len(key_data) == 4:
-                            # Convert from byte array to IP
-                            ip_bytes = bytes(key_data)
-                            ip = ipaddress.IPv4Address(ip_bytes)
-                            ip_addresses.append(str(ip))
-                        elif isinstance(key_data, str):
-                            # Try to parse hex string
-                            hex_key = re.sub(r'[^0-9a-f]', '', key_data, flags=re.IGNORECASE)
-                            if len(hex_key) == 8:
-                                ip_bytes = bytes.fromhex(hex_key)
-                                ip = ipaddress.IPv4Address(ip_bytes)
-                                ip_addresses.append(str(ip))
-                            
-            except (subprocess.CalledProcessError, json.JSONDecodeError, ValueError) as e:
-                print(f"DEBUG: JSON parsing failed: {e}")
-        else:
-            # Original parsing logic
-            for line in lines:
-                if 'key:' in line and 'value:' in line:
-                    # Use robust parsing function
-                    hex_key = parse_bpf_key_robust(line)
-                    
-                    if hex_key and len(hex_key) == 8:  # Exactly 4 bytes = 8 hex chars
-                        try:
-                            ip_bytes = bytes.fromhex(hex_key)
-                            ip = ipaddress.IPv4Address(ip_bytes)
-                            ip_addresses.append(str(ip))
-                        except (ValueError, ipaddress.AddressValueError) as e:
-                            parse_errors += 1
-                            print(f"Warning: Could not parse IP from hex '{hex_key}': {e}")
-                    elif hex_key:
-                        parse_errors += 1
-                        print(f"Warning: Unexpected key length {len(hex_key)} chars for: {hex_key}")
         
         # Sort IPs for better readability
         try:
             ip_addresses.sort(key=lambda x: ipaddress.IPv4Address(x))
-        except:
+        except Exception as e:
+            print(f"Warning: Could not sort IPs: {e}")
             ip_addresses.sort()  # Fallback to string sort
         
         # Display IPs in a clean, searchable format
@@ -258,8 +213,6 @@ def display_loaded_ips():
         
         print("-" * 50)
         print(f"Total IPs loaded: {len(ip_addresses)}")
-        if parse_errors > 0:
-            print(f"Parse errors: {parse_errors}")
         
     except subprocess.CalledProcessError as e:
         if 'No such file or directory' in e.stderr:
