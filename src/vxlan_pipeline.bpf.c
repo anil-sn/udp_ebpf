@@ -1310,7 +1310,8 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     
     /* EVIDENCE COLLECTION: Store exact values we're seeing */
     /* High 16 bits = old_len, Low 16 bits = original_inner_ip_len */
-    update_stat(STAT_PACKET_SIZE_DEBUG, (old_len << 16) | (original_inner_ip_len & 0xFFFF));
+    /* Temporarily comment out to see actual debug error markers */
+    /* update_stat(STAT_PACKET_SIZE_DEBUG, (old_len << 16) | (original_inner_ip_len & 0xFFFF)); */
     
     /* PRESERVE original inner IP length - do not recalculate */
     ip_hdr->tot_len = bpf_htons(original_inner_ip_len);
