@@ -99,46 +99,31 @@ count_bpf_map_entries() {
     fi
 }
 
-# Get NAT rules from BPF map - Clean and reliable version
+# Get NAT rules from BPF map - Simple format for monitoring compatibility
 get_nat_rules() {
     # Get NAT map data
     local nat_json=$(sudo bpftool map dump name nat_map --json 2>/dev/null)
     
     if [ -z "$nat_json" ] || [ "$nat_json" = "[]" ]; then
-        echo "No NAT rules found"
         return 1
     fi
     
     # Check if we have jq for proper JSON parsing
     if ! command -v jq >/dev/null 2>&1; then
-        echo "jq not available for JSON parsing"
         return 1
     fi
     
-    # Parse NAT entries with proper error handling
-    local rule_count=$(echo "$nat_json" | jq 'length' 2>/dev/null)
-    
-    if [ -z "$rule_count" ] || [ "$rule_count" = "0" ] || [ "$rule_count" = "null" ]; then
-        echo "No NAT rules configured"
-        return 1
-    fi
-    
-    echo "Found $rule_count NAT rule(s):"
-    echo "─────────────────────────────────"
-    
-    # Process each NAT rule - use => to avoid grep shell interpretation issues
+    # Parse NAT entries and output simple format for monitoring.sh
     echo "$nat_json" | jq -r '.[] | 
         (.formatted.key.src_port // 0) as $src_port |
         (.formatted.value.target_ip // 0) as $target_ip_int |
         (.formatted.value.target_port // 0) as $target_port |
-        (.formatted.value.flags // 0) as $flags |
-        "\($src_port) => \($target_ip_int) : \($target_port) (flags: \($flags))"
+        "\($src_port) => \($target_ip_int):\($target_port)"
     ' 2>/dev/null | while IFS= read -r line; do
-        if [[ "$line" =~ ([0-9]+)\ =\>\ ([0-9]+)\ :\ ([0-9]+)\ \(flags:\ ([0-9]+)\) ]]; then
+        if [[ "$line" =~ ([0-9]+)\ =\>\ ([0-9]+):([0-9]+) ]]; then
             local src_port="${BASH_REMATCH[1]}"
             local target_ip_int="${BASH_REMATCH[2]}"
             local target_port="${BASH_REMATCH[3]}"
-            local flags="${BASH_REMATCH[4]}"
             
             # Convert little-endian integer IP to dotted decimal notation
             local ip1=$((target_ip_int & 0xFF))
@@ -147,9 +132,8 @@ get_nat_rules() {
             local ip4=$(((target_ip_int >> 24) & 0xFF))
             local target_ip="$ip1.$ip2.$ip3.$ip4"
             
-            printf "  %-8s => %-15s:%-5s (flags: %s)\n" "$src_port" "$target_ip" "$target_port" "$flags"
-        else
-            echo "  $line"
+            # Output simple format expected by monitoring.sh
+            echo "$src_port => $target_ip:$target_port"
         fi
     done
     

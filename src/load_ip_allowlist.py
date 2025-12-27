@@ -160,27 +160,18 @@ def display_loaded_ips():
             json_data = json.loads(result.stdout)
             
             for entry in json_data:
-                if 'key' in entry and isinstance(entry['key'], int):
+                # The bpftool JSON structure has 'formatted' key with the actual data
+                if 'formatted' in entry and 'key' in entry['formatted']:
                     try:
-                        # Test different conversion methods
-                        key_val = entry['key']
+                        key_val = entry['formatted']['key']
                         
-                        # Method 1: Direct conversion treating as network byte order
-                        ip1 = ipaddress.IPv4Address(key_val.to_bytes(4, byteorder='big'))
-                        
-                        # Method 2: Little-endian conversion  
-                        ip2 = ipaddress.IPv4Address(key_val.to_bytes(4, byteorder='little'))
-                        
-                        # Method 3: Manual bit manipulation (same as int_to_ip)
-                        ip3_str = f"{key_val & 0xFF}.{(key_val >> 8) & 0xFF}.{(key_val >> 16) & 0xFF}.{(key_val >> 24) & 0xFF}"
-                        ip3 = ipaddress.IPv4Address(ip3_str)
-                        
-                        # Use the method that gives most reasonable results
-                        # Usually method 3 (manual) works best for BPF maps
-                        ip_addresses.append(str(ip3))
+                        if isinstance(key_val, int):
+                            # Manual bit manipulation for little-endian BPF map format
+                            ip_str = f"{key_val & 0xFF}.{(key_val >> 8) & 0xFF}.{(key_val >> 16) & 0xFF}.{(key_val >> 24) & 0xFF}"
+                            ip_addresses.append(ip_str)
                         
                     except (ValueError, OverflowError) as e:
-                        print(f"Warning: Could not parse IP from {entry['key']}: {e}")
+                        print(f"Warning: Could not parse IP from {entry}: {e}")
                         
         except json.JSONDecodeError as e:
             print(f"ERROR: JSON parsing failed: {e}")

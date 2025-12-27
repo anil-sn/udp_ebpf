@@ -855,7 +855,7 @@ show_detailed_info() {
             echo "├─────────────┼─────────────────┼──────────────┼────────────────────┤"
             
             echo "$nat_rules" | while IFS= read -r rule; do
-                if [[ "$rule" =~ ([0-9]+)\ -\>\ ([0-9.]+):([0-9]+) ]]; then
+                if [[ "$rule" =~ ([0-9]+)\ =\>\ ([0-9.]+):([0-9]+) ]]; then
                     local src_port="${BASH_REMATCH[1]}"
                     local target_ip="${BASH_REMATCH[2]}"
                     local target_port="${BASH_REMATCH[3]}"
