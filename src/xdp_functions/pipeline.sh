@@ -103,6 +103,8 @@ start_pipeline() {
             # Give BPF maps time to fully initialize
             sleep 2
             print_color "blue" "Attempting to load IPs from allowlist..."
+            # Ensure proper terminal settings before calling Python script
+            stty opost onlcr 2>/dev/null || true
             if sudo python3 load_ip_allowlist.py ip_allowlist.json; then
                 print_color "green" "IP allowlist loaded successfully"
             else

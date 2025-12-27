@@ -156,8 +156,11 @@ tune_performance() {
                     status="LOW LOAD"
                 fi
                 
-                printf "%s | PPS: %6d | Error Rate: %s%% | Status: %s\n" \
+                printf "\r%s | PPS: %6d | Error Rate: %s%% | Status: %s" \
                     "$timestamp" "$pps" "$error_rate" "$status"
+                
+                # Force terminal flush and add proper line ending
+                echo ""
                 
                 sleep 2
             done

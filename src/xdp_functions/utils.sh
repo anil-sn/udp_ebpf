@@ -12,11 +12,13 @@ init_logging() {
 
 # Fix terminal settings
 fix_terminal() {
-    stty sane 2>/dev/null
-    stty opost onlcr 2>/dev/null
+    stty sane 2>/dev/null || true
+    stty opost onlcr 2>/dev/null || true
     printf "\r\033[0m"
-    tput cnorm 2>/dev/null
-    tput sgr0 2>/dev/null
+    tput cnorm 2>/dev/null || true
+    tput sgr0 2>/dev/null || true
+    # Ensure proper line ending behavior
+    echo ""
 }
 
 # Convert integer IP to dotted decimal
@@ -341,12 +343,11 @@ show_spinner() {
     
     while kill -0 "$pid" 2>/dev/null; do
         local temp=${spinstr#?}
-        printf " [%c]  " "$spinstr"
+        printf "\r [%c] " "$spinstr"
         local spinstr=$temp${spinstr%"$temp"}
         sleep $delay
-        printf "\b\b\b\b\b\b"
     done
-    printf "    \b\b\b\b"
+    printf "\r     \r"  # Clear spinner line completely
 }
 
 # Wait for process to start
