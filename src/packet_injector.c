@@ -43,7 +43,7 @@
 #define MAX_WORKER_THREADS 8      /* Maximum worker threads (typically = CPU cores) */
 #define PACKET_QUEUE_SIZE 4096    /* Per-worker queue size (power of 2 for efficient modulo) */
 #define BATCH_SIZE 64             /* Packets per sendto() batch (balances latency vs efficiency) */
-#define MAX_PACKET_SIZE 1500      /* Maximum ethernet frame size (standard MTU) */
+#define MAX_PACKET_SIZE 3000      /* Maximum packet size to match ens5 MTU and support VXLAN decapsulation */
 
 /*
  * LOCK-FREE PACKET QUEUE IMPLEMENTATION
@@ -90,7 +90,7 @@ struct packet_queue {
  * - Timestamp added for latency analysis and debugging
  */
 struct packet_buffer {
-    uint16_t len;                    /* Packet length in bytes (0-1500) */
+    uint16_t len;                    /* Packet length in bytes (0-3000) */
     uint8_t data[MAX_PACKET_SIZE];   /* Raw packet data from ring buffer */
     struct timespec timestamp;       /* Packet arrival time for latency tracking */
 } __attribute__((aligned(64)));
