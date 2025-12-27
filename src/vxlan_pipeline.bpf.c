@@ -1361,10 +1361,19 @@ static __always_inline int forward_packet(void *data, void *data_end,
     nat_config = bpf_map_lookup_elem(&nat_target_map, &key);
     target_ifindex = bpf_map_lookup_elem(&redirect_map, &key);
     
-    /* Validate configurations */
-    if (!if_config || if_config->ifindex == INTERFACE_INVALID || 
-        !nat_config || nat_config->ip_addr == INTERFACE_INVALID ||
-        !target_ifindex || *target_ifindex == INTERFACE_INVALID) {
+    /* Validate configurations with specific debug markers */
+    if (!if_config || if_config->ifindex == INTERFACE_INVALID) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xBAD00001);  /* Interface config failure */
+        update_stat(STAT_ERRORS, 1);
+        return XDP_DROP;
+    }
+    if (!nat_config || nat_config->ip_addr == INTERFACE_INVALID) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xBAD00002);  /* NAT config failure */
+        update_stat(STAT_ERRORS, 1);
+        return XDP_DROP;
+    }
+    if (!target_ifindex || *target_ifindex == INTERFACE_INVALID) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xBAD00003);  /* Target ifindex failure */
         update_stat(STAT_ERRORS, 1);
         return XDP_DROP;
     }
