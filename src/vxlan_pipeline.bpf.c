@@ -1810,9 +1810,9 @@ int nat_engine(struct xdp_md *ctx)
     /* Refresh data pointers after decapsulation */
     data = (void *)(long)ctx->data;
     data_end = (void *)(long)ctx->data_end;
-    /* Don't overwrite packet_len here - it causes systematic temp_len=0 errors!
-     * The length was already set correctly in forwarding_stage() */
-    // pctx->packet_len = data_end - data;  /* DISABLED: This causes 1:1 systematic error */
+    /* Update packet_len to actual current size after decapsulation
+     * This is the CORRECT size after bpf_xdp_adjust_head removed outer headers */
+    pctx->packet_len = data_end - data;  /* ENABLED: Use actual current packet size */
     
     /* Validate packet boundaries after decapsulation */
     if (data + sizeof(struct ethhdr) > data_end) {
@@ -1932,26 +1932,10 @@ int forwarding_stage(struct xdp_md *ctx)
     /* Update stage */
     pctx->stage = STAGE_FORWARDING;
     
-    /* Calculate decapsulated packet length using original packet_len
-     * The packet_len field contains the original VXLAN packet length */
-    __u32 original_packet_len = pctx->packet_len;
-    __u32 vxlan_overhead = ETH_HLEN + sizeof(struct iphdr) + 
-                          sizeof(struct udphdr) + sizeof(struct vxlanhdr);
+    /* packet_len is already correctly set in NAT stage to actual size after decapsulation */
     
-    /* Debug: Check what we're working with */
-    update_stat(STAT_PACKET_SIZE_DEBUG, 0x60000000 | original_packet_len);  /* Debug: original length */
-    update_stat(STAT_LENGTH_CORRECTIONS, vxlan_overhead);  /* Debug: overhead calculation */
-    
-    if (original_packet_len > vxlan_overhead) {
-        pctx->packet_len = original_packet_len - vxlan_overhead;
-    } else {
-        /* Fallback: use minimum valid ethernet frame */
-        pctx->packet_len = ETH_HLEN + sizeof(struct iphdr);
-        update_stat(STAT_PACKET_SIZE_DEBUG, 0x70000000 | original_packet_len);  /* Debug: fallback triggered */
-    }
-    
-    /* Debug: Check final calculated length */
-    update_stat(STAT_PACKET_SIZE_DEBUG, 0x80000000 | pctx->packet_len);  /* Debug: final packet_len */
+    /* Debug: Check the actual packet length */
+    update_stat(STAT_PACKET_SIZE_DEBUG, 0x80000000 | pctx->packet_len);  /* Debug: actual packet_len */
     
     /* Now set the actual start time for performance tracking */
     pctx->start_time = bpf_ktime_get_ns();
