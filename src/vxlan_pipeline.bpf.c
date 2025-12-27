@@ -1511,19 +1511,21 @@ static __always_inline int forward_packet(void *data, void *data_end,
                 }
                 
                 /* Perform the copy with exact packet length to prevent corruption */
-                /* Simple direct assignment - no loops needed */
-                __u32 copied = copy_len;
-                if (copied > PACKET_DATA_MAX_SIZE) {
-                    copied = PACKET_DATA_MAX_SIZE;
+                /* Direct memory access - XDP context compatible */
+                __u32 copied = 0;
+                
+                /* Simple direct copy with bounds checking - limit to first 64 bytes for headers */
+                if (copy_len > 64) {
+                    copy_len = 64;  /* Only copy essential headers */
                 }
                 
                 /* Copy available data directly - verifier friendly */
-                if (copied > 0 && (char *)data + copied <= (char *)data_end) {
-                    /* Use BPF helper for safe copying */
-                    long ret = bpf_probe_read(event->data, copied, data);
-                    if (ret < 0) {
-                        copied = 0;  /* Mark as failed */
+                if (copy_len > 0 && (char *)data + copy_len <= (char *)data_end) {
+                    /* Direct memory copy - byte by byte with fixed small bound */
+                    for (__u32 i = 0; i < copy_len && i < 64; i++) {
+                        event->data[i] = *((char *)data + i);
                     }
+                    copied = copy_len;
                 } else {
                     copied = 0;
                 }
