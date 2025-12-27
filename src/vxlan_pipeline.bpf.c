@@ -401,6 +401,46 @@ static __always_inline int init_pipeline_ctx(struct xdp_md *ctx, struct pipeline
     return 0;
 }
 
+/*
+ * Per-CPU Statistics Update Function
+ * 
+ * PERFORMANCE OPTIMIZATION:
+ * ========================
+ * Uses per-CPU BPF maps for lock-free statistics collection.
+ * Each CPU maintains its own counters to eliminate contention.
+ * Userspace aggregates across CPUs for final statistics display.
+ * 
+ * ATOMIC OPERATIONS:
+ * =================
+ * The += operation is atomic within a single CPU context since
+ * eBPF programs are non-preemptible. No additional synchronization needed.
+ * 
+ * ERROR HANDLING:
+ * ==============
+ * Map lookup failures are silently ignored to maintain performance.
+ * In production, map lookup failures are extremely rare and typically
+ * indicate system-level issues that would affect overall performance.
+ * 
+ * @param index: Statistics counter index (see enum stats_index)
+ * @param value: Value to add to the counter (typically 1 for counts, packet size for bytes)
+ */
+static __always_inline void update_stat(__u32 index, __u64 value)
+{
+    /* Look up per-CPU counter for this statistics index */
+    __u64 *stat = bpf_map_lookup_elem(&stats_map, &index);
+    if (stat) {
+        /* 
+         * Atomic increment operation
+         * Since this is a per-CPU map, no cross-CPU synchronization needed
+         */
+        *stat += value;
+    }
+    /* 
+     * Note: No error logging here to maintain performance
+     * Userspace monitoring can detect missing updates via rate analysis
+     */
+}
+
 static __always_inline int call_next_stage(struct xdp_md *ctx, __u32 next_stage) {
     /* Validate stage number to prevent out-of-bounds access */
     if (next_stage >= STAGE_MAX) {
