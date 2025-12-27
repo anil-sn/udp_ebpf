@@ -83,6 +83,10 @@ DEBUG_MARKERS = {
     0xDEAD0506: "nat_engine post-decaps IP bounds failure",
     0xDEAD0507: "forwarding_stage post-decaps bounds failure",
     
+    # Tail Call Failures (0xDEAD060X) - LIKELY SYSTEMATIC ERROR SOURCE  
+    0xDEAD0600: "Invalid stage number - SYSTEMATIC ERROR SOURCE",
+    0xDEAD0601: "Tail call failure - SYSTEMATIC ERROR SOURCE",
+    
     # Configuration Failures (0xBAD0000X)
     0xBAD00001: "Interface config failure",
     0xBAD00002: "NAT config failure",
