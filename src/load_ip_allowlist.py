@@ -148,7 +148,7 @@ def load_from_json(json_file):
         return 0
 
 def display_loaded_ips():
-    """Display all IPs currently loaded in the BPF map with enhanced parsing"""
+    """Display all IPs currently loaded in the BPF map with enhanced parsing and debugging"""
     try:
         cmd = ['bpftool', 'map', 'dump', 'name', 'ip_allowlist']
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -160,22 +160,54 @@ def display_loaded_ips():
         print("Currently loaded IP addresses:")
         print("-" * 50)
         
-        for line in lines:
-            if 'key:' in line and 'value:' in line:
-                # Use robust parsing function
-                hex_key = parse_bpf_key_robust(line)
+        # Debug: show raw output if verbose
+        if len(lines) <= 3 or not any('key:' in line for line in lines):
+            print("DEBUG: Raw bpftool output:")
+            print(result.stdout)
+            
+            # Try alternative JSON format
+            cmd_json = ['bpftool', 'map', 'dump', 'name', 'ip_allowlist', '--json']
+            try:
+                result_json = subprocess.run(cmd_json, capture_output=True, text=True, check=True)
+                json_data = json.loads(result_json.stdout)
+                print(f"DEBUG: Found {len(json_data)} entries in JSON format")
                 
-                if hex_key and len(hex_key) == 8:  # Exactly 4 bytes = 8 hex chars
-                    try:
-                        ip_bytes = bytes.fromhex(hex_key)
-                        ip = ipaddress.IPv4Address(ip_bytes)
-                        ip_addresses.append(str(ip))
-                    except (ValueError, ipaddress.AddressValueError) as e:
+                for entry in json_data:
+                    if 'key' in entry:
+                        key_data = entry['key']
+                        if isinstance(key_data, list) and len(key_data) == 4:
+                            # Convert from byte array to IP
+                            ip_bytes = bytes(key_data)
+                            ip = ipaddress.IPv4Address(ip_bytes)
+                            ip_addresses.append(str(ip))
+                        elif isinstance(key_data, str):
+                            # Try to parse hex string
+                            hex_key = re.sub(r'[^0-9a-f]', '', key_data, flags=re.IGNORECASE)
+                            if len(hex_key) == 8:
+                                ip_bytes = bytes.fromhex(hex_key)
+                                ip = ipaddress.IPv4Address(ip_bytes)
+                                ip_addresses.append(str(ip))
+                            
+            except (subprocess.CalledProcessError, json.JSONDecodeError, ValueError) as e:
+                print(f"DEBUG: JSON parsing failed: {e}")
+        else:
+            # Original parsing logic
+            for line in lines:
+                if 'key:' in line and 'value:' in line:
+                    # Use robust parsing function
+                    hex_key = parse_bpf_key_robust(line)
+                    
+                    if hex_key and len(hex_key) == 8:  # Exactly 4 bytes = 8 hex chars
+                        try:
+                            ip_bytes = bytes.fromhex(hex_key)
+                            ip = ipaddress.IPv4Address(ip_bytes)
+                            ip_addresses.append(str(ip))
+                        except (ValueError, ipaddress.AddressValueError) as e:
+                            parse_errors += 1
+                            print(f"Warning: Could not parse IP from hex '{hex_key}': {e}")
+                    elif hex_key:
                         parse_errors += 1
-                        print(f"Warning: Could not parse IP from hex '{hex_key}': {e}")
-                elif hex_key:
-                    parse_errors += 1
-                    print(f"Warning: Unexpected key length {len(hex_key)} chars for: {hex_key}")
+                        print(f"Warning: Unexpected key length {len(hex_key)} chars for: {hex_key}")
         
         # Sort IPs for better readability
         try:
@@ -206,6 +238,7 @@ def display_loaded_ips():
             print("BPF map 'ip_allowlist' not found. Is the XDP program loaded?")
         else:
             print(f"Error reading BPF map: {e.stderr}")
+            print(f"DEBUG: Command output: {e.stdout}")
     except Exception as e:
         print(f"Error displaying IPs: {e}")
 
