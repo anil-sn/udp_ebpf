@@ -1513,7 +1513,8 @@ static __always_inline int forward_packet(void *data, void *data_end,
                     update_stat(STAT_BOUNDS_CHECK_FAILED, 4);  /* Track ring buffer copy systematic error */
                     update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0042);  /* Ring buffer copy failure marker */
                     event->len = 0;  /* Mark as failed copy */
-                    update_stat(STAT_ERRORS, 1);
+                    /* SYSTEMATIC ERROR TEST: Comment out to test if this causes 1:1 error */
+                    /* update_stat(STAT_ERRORS, 1); */
                 } else {
                     /* PRESERVE ORIGINAL: Ring buffer contains original inner packet with correct headers */
                     if (copy_len >= sizeof(struct ethhdr) + sizeof(struct iphdr)) {
