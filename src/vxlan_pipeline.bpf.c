@@ -1516,30 +1516,15 @@ static __always_inline int forward_packet(void *data, void *data_end,
                 }
                 
                 /* Perform the copy with exact packet length to prevent corruption */
-                /* Simple bounded copy - keep it small for eBPF verifier */
+                /* Simple byte-by-byte copy - verifier friendly */
                 __u32 copied = 0;
                 
-                /* Copy up to 1024 bytes in 8-byte chunks - verifier friendly */
+                /* Copy byte by byte with simple bounds - verifier can understand this */
                 #pragma unroll
-                for (__u32 i = 0; i < 128; i++) {  /* 128 * 8 = 1024 bytes */
-                    __u32 byte_offset = i * 8;
-                    if (byte_offset >= copy_len) break;
-                    if (byte_offset + 8 > copy_len) {
-                        /* Handle remaining bytes */
-                        __u32 remaining = copy_len - byte_offset;
-                        if ((char *)data + byte_offset + remaining <= (char *)data_end) {
-                            for (__u32 j = 0; j < remaining && j < 8; j++) {
-                                event->data[byte_offset + j] = *((char *)data + byte_offset + j);
-                            }
-                            copied = copy_len;
-                        }
-                        break;
-                    }
-                    if ((char *)data + byte_offset + 8 > (char *)data_end) break;
-                    
-                    /* Copy 8 bytes */
-                    *((__u64 *)(event->data + byte_offset)) = *((__u64 *)((char *)data + byte_offset));
-                    copied = byte_offset + 8;
+                for (__u32 i = 0; i < PACKET_DATA_MAX_SIZE && i < copy_len; i++) {
+                    if ((char *)data + i >= (char *)data_end) break;
+                    event->data[i] = *((char *)data + i);
+                    copied = i + 1;
                 }
                 
                 long ret = 0;  /* Direct copy always succeeds with proper bounds */
