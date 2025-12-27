@@ -1486,16 +1486,28 @@ static __always_inline int forward_packet(void *data, void *data_end,
         return XDP_DROP;
     }
     
-    /* Calculate final copy size before allocation to prevent race conditions */
+    /* Calculate final copy size with proper bounds checking for verifier */
     __u32 final_copy_len = temp_len;
     if (final_copy_len > PACKET_DATA_MAX_SIZE) {
         final_copy_len = PACKET_DATA_MAX_SIZE;
     }
     
-    /* Verify source data bounds before allocation */
+    /* Verify source data bounds with verifier-friendly checks */
+    if (data_end <= data) {
+        /* Invalid packet bounds - should not happen after adjust_head */
+        update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_TEMP_LEN_ZERO_ERROR);
+        return XDP_DROP;
+    }
+    
     __u32 available_data = (char *)data_end - (char *)data;
     if (final_copy_len > available_data) {
         final_copy_len = available_data;
+    }
+    
+    /* Ensure final_copy_len is always positive and bounded for verifier */
+    if (final_copy_len == 0 || final_copy_len > PACKET_DATA_MAX_SIZE) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_TEMP_LEN_ZERO_ERROR);
+        return XDP_DROP;
     }
     
     /* Use fixed ring buffer allocation - verifier requires known constant size */
