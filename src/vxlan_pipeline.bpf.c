@@ -1511,73 +1511,41 @@ static __always_inline int forward_packet(void *data, void *data_end,
                 }
                 
                 /* Perform the copy with exact packet length to prevent corruption */
-                /* Extended unrolled copy - headers + payload */
+                /* Safe copying with individual bounds checks */
                 __u32 copied = 0;
                 
-                /* Determine how much to copy - limit for verifier but copy essential data */
-                __u32 copy_target = (copy_len > 256) ? 256 : copy_len;
-                
-                if (copy_target > 0 && (char *)data + copy_target <= (char *)data_end) {
-                    /* Copy in 64-byte chunks - 4 chunks = 256 bytes total */
-                    if (copy_target >= 64) {
-                        /* Chunk 1: 0-63 */
-                        *((__u64 *)(event->data + 0))  = *((__u64 *)((char *)data + 0));
-                        *((__u64 *)(event->data + 8))  = *((__u64 *)((char *)data + 8));
+                /* Copy as much as we can safely - check each 8-byte chunk individually */
+                if (copy_len > 0) {
+                    /* Copy first 8 bytes if available */
+                    if ((char *)data + 8 <= (char *)data_end) {
+                        *((__u64 *)(event->data + 0)) = *((__u64 *)((char *)data + 0));
+                        copied = 8;
+                    }
+                    /* Copy next 8 bytes if available */  
+                    if (copy_len > 8 && (char *)data + 16 <= (char *)data_end) {
+                        *((__u64 *)(event->data + 8)) = *((__u64 *)((char *)data + 8));
+                        copied = 16;
+                    }
+                    /* Copy next 8 bytes if available */
+                    if (copy_len > 16 && (char *)data + 24 <= (char *)data_end) {
                         *((__u64 *)(event->data + 16)) = *((__u64 *)((char *)data + 16));
+                        copied = 24;
+                    }
+                    /* Copy next 8 bytes if available */
+                    if (copy_len > 24 && (char *)data + 32 <= (char *)data_end) {
                         *((__u64 *)(event->data + 24)) = *((__u64 *)((char *)data + 24));
+                        copied = 32;
+                    }
+                    /* Copy next 8 bytes if available */
+                    if (copy_len > 32 && (char *)data + 40 <= (char *)data_end) {
                         *((__u64 *)(event->data + 32)) = *((__u64 *)((char *)data + 32));
-                        *((__u64 *)(event->data + 40)) = *((__u64 *)((char *)data + 40));
-                        *((__u64 *)(event->data + 48)) = *((__u64 *)((char *)data + 48));
-                        *((__u64 *)(event->data + 56)) = *((__u64 *)((char *)data + 56));
-                        copied = 64;
+                        copied = 40;
                     }
-                    if (copy_target >= 128) {
-                        /* Chunk 2: 64-127 */
-                        *((__u64 *)(event->data + 64)) = *((__u64 *)((char *)data + 64));
-                        *((__u64 *)(event->data + 72)) = *((__u64 *)((char *)data + 72));
-                        *((__u64 *)(event->data + 80)) = *((__u64 *)((char *)data + 80));
-                        *((__u64 *)(event->data + 88)) = *((__u64 *)((char *)data + 88));
-                        *((__u64 *)(event->data + 96)) = *((__u64 *)((char *)data + 96));
-                        *((__u64 *)(event->data + 104)) = *((__u64 *)((char *)data + 104));
-                        *((__u64 *)(event->data + 112)) = *((__u64 *)((char *)data + 112));
-                        *((__u64 *)(event->data + 120)) = *((__u64 *)((char *)data + 120));
-                        copied = 128;
+                    /* Copy final 2 bytes for 42-byte header if available */
+                    if (copy_len > 40 && (char *)data + 42 <= (char *)data_end) {
+                        *((__u16 *)(event->data + 40)) = *((__u16 *)((char *)data + 40));
+                        copied = 42;
                     }
-                    if (copy_target >= 192) {
-                        /* Chunk 3: 128-191 */
-                        *((__u64 *)(event->data + 128)) = *((__u64 *)((char *)data + 128));
-                        *((__u64 *)(event->data + 136)) = *((__u64 *)((char *)data + 136));
-                        *((__u64 *)(event->data + 144)) = *((__u64 *)((char *)data + 144));
-                        *((__u64 *)(event->data + 152)) = *((__u64 *)((char *)data + 152));
-                        *((__u64 *)(event->data + 160)) = *((__u64 *)((char *)data + 160));
-                        *((__u64 *)(event->data + 168)) = *((__u64 *)((char *)data + 168));
-                        *((__u64 *)(event->data + 176)) = *((__u64 *)((char *)data + 176));
-                        *((__u64 *)(event->data + 184)) = *((__u64 *)((char *)data + 184));
-                        copied = 192;
-                    }
-                    if (copy_target >= 256) {
-                        /* Chunk 4: 192-255 */
-                        *((__u64 *)(event->data + 192)) = *((__u64 *)((char *)data + 192));
-                        *((__u64 *)(event->data + 200)) = *((__u64 *)((char *)data + 200));
-                        *((__u64 *)(event->data + 208)) = *((__u64 *)((char *)data + 208));
-                        *((__u64 *)(event->data + 216)) = *((__u64 *)((char *)data + 216));
-                        *((__u64 *)(event->data + 224)) = *((__u64 *)((char *)data + 224));
-                        *((__u64 *)(event->data + 232)) = *((__u64 *)((char *)data + 232));
-                        *((__u64 *)(event->data + 240)) = *((__u64 *)((char *)data + 240));
-                        *((__u64 *)(event->data + 248)) = *((__u64 *)((char *)data + 248));
-                        copied = 256;
-                    }
-                } else if (copy_target > 0 && (char *)data + 42 <= (char *)data_end) {
-                    /* Fallback: copy just headers */
-                    *((__u64 *)(event->data + 0))  = *((__u64 *)((char *)data + 0));
-                    *((__u64 *)(event->data + 8))  = *((__u64 *)((char *)data + 8));
-                    *((__u64 *)(event->data + 16)) = *((__u64 *)((char *)data + 16));
-                    *((__u64 *)(event->data + 24)) = *((__u64 *)((char *)data + 24));
-                    *((__u64 *)(event->data + 32)) = *((__u64 *)((char *)data + 32));
-                    *((__u16 *)(event->data + 40)) = *((__u16 *)((char *)data + 40));
-                    copied = 42;
-                } else {
-                    copied = 0;
                 }
                 
                 long ret = (copied > 0) ? 0 : -1;
