@@ -892,6 +892,7 @@ static __always_inline int parse_outer_headers(void *data, void *data_end,
     eth_hdr = data;
     if ((void *)(eth_hdr + 1) > data_end) {
         /* SECURITY: Packet too small to contain Ethernet header */
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0400);  /* Outer eth header bounds failure */
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
@@ -914,6 +915,7 @@ static __always_inline int parse_outer_headers(void *data, void *data_end,
     ip_hdr = (struct iphdr *)(eth_hdr + 1);
     if ((void *)(ip_hdr + 1) > data_end) {
         /* SECURITY: Packet truncated, missing IP header */
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0401);  /* Outer IP header bounds failure */
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
@@ -936,6 +938,7 @@ static __always_inline int parse_outer_headers(void *data, void *data_end,
     ip_hdr_len = ip_hdr->ihl * 4;
     if (ip_hdr_len < IP_HEADER_MIN_SIZE || ip_hdr_len > IP_HEADER_MAX_SIZE) {
         /* SECURITY: Invalid IP header length - potential attack vector */
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0402);  /* Outer IP header length validation failure */
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
@@ -949,6 +952,7 @@ static __always_inline int parse_outer_headers(void *data, void *data_end,
     udp_hdr = (struct udphdr *)((char *)ip_hdr + ip_hdr_len);
     if ((void *)(udp_hdr + 1) > data_end) {
         /* SECURITY: Packet truncated, missing UDP header */
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0403);  /* Outer UDP header bounds failure */
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
@@ -1096,6 +1100,7 @@ static __always_inline int decapsulate_vxlan(struct xdp_md *ctx,
     /* Validate calculations to prevent integer overflow/underflow */
     if (outer_headers_size <= 0 || outer_headers_size > MAX_OUTER_HEADERS_SIZE ||
         total_packet_size <= (__u32)outer_headers_size) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0300);  /* Decapsulation bounds validation failure */
         update_stat(STAT_ERRORS, 1);
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
@@ -1181,6 +1186,7 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     /* CRITICAL: Validate IP header is accessible with NEW pointer */
     if ((void *)(ip_hdr + 1) > data_end) {
         /* SECURITY: Packet corrupted or truncated during decapsulation */
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0200);  /* SYSTEMATIC ERROR SOURCE: IP header bounds after decaps */
         update_stat(STAT_ERRORS, 1);
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return -1;  /* Critical failure - cannot proceed */
@@ -1195,6 +1201,7 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     ip_hdr_len = ip_hdr->ihl * 4;
     if (ip_hdr_len < IP_HEADER_MIN_SIZE || ip_hdr_len > IP_HEADER_MAX_SIZE) {
         /* SECURITY: Invalid IP header length after decapsulation */
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0201);  /* SYSTEMATIC ERROR SOURCE: IP header length validation */
         update_stat(STAT_ERRORS, 1);
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return -1;  /* Critical failure - cannot proceed */
@@ -1203,6 +1210,7 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     /* CRITICAL: Ensure complete IP header (including options) is readable */
     if ((char *)ip_hdr + ip_hdr_len > (char *)data_end) {
         /* SECURITY: IP header with options extends beyond packet boundary */
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0202);  /* SYSTEMATIC ERROR SOURCE: IP header options bounds */
         update_stat(STAT_ERRORS, 1);
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return -1;  /* Critical failure - cannot proceed */
@@ -1515,6 +1523,7 @@ int vxlan_classifier(struct xdp_md *ctx)
     /* Get pipeline context */
     pctx = get_pipeline_ctx();
     if (!pctx) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0500);  /* vxlan_classifier context failure */
         update_stat(STAT_ERRORS, 1);
         return XDP_ABORTED;
     }
@@ -1617,12 +1626,14 @@ int vxlan_processor(struct xdp_md *ctx)
     /* Re-validate packet boundaries for this stage */
     struct ethhdr *eth_hdr = (struct ethhdr *)data;
     if ((void *)(eth_hdr + 1) > data_end) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0501);  /* vxlan_processor eth bounds failure */
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
     
     struct iphdr *ip_hdr = (struct iphdr *)(eth_hdr + 1);
     if ((void *)(ip_hdr + 1) > data_end) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0502);  /* vxlan_processor IP bounds failure */
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
@@ -1636,6 +1647,7 @@ int vxlan_processor(struct xdp_md *ctx)
     
     udp_hdr = (struct udphdr *)((char *)ip_hdr + (ip_hdr->ihl * 4));
     if ((void *)(udp_hdr + 1) > data_end) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0503);  /* vxlan_processor UDP bounds failure */
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
@@ -1649,6 +1661,7 @@ int vxlan_processor(struct xdp_md *ctx)
     /* Store VXLAN metadata with bounds checking */
     struct vxlanhdr *vxlan_hdr = (struct vxlanhdr *)(udp_hdr + 1);
     if ((void *)(vxlan_hdr + 1) > data_end) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0504);  /* vxlan_processor VXLAN header bounds failure */
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
@@ -1732,6 +1745,7 @@ int nat_engine(struct xdp_md *ctx)
     
     /* Validate packet boundaries after decapsulation */
     if (data + sizeof(struct ethhdr) > data_end) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0507);  /* forwarding_stage post-decaps bounds failure */
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
@@ -1741,6 +1755,7 @@ int nat_engine(struct xdp_md *ctx)
     ip_hdr = (struct iphdr *)(eth_hdr + 1);
     
     if ((void *)(ip_hdr + 1) > data_end) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0506);  /* nat_engine post-decaps IP bounds failure */
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
@@ -1759,6 +1774,7 @@ int nat_engine(struct xdp_md *ctx)
             udp_hdr = (struct udphdr *)((char *)ip_hdr + (ip_hdr->ihl * 4));
             
             if ((void *)(udp_hdr + 1) > data_end) {
+                update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0505);  /* nat_engine UDP bounds after validation failure */
                 update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
                 return XDP_DROP;
             }

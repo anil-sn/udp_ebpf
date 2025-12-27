@@ -54,6 +54,35 @@ DEBUG_MARKERS = {
     0xDEAD0042: "Ring buffer copy failure",
     0xDEAD0043: "Forward packet eth header bounds failure",
     
+    # IP Header Validation Failures (0xDEAD010X)
+    0xDEAD0100: "IP header length validation failure - SYSTEMATIC ERROR SOURCE",
+    0xDEAD0101: "NAT engine IP header length validation failure",
+    0xDEAD0102: "NAT apply failure marker",
+    
+    # Update Packet Headers Failures (0xDEAD020X) - MOST LIKELY SYSTEMATIC ERROR SOURCE
+    0xDEAD0200: "IP header bounds after decapsulation - SYSTEMATIC ERROR SOURCE",
+    0xDEAD0201: "IP header length validation after decapsulation - SYSTEMATIC ERROR SOURCE", 
+    0xDEAD0202: "IP header options bounds after decapsulation - SYSTEMATIC ERROR SOURCE",
+    
+    # Decapsulation Failures (0xDEAD030X)
+    0xDEAD0300: "Decapsulation bounds validation failure",
+    
+    # Parse Outer Headers Failures (0xDEAD040X)
+    0xDEAD0400: "Outer ethernet header bounds failure",
+    0xDEAD0401: "Outer IP header bounds failure", 
+    0xDEAD0402: "Outer IP header length validation failure",
+    0xDEAD0403: "Outer UDP header bounds failure",
+    
+    # Pipeline Stage Bounds Failures (0xDEAD050X)
+    0xDEAD0500: "vxlan_classifier context failure", 
+    0xDEAD0501: "vxlan_processor eth bounds failure",
+    0xDEAD0502: "vxlan_processor IP bounds failure",
+    0xDEAD0503: "vxlan_processor UDP bounds failure",
+    0xDEAD0504: "vxlan_processor VXLAN header bounds failure",
+    0xDEAD0505: "nat_engine UDP bounds after validation failure",
+    0xDEAD0506: "nat_engine post-decaps IP bounds failure",
+    0xDEAD0507: "forwarding_stage post-decaps bounds failure",
+    
     # Configuration Failures (0xBAD0000X)
     0xBAD00001: "Interface config failure",
     0xBAD00002: "NAT config failure",
@@ -63,8 +92,8 @@ DEBUG_MARKERS = {
     0xDEAD0002: "VNI validation failure in parse_vxlan"
 }
 
-def get_bpf_stats() -> Dict[int, int]:
-    """Get BPF statistics from kernel via bpftool."""
+def get_comprehensive_stats() -> Dict[str, any]:
+    """Get comprehensive statistics from all BPF maps."""
     try:
         result = subprocess.run(
             ['sudo', 'bpftool', 'map', 'dump', 'name', 'stats_map', '--json'],
@@ -72,25 +101,53 @@ def get_bpf_stats() -> Dict[int, int]:
         )
         data = json.loads(result.stdout)
         
-        stats = {}
+        comprehensive_stats = {
+            'counters': {},
+            'per_cpu_data': {},
+            'debug_markers': [],
+            'raw_data': data
+        }
+        
         for item in data:
             key = int(item['key'][0], 16)
-            total = sum(cpu['value'] for cpu in item['formatted']['values'])
-            stats[key] = total
             
-        return stats
+            # Calculate total across all CPUs
+            total = sum(cpu['value'] for cpu in item['formatted']['values'])
+            comprehensive_stats['counters'][key] = total
+            
+            # Store per-CPU data for detailed analysis
+            comprehensive_stats['per_cpu_data'][key] = [cpu['value'] for cpu in item['formatted']['values']]
+            
+            # Special handling for debug markers
+            if key == 0x0e:  # PACKET_SIZE_DEBUG
+                for cpu_idx, cpu_data in enumerate(item['formatted']['values']):
+                    val = cpu_data['value']
+                    if val > 0 and val in DEBUG_MARKERS:
+                        comprehensive_stats['debug_markers'].append({
+                            'cpu': cpu_idx,
+                            'value': val,
+                            'description': DEBUG_MARKERS[val],
+                            'hex': f"0x{val:x}"
+                        })
+        
+        return comprehensive_stats
         
     except subprocess.CalledProcessError as e:
         print(f"Error running bpftool: {e}")
-        print(f"Make sure you have sudo privileges and the stats_map exists")
-        sys.exit(1)
+        return {}
     except json.JSONDecodeError as e:
         print(f"Error parsing bpftool JSON output: {e}")
-        sys.exit(1)
+        return {}
+
+def get_bpf_stats() -> Dict[int, int]:
+    """Get BPF statistics from kernel via bpftool."""
+    comprehensive = get_comprehensive_stats()
+    return comprehensive.get('counters', {})
 
 def analyze_debug_markers(stats: Dict[int, int]) -> List[Tuple[str, int]]:
     """Analyze debug markers in PACKET_SIZE_DEBUG counter."""
     debug_values = []
+    debug_per_cpu = []
     
     # Get debug counter values per CPU
     try:
@@ -103,6 +160,7 @@ def analyze_debug_markers(stats: Dict[int, int]) -> List[Tuple[str, int]]:
         for item in data:
             if int(item['key'][0], 16) == 0x0e:  # PACKET_SIZE_DEBUG
                 debug_values = [cpu['value'] for cpu in item['formatted']['values']]
+                debug_per_cpu = item['formatted']['values']
                 break
                 
     except Exception as e:
@@ -110,19 +168,44 @@ def analyze_debug_markers(stats: Dict[int, int]) -> List[Tuple[str, int]]:
         return []
     
     found_markers = []
+    systematic_error_markers = []
     
-    for i, val in enumerate(debug_values[:4]):  # Check first 4 CPUs
+    # Check all CPUs for debug markers
+    for i, val in enumerate(debug_values):
+        if val == 0:
+            continue
+            
+        # Check for exact debug marker matches
         if val in DEBUG_MARKERS:
-            found_markers.append((DEBUG_MARKERS[val], val))
+            marker_info = (DEBUG_MARKERS[val], val)
+            found_markers.append(marker_info)
+            
+            # Track systematic error markers separately
+            if "SYSTEMATIC ERROR SOURCE" in DEBUG_MARKERS[val]:
+                systematic_error_markers.append(marker_info)
+            
         elif val > 0:
-            # Check if it's packed debug data or unknown marker
+            # Check if it's packed debug data
             if val > 0xFFFFFFFF:
                 high_16 = (val >> 16) & 0xFFFF
                 low_16 = val & 0xFFFF
-                found_markers.append((f"Packed debug data: high={high_16}, low={low_16}", val))
+                
+                # Check if packed values might contain debug markers
+                if high_16 in DEBUG_MARKERS:
+                    found_markers.append((f"Packed marker (high): {DEBUG_MARKERS[high_16]}", high_16))
+                elif low_16 in DEBUG_MARKERS:
+                    found_markers.append((f"Packed marker (low): {DEBUG_MARKERS[low_16]}", low_16))
+                else:
+                    found_markers.append((f"Packed debug data: high={high_16}, low={low_16}", val))
             else:
-                # Check if it's a known debug pattern
-                found_markers.append((f"Unknown debug marker: 0x{val:x}", val))
+                # Check for partial marker matches or unknown patterns
+                hex_val = hex(val)
+                if 'dead' in hex_val.lower():
+                    found_markers.append((f"Potential debug marker: 0x{val:x}", val))
+                elif 'bad' in hex_val.lower():
+                    found_markers.append((f"Configuration error marker: 0x{val:x}", val))
+                else:
+                    found_markers.append((f"Unknown debug value: {val} (0x{val:x})", val))
     
     return found_markers
 
@@ -138,14 +221,14 @@ def print_performance_summary(stats: Dict[int, int]):
     print("VXLAN PIPELINE PERFORMANCE SUMMARY")
     print("=" * 60)
     
-    print(f"📊 PACKET COUNTERS:")
+    print(f"PACKET COUNTERS:")
     print(f"   Total Packets:      {total:,}")
     print(f"   VXLAN Packets:      {vxlan:,}")
     print(f"   Errors:             {errors:,}")
     print(f"   Successful Submits: {ringbuf:,}")
     print(f"   Bounds Failures:    {bounds:,}")
     
-    print(f"\n📈 SUCCESS METRICS:")
+    print(f"\nSUCCESS METRICS:")
     if total > 0:
         print(f"   Error Rate:         {(errors/total*100):.1f}%")
         print(f"   VXLAN Detection:    {(vxlan/total*100):.1f}%")
@@ -158,10 +241,10 @@ def print_performance_summary(stats: Dict[int, int]):
         
         # Systematic error detection
         if 0.99 <= ratio <= 1.01:
-            print(f"   🚨 SYSTEMATIC ERROR DETECTED: ~1:1 error ratio indicates")
+            print(f"   SYSTEMATIC ERROR DETECTED: ~1:1 error ratio indicates")
             print(f"      one error per VXLAN packet regardless of success rate!")
     
-    print(f"\n💾 PROCESSING METRICS:")
+    print(f"\nPROCESSING METRICS:")
     bytes_processed = stats.get(0x08, 0)
     nat_applied = stats.get(0x03, 0)
     df_cleared = stats.get(0x04, 0)
@@ -176,10 +259,29 @@ def print_detailed_stats(stats: Dict[int, int]):
     print("DETAILED STATISTICS BREAKDOWN")
     print("=" * 60)
     
+    # Get comprehensive data for per-CPU analysis
+    comprehensive = get_comprehensive_stats()
+    per_cpu_data = comprehensive.get('per_cpu_data', {})
+    
     for key, value in sorted(stats.items()):
         stat_name = STATS_MAP.get(key, f"UNKNOWN_0x{key:02x}")
         if value > 0:  # Only show non-zero stats
-            print(f"   {stat_name:20s}: {value:,}")
+            print(f"   {stat_name:25s}: {value:,}")
+            
+            # Show per-CPU breakdown for key statistics
+            if key in [0x00, 0x01, 0x07, 0x0d, 0x0e] and key in per_cpu_data:
+                cpu_values = per_cpu_data[key]
+                non_zero_cpus = [(i, v) for i, v in enumerate(cpu_values) if v > 0]
+                if len(non_zero_cpus) > 1:
+                    print(f"     Per-CPU breakdown: ", end="")
+                    for i, (cpu, val) in enumerate(non_zero_cpus[:4]):  # Show first 4 CPUs
+                        print(f"CPU{cpu}={val:,}", end="")
+                        if i < len(non_zero_cpus) - 1 and i < 3:
+                            print(", ", end="")
+                    if len(non_zero_cpus) > 4:
+                        print(f", +{len(non_zero_cpus) - 4} more")
+                    else:
+                        print()
 
 def print_debug_analysis(debug_markers: List[Tuple[str, int]]):
     """Print debug marker analysis."""
@@ -188,69 +290,167 @@ def print_debug_analysis(debug_markers: List[Tuple[str, int]]):
     print("=" * 60)
     
     if not debug_markers:
-        print("✅ No debug markers detected - all error paths are clean!")
+        print("No debug markers detected - all error paths are clean!")
+        print("   This suggests the systematic error is in an uninstrumented path.")
         return
         
-    print("🔍 DETECTED ERROR SOURCES:")
+    print("DETECTED ERROR SOURCES:")
     
     systematic_errors = []
+    config_errors = []
+    bounds_errors = []
     other_markers = []
     
+    # Categorize markers for better analysis
     for description, value in debug_markers:
-        if any(marker in hex(value) for marker in ['dead', 'bad']) or value in DEBUG_MARKERS:
+        hex_str = hex(value).lower()
+        
+        if "systematic error source" in description.lower():
             systematic_errors.append((description, value))
+        elif any(marker in hex_str for marker in ['0xbad', 'config', 'interface']):
+            config_errors.append((description, value))
+        elif "bounds" in description.lower():
+            bounds_errors.append((description, value))
+        elif any(marker in hex_str for marker in ['0xdead']):
+            other_markers.append((description, value))
         else:
             other_markers.append((description, value))
     
-    # Show systematic errors first (most important)
+    # Show systematic errors first (highest priority)
     if systematic_errors:
-        print("\n   🚨 SYSTEMATIC ERROR MARKERS:")
+        print("\n   SYSTEMATIC ERROR MARKERS (CRITICAL):")
         for desc, val in systematic_errors:
-            print(f"      ▶ {desc}")
+            print(f"      - {desc}")
             print(f"        Marker: 0x{val:x}")
-            if val in DEBUG_MARKERS:
-                print(f"        Impact: Counts toward STAT_ERRORS for every occurrence")
+            print(f"        Impact: This is likely the 1:1 error source!")
+            
+    # Show configuration errors
+    if config_errors:
+        print("\n   CONFIGURATION ERROR MARKERS:")
+        for desc, val in config_errors:
+            print(f"      - {desc}")
+            print(f"        Marker: 0x{val:x}")
+            print(f"        Impact: Configuration issue affecting all packets")
+    
+    # Show bounds check errors
+    if bounds_errors:
+        print("\n   BOUNDS CHECK ERROR MARKERS:")
+        for desc, val in bounds_errors:
+            print(f"      - {desc}")
+            print(f"        Marker: 0x{val:x}")
+            print(f"        Impact: Packet validation failure")
     
     # Show other debug data
     if other_markers:
-        print("\n   📊 OTHER DEBUG DATA:")
-        for desc, val in other_markers:
-            print(f"      ▶ {desc}")
+        print("\n   OTHER DEBUG MARKERS:")
+        for desc, val in other_markers[:5]:  # Limit to first 5 to avoid spam
+            print(f"      - {desc}")
+            if val < 0xFFFFFFFF:
+                print(f"        Marker: 0x{val:x}")
+        
+        if len(other_markers) > 5:
+            print(f"      ... and {len(other_markers) - 5} more debug markers")
+    
+    # Provide specific guidance based on detected markers
+    if systematic_errors:
+        print("\n   SYSTEMATIC ERROR ANALYSIS:")
+        print("     The detected systematic error markers indicate the exact")
+        print("     code path causing the 1:1 error pattern. Focus debugging")
+        print("     efforts on these specific functions.")
+    elif config_errors:
+        print("\n   CONFIGURATION ERROR ANALYSIS:")
+        print("     Configuration errors suggest setup issues that affect")
+        print("     every packet. Check map configurations and initialization.")
+    elif bounds_errors:
+        print("\n   BOUNDS CHECK ANALYSIS:")
+        print("     Bounds check failures suggest packet parsing issues.")
+        print("     Check packet structure assumptions and validation logic.")
 
 def print_recommendations(stats: Dict[int, int], debug_markers: List[Tuple[str, int]]):
-    """Print actionable recommendations."""
+    """Print actionable recommendations based on comprehensive analysis."""
     print("\n" + "=" * 60)
-    print("RECOMMENDATIONS")
+    print("RECOMMENDATIONS & ANALYSIS")
     print("=" * 60)
     
-    vxlan = stats.get(0x01, 0)
-    errors = stats.get(0x07, 0) 
-    ringbuf = stats.get(0x0d, 0)
+    # Get comprehensive analysis data
+    comprehensive = get_comprehensive_stats()
+    per_cpu_data = comprehensive.get('per_cpu_data', {})
     
-    ratio = errors / vxlan if vxlan > 0 else 0
+    # Correct mapping: 0x00=RX, 0x01=ERRORS, 0x07=VXLAN, 0x0d=RINGBUF
+    rx_packets = stats.get(0x00, 0)
+    error_count = stats.get(0x01, 0)  
+    vxlan_packets = stats.get(0x07, 0)
+    ringbuf_success = stats.get(0x0d, 0)
     
-    if 0.99 <= ratio <= 1.01:
-        print("🎯 SYSTEMATIC ERROR ELIMINATION:")
-        print("   The 1:1 error ratio indicates a systematic issue where")
-        print("   exactly one error is counted per VXLAN packet.")
+    if rx_packets > 0 and vxlan_packets > 0:
+        error_to_vxlan_ratio = error_count / vxlan_packets if vxlan_packets > 0 else 0
+        success_rate = (rx_packets - error_count) / rx_packets if rx_packets > 0 else 0
+        processing_efficiency = (vxlan_packets / rx_packets) if rx_packets > 0 else 0
         
-        if debug_markers:
-            print("\n   Based on debug markers, focus on:")
-            for desc, val in debug_markers[:3]:  # Top 3 most frequent
-                if val in DEBUG_MARKERS:
-                    print(f"   ▶ Fix: {desc}")
+        print(f"KEY METRICS:")
+        print(f"   Success Rate: {success_rate:.1%}")
+        print(f"   Error-to-VXLAN Ratio: {error_to_vxlan_ratio:.6f}")
+        print(f"   Processing Efficiency: {processing_efficiency:.1%}")
+        print(f"   Ringbuf Success Rate: {(ringbuf_success/vxlan_packets):.1%}" if vxlan_packets > 0 else "   Ringbuf Success Rate: N/A")
+        
+        if 0.99 <= error_to_vxlan_ratio <= 1.01:  # Close to 1:1 ratio
+            print("\nCRITICAL: Systematic 1:1 error pattern detected!")
+            print("   Every VXLAN packet appears to generate exactly one error.")
+            print("   This indicates a fundamental issue in error counting logic.")
+            
+            # Analyze debug markers to identify source
+            if debug_markers:
+                print("\nDEBUG MARKER ANALYSIS:")
+                for desc, val in debug_markers[:5]:  # Show top 5 markers
+                    if val in DEBUG_MARKERS:
+                        marker_info = DEBUG_MARKERS[val]
+                        print(f"   0x{val:x}: {desc}")
+                        print(f"      Description: {marker_info}")
+                        
+                        # Show per-CPU distribution if available
+                        if 0x0e in per_cpu_data:
+                            cpu_values = per_cpu_data[0x0e]
+                            active_cpus = [i for i, v in enumerate(cpu_values) if v > 0]
+                            if len(active_cpus) > 1:
+                                print(f"      CPU Distribution: {len(active_cpus)} CPUs active")
+                
+                print("\nSYSTEMATIC ERROR ELIMINATION PLAN:")
+                print("   1. IMMEDIATE: Focus on the debug marker(s) with highest counts above")
+                print("   2. ANALYZE: Review the specific code paths in vxlan_pipeline.bpf.c")
+                print("   3. FIX: Remove or correct the double-counting error logic")
+                print("   4. VERIFY: Recompile and test to confirm ratio approaches 0")
+            else:
+                print("\nRECOMMENDED ACTIONS:")
+                print("   1. All instrumented error paths are clean!")
+                print("   2. Check uninstrumented code paths or")
+                print("   3. Review statistics increment logic for systematic issues")
+                print("   4. Add debug markers to any remaining untracked error paths")
         else:
-            print("\n   ✅ All instrumented error paths are clean!")
-            print("   🔍 Check uninstrumented code paths or")
-            print("       review statistics increment logic.")
+            print(f"\nError pattern appears normal (ratio: {error_to_vxlan_ratio:.3f})")
     
-    success_rate = (ringbuf / vxlan * 100) if vxlan > 0 else 0
-    if success_rate > 80:
-        print(f"\n✅ PERFORMANCE: {success_rate:.1f}% success rate is excellent!")
-    elif success_rate > 60:
-        print(f"\n⚠️  PERFORMANCE: {success_rate:.1f}% success rate is good but can improve")
-    else:
-        print(f"\n🚨 PERFORMANCE: {success_rate:.1f}% success rate needs attention!")
+    # Performance analysis
+    if rx_packets > 0:
+        if success_rate > 0.80:
+            print(f"\nPERFORMANCE: {success_rate:.1%} success rate is excellent!")
+        elif success_rate > 0.60:
+            print(f"\nPERFORMANCE: {success_rate:.1%} success rate is good but can improve")
+        else:
+            print(f"\nPERFORMANCE: {success_rate:.1%} success rate needs attention!")
+    
+    # Additional error analysis
+    error_types = []
+    if stats.get(0x02, 0) > 0:
+        error_types.append("Memory allocation failures")
+    if stats.get(0x03, 0) > 0:
+        error_types.append("Packet parsing errors")
+    if stats.get(0x0c, 0) > 0:
+        error_types.append("Processing pipeline errors")
+    
+    if error_types:
+        print(f"\nADDITIONAL ISSUES DETECTED:")
+        for error_type in error_types:
+            print(f"   - {error_type}")
+        print("   Review corresponding code paths for these specific error types")
 
 def main():
     """Main analysis function."""
