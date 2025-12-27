@@ -185,23 +185,64 @@ def analyze_debug_markers(stats: Dict[int, int]) -> List[Tuple[str, int]]:
                 systematic_error_markers.append(marker_info)
             
         elif val > 0:
-            # Check if it's packed debug data
+            # Enhanced packed data analysis for large values
             if val > 0xFFFFFFFF:
+                # Try different unpacking strategies
+                
+                # Strategy 1: High/Low 32-bit words
+                high_32 = (val >> 32) & 0xFFFFFFFF
+                low_32 = val & 0xFFFFFFFF
+                
+                # Strategy 2: High/Low 16-bit words  
                 high_16 = (val >> 16) & 0xFFFF
                 low_16 = val & 0xFFFF
                 
-                # Check if packed values might contain debug markers
-                if high_16 in DEBUG_MARKERS:
-                    found_markers.append((f"Packed marker (high): {DEBUG_MARKERS[high_16]}", high_16))
-                elif low_16 in DEBUG_MARKERS:
-                    found_markers.append((f"Packed marker (low): {DEBUG_MARKERS[low_16]}", low_16))
-                else:
-                    found_markers.append((f"Packed debug data: high={high_16}, low={low_16}", val))
+                # Strategy 3: Extract potential DEAD markers from the full value
+                hex_str = hex(val).lower()
+                
+                marker_found = False
+                
+                # Check if any of our debug markers are embedded
+                for marker_val, marker_desc in DEBUG_MARKERS.items():
+                    marker_hex = hex(marker_val)[2:]  # Remove '0x'
+                    if marker_hex in hex_str:
+                        found_markers.append((f"Embedded marker: {marker_desc}", marker_val))
+                        if "SYSTEMATIC ERROR SOURCE" in marker_desc:
+                            systematic_error_markers.append((f"Embedded: {marker_desc}", marker_val))
+                        marker_found = True
+                        break
+                
+                # If no embedded markers found, check the unpacked values
+                if not marker_found:
+                    if high_32 in DEBUG_MARKERS:
+                        found_markers.append((f"High 32-bit: {DEBUG_MARKERS[high_32]}", high_32))
+                        if "SYSTEMATIC ERROR SOURCE" in DEBUG_MARKERS[high_32]:
+                            systematic_error_markers.append((f"High 32-bit: {DEBUG_MARKERS[high_32]}", high_32))
+                        marker_found = True
+                    elif low_32 in DEBUG_MARKERS:
+                        found_markers.append((f"Low 32-bit: {DEBUG_MARKERS[low_32]}", low_32))
+                        if "SYSTEMATIC ERROR SOURCE" in DEBUG_MARKERS[low_32]:
+                            systematic_error_markers.append((f"Low 32-bit: {DEBUG_MARKERS[low_32]}", low_32))
+                        marker_found = True
+                    elif high_16 in DEBUG_MARKERS:
+                        found_markers.append((f"High 16-bit: {DEBUG_MARKERS[high_16]}", high_16))
+                        if "SYSTEMATIC ERROR SOURCE" in DEBUG_MARKERS[high_16]:
+                            systematic_error_markers.append((f"High 16-bit: {DEBUG_MARKERS[high_16]}", high_16))
+                        marker_found = True
+                    elif low_16 in DEBUG_MARKERS:
+                        found_markers.append((f"Low 16-bit: {DEBUG_MARKERS[low_16]}", low_16))
+                        if "SYSTEMATIC ERROR SOURCE" in DEBUG_MARKERS[low_16]:
+                            systematic_error_markers.append((f"Low 16-bit: {DEBUG_MARKERS[low_16]}", low_16))
+                        marker_found = True
+                
+                # If still no marker found, show the packed data with detailed hex analysis
+                if not marker_found:
+                    found_markers.append((f"Packed data 0x{val:x}: high32=0x{high_32:x}, low32=0x{low_32:x}, high16=0x{high_16:x}, low16=0x{low_16:x}", val))
             else:
                 # Check for partial marker matches or unknown patterns
                 hex_val = hex(val)
                 if 'dead' in hex_val.lower():
-                    found_markers.append((f"Potential debug marker: 0x{val:x}", val))
+                    found_markers.append((f"Potential DEAD marker: 0x{val:x}", val))
                 elif 'bad' in hex_val.lower():
                     found_markers.append((f"Configuration error marker: 0x{val:x}", val))
                 else:
