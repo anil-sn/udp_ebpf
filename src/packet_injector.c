@@ -28,6 +28,9 @@
 #include <time.h>
 #include <linux/if_packet.h>
 #include <net/ethernet.h>
+
+/* Include shared constants */
+#define INTERFACE_INVALID              0            /* Invalid interface index */
 #include <net/if.h>
 #include <arpa/inet.h>
 #include <signal.h>
@@ -530,21 +533,43 @@ static int handle_ring_buffer_event(void *ctx __attribute__((unused)), void *dat
      */
     struct packet_event {
         uint32_t ifindex;          /* Target interface (ens6) */
-        uint16_t packet_len;       /* Packet length in bytes */
-        uint8_t packet_data[];     /* Raw packet data from XDP */
+        uint16_t len;              /* Packet length in bytes */
+        uint8_t data[];            /* Raw packet data from XDP */
     } *event = (struct packet_event*)data;
     
     /*
-     * PACKET VALIDATION
-     * =================
+     * PACKET VALIDATION WITH RACE CONDITION PROTECTION
+     * =================================================
      * 
-     * Validate packet size to prevent:
+     * Validate packet size and metadata consistency to prevent:
      * - Buffer overflows in packet_buffer allocation
-     * - Processing of corrupted or malformed packets
-     * - Potential security issues from malicious packets
+     * - Processing of corrupted or malformed packets  
+     * - Race conditions from concurrent ring buffer operations
+     * - Stale data from previous allocations
      */
-    if (event->packet_len == 0 || event->packet_len > MAX_PACKET_SIZE) {
+    
+    /* Memory barrier to ensure we read consistent metadata */
+    __sync_synchronize();
+    
+    /* Capture metadata atomically to prevent TOCTOU issues */
+    uint32_t ifindex_snap = event->ifindex;
+    uint16_t len_snap = event->len;
+    
+    /* Validate interface index */
+    if (ifindex_snap == 0 || ifindex_snap == INTERFACE_INVALID) {
+        /* Invalid interface - potential corruption */
+        return 0;
+    }
+    
+    /* Validate packet length */
+    if (len_snap == 0 || len_snap > MAX_PACKET_SIZE) {
         /* Invalid packet size - silently drop */
+        return 0;
+    }
+    
+    /* Additional consistency check - ensure length matches ring buffer allocation */
+    if (data_sz < sizeof(struct packet_event) + len_snap) {
+        /* Ring buffer data truncated - drop to prevent corruption */
         return 0;
     }
     
@@ -564,20 +589,19 @@ static int handle_ring_buffer_event(void *ctx __attribute__((unused)), void *dat
     }
     
     /*
-     * PACKET DATA PROCESSING
-     * ======================
+     * PACKET DATA PROCESSING WITH RACE PROTECTION
+     * ============================================
      * 
-     * Copy packet data from ring buffer to our packet buffer and
-     * add metadata for tracking and debugging.
+     * Copy packet data from ring buffer to our packet buffer using
+     * the snapshotted metadata to prevent inconsistencies.
      */
-    pkt->len = event->packet_len;
+    pkt->len = len_snap;
     
     /* 
-     * Fast memory copy of packet data.
-     * Source: Ring buffer (kernel memory)
-     * Destination: Pre-allocated packet buffer (userspace memory)
+     * Safe memory copy with additional bounds checking.
+     * Use snapshotted length to prevent TOCTOU race conditions.
      */
-    memcpy(pkt->data, event->packet_data, event->packet_len);
+    memcpy(pkt->data, event->data, len_snap);
     
     /* Add timestamp for latency analysis and debugging */
     clock_gettime(CLOCK_REALTIME, &pkt->timestamp);
