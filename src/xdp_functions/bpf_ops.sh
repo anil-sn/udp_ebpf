@@ -99,7 +99,7 @@ count_bpf_map_entries() {
     fi
 }
 
-# Get NAT rules from BPF map - Fixed for actual JSON format
+# Get NAT rules from BPF map - Enhanced debugging version
 get_nat_rules() {
     # Get JSON data directly from bpftool
     local nat_json=$(sudo bpftool map dump name nat_map --json 2>/dev/null)
@@ -113,9 +113,9 @@ get_nat_rules() {
         return 1
     fi
     
-    # Parse and convert NAT rules to human readable format
-    local rules_found=0
-    echo "$nat_json" | jq -r '
+    # Try to parse and extract NAT rules
+    local rules_output=""
+    rules_output=$(echo "$nat_json" | jq -r '
         .[] | 
         if .key and .value then
             if (.key | type) == "object" and (.value | type) == "object" then
@@ -125,25 +125,29 @@ get_nat_rules() {
                 "\($src_port)->\($target_ip_int):\($target_port)"
             else empty end
         else empty end
-    ' 2>/dev/null | while IFS= read -r rule; do
-        if [[ "$rule" =~ ([0-9]+)-\>([0-9]+):([0-9]+) ]]; then
-            local src_port="${BASH_REMATCH[1]}"
-            local target_ip_int="${BASH_REMATCH[2]}" 
-            local target_port="${BASH_REMATCH[3]}"
-            
-            # Convert integer IP to dotted decimal
-            local target_ip=$(printf "%d.%d.%d.%d" \
-                $((target_ip_int & 0xFF)) \
-                $(((target_ip_int >> 8) & 0xFF)) \
-                $(((target_ip_int >> 16) & 0xFF)) \
-                $(((target_ip_int >> 24) & 0xFF)))
-            
-            echo "$src_port -> $target_ip:$target_port"
-            rules_found=1
-        fi
-    done
+    ' 2>/dev/null)
     
-    [ "$rules_found" = "1" ] && return 0 || return 1
+    if [ -n "$rules_output" ]; then
+        echo "$rules_output" | while IFS= read -r rule; do
+            if [[ "$rule" =~ ([0-9]+)-\>([0-9]+):([0-9]+) ]]; then
+                local src_port="${BASH_REMATCH[1]}"
+                local target_ip_int="${BASH_REMATCH[2]}" 
+                local target_port="${BASH_REMATCH[3]}"
+                
+                # Convert integer IP to dotted decimal
+                local target_ip=$(printf "%d.%d.%d.%d" \
+                    $((target_ip_int & 0xFF)) \
+                    $(((target_ip_int >> 8) & 0xFF)) \
+                    $(((target_ip_int >> 16) & 0xFF)) \
+                    $(((target_ip_int >> 24) & 0xFF)))
+                
+                echo "$src_port -> $target_ip:$target_port"
+            fi
+        done
+        return 0
+    else
+        return 1
+    fi
 }
 
 # Get IP allowlist count

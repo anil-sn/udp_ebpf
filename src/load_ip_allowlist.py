@@ -162,16 +162,31 @@ def display_loaded_ips():
             for entry in json_data:
                 if 'key' in entry and isinstance(entry['key'], int):
                     try:
-                        # Convert integer to IP using struct for proper byte order
-                        import struct
-                        ip_bytes = struct.pack('<I', entry['key'])  # Little-endian
-                        ip = ipaddress.IPv4Address(ip_bytes)
-                        ip_addresses.append(str(ip))
-                    except (ValueError, struct.error) as e:
+                        # Test different conversion methods
+                        key_val = entry['key']
+                        
+                        # Method 1: Direct conversion treating as network byte order
+                        ip1 = ipaddress.IPv4Address(key_val.to_bytes(4, byteorder='big'))
+                        
+                        # Method 2: Little-endian conversion  
+                        ip2 = ipaddress.IPv4Address(key_val.to_bytes(4, byteorder='little'))
+                        
+                        # Method 3: Manual bit manipulation (same as int_to_ip)
+                        ip3_str = f"{key_val & 0xFF}.{(key_val >> 8) & 0xFF}.{(key_val >> 16) & 0xFF}.{(key_val >> 24) & 0xFF}"
+                        ip3 = ipaddress.IPv4Address(ip3_str)
+                        
+                        # Use the method that gives most reasonable results
+                        # Usually method 3 (manual) works best for BPF maps
+                        ip_addresses.append(str(ip3))
+                        
+                    except (ValueError, OverflowError) as e:
                         print(f"Warning: Could not parse IP from {entry['key']}: {e}")
                         
         except json.JSONDecodeError as e:
             print(f"ERROR: JSON parsing failed: {e}")
+            # Show raw output for debugging
+            print("Raw output:")
+            print(result.stdout[:500])
             return
         print("Currently loaded IP addresses:")
         print("-" * 50)
