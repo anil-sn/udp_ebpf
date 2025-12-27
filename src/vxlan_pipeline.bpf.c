@@ -1426,15 +1426,18 @@ static __always_inline int forward_packet(void *data, void *data_end,
                 temp_len = PACKET_DATA_MAX_SIZE;
             }
             
-            /* Verify source data is accessible */
-            if ((char *)data + temp_len <= (char *)data_end) {
+            /* Verify source data is accessible - use actual available data size */
+            __u32 available_data = (char *)data_end - (char *)data;
+            __u32 copy_size = (temp_len < available_data) ? temp_len : available_data;
+            
+            if (copy_size > 0) {
                 /* Bounded copy with explicit length validation */
-                __u32 copy_len = temp_len;
+                __u32 copy_len = copy_size;
                 if (copy_len > PACKET_DATA_MAX_SIZE) {
                     copy_len = PACKET_DATA_MAX_SIZE;
                 }
                 
-                /* Perform the copy with original data */
+                /* Perform the copy with available data */
                 long ret = bpf_probe_read_kernel(event->data, copy_len & (PACKET_DATA_MAX_SIZE - 1), data);
                 if (ret < 0) {
                     /* Only count actual copy failures as errors */
