@@ -1486,11 +1486,19 @@ static __always_inline int forward_packet(void *data, void *data_end,
         return XDP_DROP;
     }
     
-    /* Use fixed ring buffer reservation size for verifier compatibility */
-    event = bpf_ringbuf_reserve(&packet_ringbuf, RINGBUF_RESERVE_SIZE, 0);
+    /* Use variable ring buffer reservation size based on actual packet length */
+    __u32 reserve_size = sizeof(struct packet_event) - PACKET_DATA_MAX_SIZE + temp_len;
+    if (reserve_size > sizeof(struct packet_event)) {
+        reserve_size = sizeof(struct packet_event);
+    }
+    
+    event = bpf_ringbuf_reserve(&packet_ringbuf, reserve_size, 0);
     if (event) {
         event->ifindex = *target_ifindex;
         event->len = (__u16)temp_len;
+        
+        /* Clear the entire data buffer to prevent stale data corruption */
+        __builtin_memset(event->data, 0, PACKET_DATA_MAX_SIZE);
         
         /* Optimized bounds checking */
         if (temp_len > 0) {
@@ -1510,8 +1518,8 @@ static __always_inline int forward_packet(void *data, void *data_end,
                     copy_len = PACKET_DATA_MAX_SIZE;
                 }
                 
-                /* Perform the copy with available data */
-                long ret = bpf_probe_read_kernel(event->data, copy_len & (PACKET_DATA_MAX_SIZE - 1), data);
+                /* Perform the copy with exact packet length to prevent corruption */
+                long ret = bpf_probe_read_kernel(event->data, copy_len, data);
                 update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_PROBE_READ_KERNEL_RESULT | (ret & DEBUG_VALUE_MASK));  /* DEBUG: probe_read_kernel result */
                 if (ret < 0) {
                     /* Only count actual copy failures as errors */
