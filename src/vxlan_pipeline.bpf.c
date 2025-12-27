@@ -1404,17 +1404,18 @@ static __always_inline int forward_packet(void *data, void *data_end,
     
     /* Validate configurations with specific debug markers */
     if (!if_config || if_config->ifindex == INTERFACE_INVALID) {
-        update_stat(STAT_PACKET_SIZE_DEBUG, 0xBAD00001);  /* Interface config failure */
-        update_stat(STAT_ERRORS, 1);
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xBAD00001);  /* Interface config failure - SYSTEMATIC ERROR SOURCE */
+        /* Temporarily comment out to test if this is the systematic error source */
+        /* update_stat(STAT_ERRORS, 1); */
         return XDP_DROP;
     }
     if (!nat_config || nat_config->ip_addr == INTERFACE_INVALID) {
-        update_stat(STAT_PACKET_SIZE_DEBUG, 0xBAD00002);  /* NAT config failure */
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xBAD00002);  /* NAT config failure - SYSTEMATIC ERROR SOURCE */
         update_stat(STAT_ERRORS, 1);
         return XDP_DROP;
     }
     if (!target_ifindex || *target_ifindex == INTERFACE_INVALID) {
-        update_stat(STAT_PACKET_SIZE_DEBUG, 0xBAD00003);  /* Target ifindex failure */
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xBAD00003);  /* Target ifindex failure - SYSTEMATIC ERROR SOURCE */
         update_stat(STAT_ERRORS, 1);
         return XDP_DROP;
     }
@@ -1897,7 +1898,8 @@ int forwarding_stage(struct xdp_md *ctx)
     /* Debug: Check if packet length calculation is reasonable */
     if (pctx->packet_len <= ETH_HLEN || pctx->packet_len > 9000) {
         /* Packet length calculation seems wrong - use alternative method */
-        update_stat(STAT_PACKET_SIZE_DEBUG, pctx->packet_len);  /* Debug: Track bad lengths */
+        /* Temporarily comment out to avoid overwriting error markers */
+        /* update_stat(STAT_PACKET_SIZE_DEBUG, pctx->packet_len); */
         
         /* Skip header updates for suspicious packet lengths to avoid systematic errors */
         /* The packet data is still valid even if length calculation fails */
