@@ -100,10 +100,13 @@ start_pipeline() {
         # Load IP allowlist after successful pipeline start
         print_color "blue" "Loading IP allowlist..."
         if [ -f "ip_allowlist.json" ]; then
-            if sudo python3 load_ip_allowlist.py ip_allowlist.json >/dev/null 2>&1; then
+            # Give BPF maps time to fully initialize
+            sleep 2
+            print_color "blue" "Attempting to load IPs from allowlist..."
+            if sudo python3 load_ip_allowlist.py ip_allowlist.json; then
                 print_color "green" "IP allowlist loaded successfully"
             else
-                print_color "yellow" "Warning: Failed to load IP allowlist"
+                print_color "yellow" "Warning: Failed to load IP allowlist - check BPF program status"
             fi
         else
             print_color "yellow" "Warning: ip_allowlist.json not found"
