@@ -1497,9 +1497,6 @@ static __always_inline int forward_packet(void *data, void *data_end,
         event->ifindex = *target_ifindex;
         event->len = (__u16)temp_len;
         
-        /* Clear the entire data buffer to prevent stale data corruption */
-        __builtin_memset(event->data, 0, PACKET_DATA_MAX_SIZE);
-        
         /* Optimized bounds checking */
         if (temp_len > 0) {
             /* Clamp to maximum size */
@@ -1519,9 +1516,21 @@ static __always_inline int forward_packet(void *data, void *data_end,
                 }
                 
                 /* Perform the copy with exact packet length to prevent corruption */
-                long ret = bpf_probe_read_kernel(event->data, copy_len, data);
-                update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_PROBE_READ_KERNEL_RESULT | (ret & DEBUG_VALUE_MASK));  /* DEBUG: probe_read_kernel result */
-                if (ret < 0) {
+                /* Use memcpy helper for XDP packet data - direct access to packet buffer */
+                if ((char *)data + copy_len <= (char *)data_end) {
+                    /* Safe to copy - all data is available */
+                    __builtin_memcpy(event->data, data, copy_len);
+                } else {
+                    /* Partial copy - only copy available data */
+                    __u32 available = (char *)data_end - (char *)data;
+                    if (available > 0 && available <= PACKET_DATA_MAX_SIZE) {
+                        __builtin_memcpy(event->data, data, available);
+                        copy_len = available;
+                    }
+                }
+                long ret = 0;  /* Direct copy always succeeds if bounds are correct */
+                update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_PROBE_READ_KERNEL_RESULT | (copy_len & DEBUG_VALUE_MASK));  /* DEBUG: copy length */
+                if (copy_len == 0) {
                     /* Only count actual copy failures as errors */
                     update_stat(STAT_BOUNDS_CHECK_FAILED, 4);  /* Track ring buffer copy systematic error */
                     update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_RING_BUFFER_COPY_FAILURE);  /* Ring buffer copy failure marker */
