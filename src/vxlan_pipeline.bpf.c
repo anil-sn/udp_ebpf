@@ -1410,11 +1410,13 @@ static __always_inline int forward_packet(void *data, void *data_end,
         return XDP_DROP;
     }
     if (!nat_config || nat_config->ip_addr == INTERFACE_INVALID) {
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);  /* Track NAT config systematic error */
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xBAD00002);  /* NAT config failure - SYSTEMATIC ERROR SOURCE */
         update_stat(STAT_ERRORS, 1);
         return XDP_DROP;
     }
     if (!target_ifindex || *target_ifindex == INTERFACE_INVALID) {
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 2);  /* Track target ifindex systematic error */
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xBAD00003);  /* Target ifindex failure - SYSTEMATIC ERROR SOURCE */
         update_stat(STAT_ERRORS, 1);
         return XDP_DROP;
@@ -1423,9 +1425,9 @@ static __always_inline int forward_packet(void *data, void *data_end,
     /* Access Ethernet header for MAC address updates */
     eth_hdr = (struct ethhdr *)data;
     if ((void *)(eth_hdr + 1) > data_end) {
+        update_stat(STAT_BOUNDS_CHECK_FAILED, 3);  /* Track eth bounds systematic error */
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0043);  /* Forward packet eth header bounds failure marker */
         update_stat(STAT_ERRORS, 1);
-        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
     
@@ -1495,6 +1497,7 @@ static __always_inline int forward_packet(void *data, void *data_end,
                 long ret = bpf_probe_read_kernel(event->data, copy_len & (PACKET_DATA_MAX_SIZE - 1), data);
                 if (ret < 0) {
                     /* Only count actual copy failures as errors */
+                    update_stat(STAT_BOUNDS_CHECK_FAILED, 4);  /* Track ring buffer copy systematic error */
                     update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0042);  /* Ring buffer copy failure marker */
                     event->len = 0;  /* Mark as failed copy */
                     update_stat(STAT_ERRORS, 1);
@@ -1517,8 +1520,8 @@ static __always_inline int forward_packet(void *data, void *data_end,
                 }
             } else {
                 event->len = 0;  /* Mark as failed - insufficient data */
+                update_stat(STAT_BOUNDS_CHECK_FAILED, 5);  /* Track insufficient data systematic error */
                 update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0041);  /* Insufficient data error marker */
-                update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
                 update_stat(STAT_ERRORS, 1);
             }
         }
