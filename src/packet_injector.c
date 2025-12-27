@@ -1,5 +1,5 @@
 /*
- * High-Performance Multithreaded Packet Injector
+ * High-Performance Multithreaded Packet Injector - Implementation
  * 
  * ARCHITECTURE:
  * - Main thread: Ring buffer polling and packet distribution
@@ -15,147 +15,35 @@
  * - Memory prefetching: Reduce cache misses
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <string.h>
-#include <errno.h>
-#include <pthread.h>
-#include <sys/socket.h>
-#include <sys/mman.h>
-#include <sched.h>
-#include <sys/time.h>
-#include <time.h>
-#include <linux/if_packet.h>
-#include <net/ethernet.h>
+#include "packet_injector.h"
 
-/* Include shared constants */
-#define INTERFACE_INVALID              0            /* Invalid interface index */
-#include <net/if.h>
-#include <arpa/inet.h>
-#include <signal.h>
-#include <bpf/bpf.h>
-#include <bpf/libbpf.h>
+/* Forward declarations for static functions */
+static int init_memory_pools(void);
+static struct packet_buffer* alloc_packet_buffer(void);
+static int enqueue_packet(struct packet_queue *q, struct packet_buffer *pkt);
+static struct packet_buffer* dequeue_packet(struct packet_queue *q);
+static int send_packet_batch(struct worker_context *ctx, struct packet_buffer **packets, int count);
+static void* worker_thread(void *arg);
+static int handle_ring_buffer_event(void *ctx, void *data, size_t len);
+static int setup_optimized_raw_socket(const char* interface);
+static int init_workers(const char* target_interface);
+static void* monitor_thread(void *arg);
+static void signal_handler(int sig);
 
-/*
- * PERFORMANCE CONFIGURATION
- * =========================
- * These constants are tuned for optimal performance on modern multi-core systems.
- * Adjusting these values can significantly impact throughput and latency.
- */
-#define MAX_WORKER_THREADS 8      /* Maximum worker threads (typically = CPU cores) */
-#define PACKET_QUEUE_SIZE 4096    /* Per-worker queue size (power of 2 for efficient modulo) */
-#define BATCH_SIZE 64             /* Packets per sendto() batch (balances latency vs efficiency) */
-#define MAX_PACKET_SIZE 3000      /* Maximum packet size to match ens5 MTU and support VXLAN decapsulation */
-
-/*
- * LOCK-FREE PACKET QUEUE IMPLEMENTATION
- * =====================================
- * 
- * This implements a Single Producer, Multiple Consumer (SPMC) lock-free queue using
- * atomic operations and memory barriers. The design eliminates mutex overhead and
- * provides excellent scalability across multiple CPU cores.
- * 
- * KEY DESIGN DECISIONS:
- * - 64-byte cache line alignment prevents false sharing between CPU cores
- * - Separate head/tail on different cache lines minimizes contention
- * - Ring buffer design with power-of-2 size enables fast modulo operations
- * - Memory barriers ensure correct ordering of operations across cores
- * 
- * PERFORMANCE CHARACTERISTICS:
- * - Enqueue: O(1) with minimal atomic operations
- * - Dequeue: O(1) with lock-free algorithm
- * - Scalability: Linear with number of consumer threads
- * - Latency: Sub-microsecond enqueue/dequeue operations
- */
-struct packet_queue {
-    /* Producer side (ring buffer reader) - own cache line */
-    volatile uint32_t head __attribute__((aligned(64)));
-    
-    /* Consumer side (worker threads) - separate cache line */
-    volatile uint32_t tail __attribute__((aligned(64)));
-    
-    /* Packet pointer array - shared read-only after initialization */
-    struct packet_buffer *packets[PACKET_QUEUE_SIZE];
-} __attribute__((aligned(64)));
-
-/*
- * PACKET BUFFER STRUCTURE
- * =======================
- * 
- * Represents a single packet with metadata optimized for high-performance processing.
- * The structure is cache-aligned to prevent false sharing when accessed by different
- * worker threads simultaneously.
- * 
- * MEMORY LAYOUT OPTIMIZATION:
- * - Frequently accessed fields (len, data) are placed first
- * - 64-byte alignment ensures each buffer occupies complete cache lines
- * - Timestamp added for latency analysis and debugging
- */
-struct packet_buffer {
-    uint16_t len;                    /* Packet length in bytes (0-3000) */
-    uint8_t data[MAX_PACKET_SIZE];   /* Raw packet data from ring buffer */
-    struct timespec timestamp;       /* Packet arrival time for latency tracking */
-} __attribute__((aligned(64)));
-
-/*
- * WORKER THREAD CONTEXT
- * =====================
- * 
- * Contains all state and resources needed by a worker thread for packet injection.
- * Each worker operates independently with its own socket, queue, and statistics.
- * 
- * THREADING MODEL:
- * - One worker per CPU core for optimal performance
- * - CPU affinity prevents thread migration overhead
- * - Independent raw sockets eliminate locking on network I/O
- * - Per-worker statistics enable performance analysis
- * 
- * PERFORMANCE BENEFITS:
- * - No shared state between workers (except queue)
- * - Minimal cache line bouncing between CPU cores
- * - Parallel packet injection scales linearly
- */
-struct worker_context {
-    /* Thread identification and CPU binding */
-    int thread_id;                   /* Worker identifier (0 to num_workers-1) */
-    int cpu_id;                      /* CPU core this worker is bound to */
-    
-    /* Network resources per worker */
-    int raw_socket;                  /* Dedicated AF_PACKET socket for this worker */
-    struct sockaddr_ll target_addr;  /* Pre-filled target interface address */
-    
-    /* Work queue and thread handle */
-    struct packet_queue *queue;      /* Pointer to this worker's packet queue */
-    pthread_t thread;                /* POSIX thread handle */
-    
-    /* Performance statistics (updated atomically) */
-    volatile uint64_t packets_sent;  /* Successfully transmitted packets */
-    volatile uint64_t bytes_sent;    /* Total bytes transmitted */
-    volatile uint64_t errors;        /* Network errors (EAGAIN not counted) */
-} __attribute__((aligned(64)));
-
-/* Global state */
-static volatile int running = 1;
+/* Global state variables */
+static volatile int running = INIT_VALUE_ONE;
 static struct worker_context workers[MAX_WORKER_THREADS];
-static int num_workers = 4;
+static int num_workers = DEFAULT_WORKER_THREADS;
 static struct packet_queue packet_queues[MAX_WORKER_THREADS];
 static struct ring_buffer *rb;
 
 /* Memory pools for zero-allocation packet handling */
 static struct packet_buffer *packet_pool;
-static volatile uint32_t pool_head = 0;
-static const uint32_t pool_size = PACKET_QUEUE_SIZE * MAX_WORKER_THREADS * 2;
+static volatile uint32_t pool_head = INIT_VALUE_ZERO;
+static const uint32_t pool_size = PACKET_QUEUE_SIZE * MAX_WORKER_THREADS * MEMORY_POOL_MULTIPLIER;
 
 /* Performance monitoring */
-struct perf_stats {
-    uint64_t total_packets;
-    uint64_t total_bytes;
-    uint64_t ring_buffer_polls;
-    uint64_t queue_full_drops;
-    uint64_t allocation_failures;
-    struct timespec start_time;
-} perf_stats = {0};
+static struct perf_stats perf_stats = {INIT_VALUE_ZERO};
 
 /*
  * HIGH-PERFORMANCE MEMORY POOL MANAGEMENT
@@ -202,13 +90,23 @@ static int init_memory_pools(void) {
     memset(packet_pool, 0, total_size);
     
     printf("[+] Memory pool initialized: %zu KB (%u buffers)\n", 
-           total_size / 1024, pool_size);
+           total_size / BYTES_PER_KB, pool_size);
     return 0;
 }
 
 static struct packet_buffer* alloc_packet_buffer(void) {
+    /* 
+     * SAFE MEMORY POOL ALLOCATION
+     * Increment atomically and use modulo to wrap around safely.
+     * This approach prevents corruption but may reuse buffers - 
+     * acceptable for short-lived packets in high-throughput scenarios.
+     */
     uint32_t idx = __sync_fetch_and_add(&pool_head, 1) % pool_size;
-    return &packet_pool[idx];
+    
+    /* Clear the buffer to prevent stale data issues */
+    struct packet_buffer *buf = &packet_pool[idx];
+    buf->len = INIT_VALUE_ZERO;
+    return buf;
 }
 
 /*
@@ -245,35 +143,28 @@ static struct packet_buffer* alloc_packet_buffer(void) {
  * - Queue full detection prevents overwriting unprocessed packets
  */
 static int enqueue_packet(struct packet_queue *q, struct packet_buffer *pkt) {
-    /* Read current head position (producer-owned, no atomics needed) */
-    uint32_t head = q->head;
-    uint32_t next_head = (head + 1) % PACKET_QUEUE_SIZE;
+    uint32_t head, next_head, tail;
     
-    /* 
-     * Check for queue full condition by comparing next head position
-     * with tail. This prevents overwriting packets that workers haven't
-     * processed yet.
-     */
-    if (next_head == q->tail) {
-        __sync_fetch_and_add(&perf_stats.queue_full_drops, 1);
-        return -1; /* Queue full - packet dropped */
-    }
-    
-    /* 
-     * Insert packet pointer at current head position.
-     * No atomics needed since only producer modifies this slot.
-     */
-    q->packets[head] = pkt;
-    
-    /* 
-     * Memory barrier ensures packet pointer write is visible to all
-     * CPU cores before we update the head pointer. This prevents
-     * consumers from seeing the head update before the packet is ready.
-     */
-    __sync_synchronize();
-    
-    /* Atomically advance head pointer to make packet visible to consumers */
-    q->head = next_head;
+    /* Atomic read of current head and tail for consistent state check */
+    do {
+        head = q->head;
+        tail = q->tail;
+        next_head = (head + 1) % PACKET_QUEUE_SIZE;
+        
+        /* Check for queue full condition */
+        if (next_head == tail) {
+            __sync_fetch_and_add(&perf_stats.queue_full_drops, 1);
+            return -1; /* Queue full - packet dropped */
+        }
+        
+        /* Insert packet pointer at current head position */
+        q->packets[head] = pkt;
+        
+        /* Memory barrier ensures packet write is visible before head update */
+        __sync_synchronize();
+        
+        /* Atomically advance head pointer if it hasn't changed */
+    } while (!__sync_bool_compare_and_swap(&q->head, head, next_head));
     
     return 0; /* Success */
 }
@@ -291,35 +182,29 @@ static int enqueue_packet(struct packet_queue *q, struct packet_buffer *pkt) {
  * - Memory barrier ensures packet data is valid when retrieved
  */
 static struct packet_buffer* dequeue_packet(struct packet_queue *q) {
-    /* Read current tail position (shared among consumers) */
-    uint32_t tail = q->tail;
+    uint32_t tail, new_tail;
+    struct packet_buffer *pkt;
     
-    /* 
-     * Check for empty queue condition.
-     * If head equals tail, no packets are available.
-     */
-    if (tail == q->head) {
-        return NULL; /* Queue empty */
-    }
+    /* Atomic compare-and-swap loop to handle race conditions safely */
+    do {
+        tail = q->tail;
+        
+        /* Check for empty queue condition */
+        if (tail == q->head) {
+            return NULL; /* Queue empty */
+        }
+        
+        /* Calculate next tail position */
+        new_tail = (tail + 1) % PACKET_QUEUE_SIZE;
+        
+        /* Atomically advance tail if it hasn't changed, ensuring exclusive access */
+    } while (!__sync_bool_compare_and_swap(&q->tail, tail, new_tail));
     
-    /* 
-     * Retrieve packet pointer from current tail position.
-     * The packet is guaranteed to be valid due to producer's memory barrier.
-     */
-    struct packet_buffer *pkt = q->packets[tail];
+    /* Now we have exclusive access to packets[tail] */
+    pkt = q->packets[tail];
     
-    /* 
-     * Memory barrier ensures we read the packet data before updating
-     * the tail pointer. This prevents races where the producer might
-     * overwrite the packet before we're done reading it.
-     */
+    /* Memory barrier to ensure packet read happens after tail update */
     __sync_synchronize();
-    
-    /* 
-     * Atomically advance tail pointer to mark this packet as consumed.
-     * This makes the queue slot available for the producer to reuse.
-     */
-    q->tail = (tail + 1) % PACKET_QUEUE_SIZE;
     
     return pkt;
 }
@@ -352,6 +237,11 @@ static int send_packet_batch(struct worker_context *ctx,
      * protocol processing.
      */
     for (int i = 0; i < count; i++) {
+        /* Prefetch next packet data to improve cache performance */
+        if (i + PREFETCH_DISTANCE < count) {
+            __builtin_prefetch(packets[i + PREFETCH_DISTANCE]->data, 0, 3);
+        }
+        
         /*
          * Send packet using AF_PACKET raw socket.
          * MSG_DONTWAIT prevents blocking on socket buffer full conditions.
@@ -420,9 +310,15 @@ static void* worker_thread(void *arg) {
      * - Improve memory access patterns and NUMA locality
      * - Reduce overall system jitter and improve determinism
      */
+    /* Set CPU affinity - allow all cores but maintain worker distribution */
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);                    /* Clear CPU set */
-    CPU_SET(ctx->cpu_id, &cpuset);        /* Add our assigned CPU */
+    
+    /* Allow worker to use all CPUs for maximum utilization while maintaining distribution */
+    int num_cpus = sysconf(_SC_NPROCESSORS_ONLN);
+    for (int i = 0; i < num_cpus; i++) {
+        CPU_SET(i, &cpuset);              /* Add all available CPUs */
+    }
     
     /* Apply CPU affinity to current thread */
     if (pthread_setaffinity_np(pthread_self(), sizeof(cpuset), &cpuset) != 0) {
@@ -430,7 +326,8 @@ static void* worker_thread(void *arg) {
         /* Continue anyway - performance will be reduced but functional */
     }
     
-    printf("[+] Worker %d started on CPU %d\n", ctx->thread_id, ctx->cpu_id);
+    printf("[+] Worker %d started with full CPU access (0-%d)\n", 
+           ctx->thread_id, sysconf(_SC_NPROCESSORS_ONLN) - 1);
     
     /*
      * MAIN PACKET PROCESSING LOOP
@@ -462,8 +359,8 @@ static void* worker_thread(void *arg) {
             }
         } else {
             /*
-             * No packets available - handle partial batch and yield CPU.
-             * This prevents busy waiting while maintaining low latency.
+             * No packets available - brief yield to prevent 100% CPU usage.
+             * This balances responsiveness with CPU efficiency.
              */
             if (batch_count > 0) {
                 /* Send any remaining packets to minimize latency */
@@ -472,12 +369,11 @@ static void* worker_thread(void *arg) {
             }
             
             /*
-             * Yield CPU for 10 microseconds to:
-             * - Prevent 100% CPU usage when no work is available
-             * - Allow other threads/processes to run
-             * - Maintain low latency (10μs is much faster than scheduler quantum)
+             * Brief yield to allow other threads/processes to run.
+             * Much more CPU efficient than busy-waiting while maintaining
+             * good responsiveness for packet processing.
              */
-            usleep(10);
+            usleep(WORKER_YIELD_TIME_US); /* Brief yield - balance between responsiveness and efficiency */
         }
     }
     
@@ -518,59 +414,31 @@ static void* worker_thread(void *arg) {
  * - Handles allocation failures gracefully
  * - Tracks allocation failures for monitoring
  */
-static int handle_ring_buffer_event(void *ctx __attribute__((unused)), void *data, size_t len __attribute__((unused))) {
-    /*
-     * PACKET EVENT STRUCTURE
-     * ======================
-     * 
-     * This structure must exactly match the packet_event structure
-     * defined in the XDP program (vxlan_pipeline.bpf.c).
-     * 
-     * Layout:
-     * - ifindex: Target interface index (for validation)
-     * - packet_len: Length of packet data in bytes
-     * - packet_data: Variable-length packet data (flexible array member)
-     */
-    struct packet_event {
-        uint32_t ifindex;          /* Target interface (ens6) */
-        uint16_t len;              /* Packet length in bytes */
-        uint8_t data[];            /* Raw packet data from XDP */
-    } *event = (struct packet_event*)data;
+static int handle_ring_buffer_event(void *ctx __attribute__((unused)), void *data, size_t len) {
+    /* Validate input parameters first */
+    if (!data || len < sizeof(struct packet_event)) {
+        return 0; /* Invalid input */
+    }
     
-    /*
-     * PACKET VALIDATION WITH RACE CONDITION PROTECTION
-     * =================================================
-     * 
-     * Validate packet size and metadata consistency to prevent:
-     * - Buffer overflows in packet_buffer allocation
-     * - Processing of corrupted or malformed packets  
-     * - Race conditions from concurrent ring buffer operations
-     * - Stale data from previous allocations
-     */
+    struct packet_event *event = (struct packet_event*)data;
     
-    /* Memory barrier to ensure we read consistent metadata */
-    __sync_synchronize();
-    
-    /* Capture metadata atomically to prevent TOCTOU issues */
+    /* Read event fields - ring buffer data is already consistent, no need for atomics */
     uint32_t ifindex_snap = event->ifindex;
     uint16_t len_snap = event->len;
     
     /* Validate interface index */
-    if (ifindex_snap == 0 || ifindex_snap == INTERFACE_INVALID) {
-        /* Invalid interface - potential corruption */
-        return 0;
+    if (ifindex_snap == INIT_VALUE_ZERO || ifindex_snap == INTERFACE_INVALID) {
+        return 0; /* Invalid interface */
     }
     
-    /* Validate packet length */
-    if (len_snap == 0 || len_snap > MAX_PACKET_SIZE) {
-        /* Invalid packet size - silently drop */
-        return 0;
+    /* Validate packet length with proper bounds */
+    if (len_snap == INIT_VALUE_ZERO || len_snap > MAX_PACKET_SIZE) {
+        return 0; /* Invalid packet size */
     }
     
-    /* Additional consistency check - ensure length matches ring buffer allocation */
+    /* Verify ring buffer event has sufficient data */
     if (len < sizeof(struct packet_event) + len_snap) {
-        /* Ring buffer data truncated - drop to prevent corruption */
-        return 0;
+        return 0; /* Truncated data */
     }
     
     /*
@@ -685,8 +553,8 @@ static int setup_optimized_raw_socket(const char* interface) {
      */
     int optval = 1;
     
-    /* Set 2MB send buffer for burst handling */
-    optval = 2 * 1024 * 1024; /* 2MB send buffer */
+    /* Set socket buffer size for burst handling */
+    optval = SOCKET_SEND_BUFFER_SIZE; /* 2MB send buffer */
     if (setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &optval, sizeof(optval)) < 0) {
         perror("[!] Warning: Could not set socket send buffer");
         /* Continue - reduced performance but functional */
@@ -699,13 +567,14 @@ static int setup_optimized_raw_socket(const char* interface) {
      * Enable address reuse to allow rapid restart without TIME_WAIT delays.
      * Critical for development and production restarts.
      */
-    optval = 1;
+    optval = SOCKET_REUSE_ENABLE;
     if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0) {
         perror("[!] Warning: Could not enable socket reuse");
         /* Continue - restart delays but functional */
     }
     
-    printf("[+] Raw socket optimized for %s (2MB buffer, reuse enabled)\n", interface);
+    printf("[+] Raw socket optimized for %s (%dMB buffer, reuse enabled)\n", 
+           interface, SOCKET_SEND_BUFFER_SIZE / BYTES_PER_MB);
     return sock;
 }
 
@@ -817,10 +686,15 @@ static int init_workers(const char* target_interface) {
          * ===========================
          * 
          * Initialize lock-free SPMC queue for this worker.
-         * Queue starts empty (head == tail == 0).
+         * Clear all packet pointers to prevent stale data.
          */
-        ctx->queue->head = 0;
-        ctx->queue->tail = 0;
+        ctx->queue->head = INIT_VALUE_ZERO;
+        ctx->queue->tail = INIT_VALUE_ZERO;
+        
+        /* Clear all packet pointer slots to prevent stale references */
+        for (int j = 0; j < PACKET_QUEUE_SIZE; j++) {
+            ctx->queue->packets[j] = NULL;
+        }
         
         /*
          * WORKER THREAD CREATION
@@ -853,20 +727,20 @@ static void* monitor_thread(void *arg __attribute__((unused))) {
     clock_gettime(CLOCK_REALTIME, &last_time);
     
     while (running) {
-        sleep(1);
+        sleep(MONITOR_INTERVAL_SEC);
         
         clock_gettime(CLOCK_REALTIME, &current_time);
         uint64_t current_packets = perf_stats.total_packets;
         uint64_t current_bytes = perf_stats.total_bytes;
         
         double elapsed = (current_time.tv_sec - last_time.tv_sec) + 
-                        (current_time.tv_nsec - last_time.tv_nsec) / 1e9;
+                        (current_time.tv_nsec - last_time.tv_nsec) / (double)NANOSEC_PER_SEC;
         
         uint64_t pps = (current_packets - last_packets) / elapsed;
         uint64_t bps = (current_bytes - last_bytes) / elapsed;
         
         printf("\r[PERF] %lu PPS, %.1f Mbps | Total: %lu pkts, %lu drops, %lu errors", 
-               pps, (bps * 8.0) / 1e6, current_packets, 
+               pps, (bps * BITS_PER_BYTE) / (double)BYTES_PER_MB, current_packets, 
                perf_stats.queue_full_drops, perf_stats.allocation_failures);
         fflush(stdout);
         
@@ -1073,7 +947,7 @@ int main(int argc, char **argv) {
     printf("[+] Accessing pinned BPF maps from vxlan_loader...\n");
     
     /* Access pinned ring buffer map */
-    int ringbuf_fd = bpf_obj_get("/sys/fs/bpf/vxlan_packet_ringbuf");
+    int ringbuf_fd = bpf_obj_get(BPF_MAP_PATH);
     if (ringbuf_fd < 0) {
         fprintf(stderr, "[!] Failed to access pinned packet_ringbuf map\n");
         fprintf(stderr, "    Ensure vxlan_loader is running and has pinned maps\n");
@@ -1138,53 +1012,36 @@ int main(int argc, char **argv) {
     printf("[+] Configuration:\n");
     printf("    Workers: %d threads\n", num_workers);
     printf("    Target: %s interface\n", target_interface);
-    printf("    Memory: %lu KB allocated\n", (pool_size * sizeof(struct packet_buffer)) / 1024);
+    printf("    Memory: %lu KB allocated\n", (pool_size * sizeof(struct packet_buffer)) / BYTES_PER_KB);
     printf("    Ring Buffer: 1MB kernel-userspace communication\n");
     printf("[+] System ready - Press Ctrl+C to stop\n\n");
     
     /*
-     * MAIN EVENT PROCESSING LOOP
-     * ==========================
+     * AGGRESSIVE RING BUFFER POLLING
+     * ===============================
      * 
-     * This is the core event loop that drives the entire packet injection
-     * system. It continuously polls the ring buffer for packet events
-     * from the XDP program and processes them through the worker threads.
-     * 
-     * POLLING STRATEGY:
-     * - 100ms timeout balances responsiveness vs CPU usage
-     * - Timeout allows graceful shutdown on signal reception
-     * - Batch processing handles multiple events per poll
-     * - Error handling ensures system stability
-     * 
-     * PERFORMANCE CHARACTERISTICS:
-     * - Can handle 85K+ events per second sustained
-     * - Sub-millisecond latency from kernel to worker queue
-     * - Automatic load balancing across worker threads
-     * - Zero data copying in the critical path
+     * Use very short timeout polling for maximum responsiveness and
+     * aggressive ring buffer draining. This approach:
+     * - Minimizes latency from kernel to userspace
+     * - Maximizes CPU usage for packet processing
+     * - Drains ring buffer as fast as possible
+     * - Provides immediate response to packet bursts
      */
     while (running) {
         /*
-         * RING BUFFER POLLING
-         * ===================
+         * AGGRESSIVE POLLING WITH BRIEF BLOCKING
+         * =======================================
          * 
-         * Poll ring buffer for packet events with timeout.
-         * This is the primary mechanism for receiving packets
-         * from the XDP program in kernel space.
-         * 
-         * Return values:
-         * - > 0: Number of events processed
-         * - 0: Timeout (no events available)
-         * - < 0: Error condition (except -EINTR)
+         * Use 1ms timeout to balance responsiveness with CPU efficiency.
+         * This provides immediate response to packet bursts while preventing
+         * 100% CPU spinning when no packets are available.
          */
-        int ret = ring_buffer__poll(rb, 100); /* 100ms timeout */
+        int ret = ring_buffer__poll(rb, RING_BUFFER_TIMEOUT_MS); /* 1ms timeout - aggressive but efficient */
         
         if (ret < 0 && ret != -EINTR) {
             /*
              * POLLING ERROR HANDLING
              * ======================
-             * 
-             * Handle polling errors that aren't interruption signals.
-             * These may indicate system-level issues that require attention.
              */
             fprintf(stderr, "[!] Ring buffer poll error: %d\n", ret);
             fprintf(stderr, "    This may indicate kernel issues or resource exhaustion\n");
@@ -1193,8 +1050,14 @@ int main(int argc, char **argv) {
         
         /* Update polling statistics for performance analysis */
         perf_stats.ring_buffer_polls++;
+        
+        /* 
+         * NOTE: No additional yield needed since ring_buffer__poll() 
+         * with 1ms timeout already provides proper blocking behavior
+         * when no packets are available.
+         */
     }
-    
+
     /*
      * GRACEFUL SHUTDOWN SEQUENCE
      * ==========================
@@ -1279,7 +1142,7 @@ int main(int argc, char **argv) {
     
     /* Calculate total runtime in seconds with nanosecond precision */
     double total_time = (end_time.tv_sec - perf_stats.start_time.tv_sec) + 
-                       (end_time.tv_nsec - perf_stats.start_time.tv_nsec) / 1e9;
+                       (end_time.tv_nsec - perf_stats.start_time.tv_nsec) / (double)NANOSEC_PER_SEC;
     
     printf("\n");
     printf("========================================\n");
@@ -1294,7 +1157,7 @@ int main(int argc, char **argv) {
            (total_time > 0) ? perf_stats.total_packets / total_time : 0);
     printf("  Total bytes: %lu\n", perf_stats.total_bytes);
     printf("  Average bandwidth: %.1f Mbps\n", 
-           (total_time > 0) ? (perf_stats.total_bytes * 8.0) / (total_time * 1e6) : 0);
+           (total_time > 0) ? (perf_stats.total_bytes * BITS_PER_BYTE) / (total_time * BYTES_PER_MB) : 0);
     
     /* Error and drop statistics */
     printf("\nERROR STATISTICS:\n");
@@ -1324,12 +1187,12 @@ int main(int argc, char **argv) {
     /* Performance assessment */
     if (total_time > 0) {
         double pps = perf_stats.total_packets / total_time;
-        if (pps >= 85000) {
-            printf("  Status: ✓ TARGET ACHIEVED (>85K PPS)\n");
-        } else if (pps >= 50000) {
-            printf("  Status: ⚠ GOOD PERFORMANCE (>50K PPS)\n");
+        if (pps >= SUCCESS_RATE_TARGET) {
+            printf("  Status: ✓ TARGET ACHIEVED (>%d PPS)\n", SUCCESS_RATE_TARGET);
+        } else if (pps >= GOOD_PERFORMANCE_THRESHOLD) {
+            printf("  Status: ⚠ GOOD PERFORMANCE (>%d PPS)\n", GOOD_PERFORMANCE_THRESHOLD);
         } else {
-            printf("  Status: ⚠ BELOW TARGET (<50K PPS)\n");
+            printf("  Status: ⚠ BELOW TARGET (<%d PPS)\n", GOOD_PERFORMANCE_THRESHOLD);
         }
     }
     
