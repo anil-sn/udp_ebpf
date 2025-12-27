@@ -1516,19 +1516,14 @@ static __always_inline int forward_packet(void *data, void *data_end,
                 }
                 
                 /* Perform the copy with exact packet length to prevent corruption */
-                /* Use memcpy helper for XDP packet data - direct access to packet buffer */
-                if ((char *)data + copy_len <= (char *)data_end) {
-                    /* Safe to copy - all data is available */
-                    __builtin_memcpy(event->data, data, copy_len);
-                } else {
-                    /* Partial copy - only copy available data */
-                    __u32 available = (char *)data_end - (char *)data;
-                    if (available > 0 && available <= PACKET_DATA_MAX_SIZE) {
-                        __builtin_memcpy(event->data, data, available);
-                        copy_len = available;
-                    }
+                /* Manual copy for eBPF - must use bounded loop for verifier */
+                #pragma unroll
+                for (__u32 i = 0; i < PACKET_DATA_MAX_SIZE; i++) {
+                    if (i >= copy_len) break;
+                    if ((char *)data + i >= (char *)data_end) break;
+                    event->data[i] = *((char *)data + i);
                 }
-                long ret = 0;  /* Direct copy always succeeds if bounds are correct */
+                long ret = 0;  /* Manual copy always succeeds with proper bounds */
                 update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_PROBE_READ_KERNEL_RESULT | (copy_len & DEBUG_VALUE_MASK));  /* DEBUG: copy length */
                 if (copy_len == 0) {
                     /* Only count actual copy failures as errors */
