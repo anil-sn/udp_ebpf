@@ -115,12 +115,25 @@ def get_comprehensive_stats() -> Dict[str, any]:
         for item in data:
             key = int(item['key'][0], 16)
             
-            # Calculate total across all CPUs
-            total = sum(cpu['value'] for cpu in item['formatted']['values'])
+            # Handle different data structures (formatted vs direct values)
+            if 'formatted' in item and 'values' in item['formatted']:
+                # New format with formatted values
+                total = sum(cpu['value'] for cpu in item['formatted']['values'])
+                per_cpu_values = [cpu['value'] for cpu in item['formatted']['values']]
+            elif 'value' in item:
+                # Direct format - could be array or single value
+                if isinstance(item['value'], list):
+                    total = sum(item['value'])
+                    per_cpu_values = item['value']
+                else:
+                    total = item['value']
+                    per_cpu_values = [item['value']]
+            else:
+                # Fallback - skip malformed entries
+                continue
+                
             comprehensive_stats['counters'][key] = total
-            
-            # Store per-CPU data for detailed analysis
-            comprehensive_stats['per_cpu_data'][key] = [cpu['value'] for cpu in item['formatted']['values']]
+            comprehensive_stats['per_cpu_data'][key] = per_cpu_values
             
             # Special handling for debug markers
             if key == 0x0e:  # PACKET_SIZE_DEBUG
