@@ -1486,103 +1486,60 @@ static __always_inline int forward_packet(void *data, void *data_end,
         return XDP_DROP;
     }
     
-    /* Use fixed ring buffer allocation - verifier friendly */
-    event = bpf_ringbuf_reserve(&packet_ringbuf, sizeof(struct packet_event), 0);
+    /* Calculate final copy size before allocation to prevent race conditions */
+    __u32 final_copy_len = temp_len;
+    if (final_copy_len > PACKET_DATA_MAX_SIZE) {
+        final_copy_len = PACKET_DATA_MAX_SIZE;
+    }
+    
+    /* Verify source data bounds before allocation */
+    __u32 available_data = (char *)data_end - (char *)data;
+    if (final_copy_len > available_data) {
+        final_copy_len = available_data;
+    }
+    
+    /* Use consistent size for allocation and metadata */
+    __u32 alloc_size = sizeof(__u32) + sizeof(__u16) + final_copy_len; /* ifindex + len + data */
+    event = bpf_ringbuf_reserve(&packet_ringbuf, alloc_size, 0);
     if (event) {
+        /* Initialize metadata BEFORE copying data to prevent stale data visibility */
         event->ifindex = *target_ifindex;
-        event->len = (__u16)temp_len;
+        event->len = (__u16)final_copy_len;
         
-        /* Optimized bounds checking */
-        if (temp_len > 0) {
-            /* Clamp to maximum size */
-            if (temp_len > PACKET_DATA_MAX_SIZE) {
-                temp_len = PACKET_DATA_MAX_SIZE;
+        /* Copy packet data with consistent size */
+        if (final_copy_len > 0) {
+            /* Copy complete packet data using bpf_probe_read_kernel for safety */
+            long ret = bpf_probe_read_kernel(event->data, final_copy_len, data);
+            __u32 copied = (ret == 0) ? final_copy_len : 0;
+            update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_PROBE_READ_KERNEL_RESULT | (copied & DEBUG_VALUE_MASK));  /* DEBUG: actual copied bytes */
+            if (copied == 0) {
+                /* Copy failed - update metadata to reflect failure */
+                event->len = 0;  /* Mark as failed copy */
+                update_stat(STAT_BOUNDS_CHECK_FAILED, 4);  /* Track ring buffer copy systematic error */
+                update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_RING_BUFFER_COPY_FAILURE);  /* Ring buffer copy failure marker */
+            } else if (copied != final_copy_len) {
+                /* Partial copy - update metadata to reflect actual copied size */
+                event->len = (__u16)copied;
+                update_stat(STAT_LENGTH_CORRECTIONS, 1);
             }
             
-            /* Verify source data is accessible - use actual available data size */
-            __u32 available_data = (char *)data_end - (char *)data;
-            __u32 copy_size = (temp_len < available_data) ? temp_len : available_data;
-            
-            if (copy_size > 0) {
-                /* Bounded copy with explicit length validation */
-                __u32 copy_len = copy_size;
-                if (copy_len > PACKET_DATA_MAX_SIZE) {
-                    copy_len = PACKET_DATA_MAX_SIZE;
-                }
+            /* Post-copy header processing only if we have sufficient data */
+            if (copied >= sizeof(struct ethhdr) + sizeof(struct iphdr)) {
+                struct iphdr *ring_ip = (struct iphdr *)(event->data + sizeof(struct ethhdr));
                 
-                /* Perform the copy with exact packet length to prevent corruption */
-                /* Safe copying with individual bounds checks */
-                __u32 copied = 0;
+                /* Recalculate IP checksum to ensure integrity after any processing */
+                ring_ip->check = ip_checksum(ring_ip);
                 
-                /* Copy as much as we can safely - check each 8-byte chunk individually */
-                if (copy_len > 0) {
-                    /* Copy first 8 bytes if available */
-                    if ((char *)data + 8 <= (char *)data_end) {
-                        *((__u64 *)(event->data + 0)) = *((__u64 *)((char *)data + 0));
-                        copied = 8;
-                    }
-                    /* Copy next 8 bytes if available */  
-                    if (copy_len > 8 && (char *)data + 16 <= (char *)data_end) {
-                        *((__u64 *)(event->data + 8)) = *((__u64 *)((char *)data + 8));
-                        copied = 16;
-                    }
-                    /* Copy next 8 bytes if available */
-                    if (copy_len > 16 && (char *)data + 24 <= (char *)data_end) {
-                        *((__u64 *)(event->data + 16)) = *((__u64 *)((char *)data + 16));
-                        copied = 24;
-                    }
-                    /* Copy next 8 bytes if available */
-                    if (copy_len > 24 && (char *)data + 32 <= (char *)data_end) {
-                        *((__u64 *)(event->data + 24)) = *((__u64 *)((char *)data + 24));
-                        copied = 32;
-                    }
-                    /* Copy next 8 bytes if available */
-                    if (copy_len > 32 && (char *)data + 40 <= (char *)data_end) {
-                        *((__u64 *)(event->data + 32)) = *((__u64 *)((char *)data + 32));
-                        copied = 40;
-                    }
-                    /* Copy final 2 bytes for 42-byte header if available */
-                    if (copy_len > 40 && (char *)data + 42 <= (char *)data_end) {
-                        *((__u16 *)(event->data + 40)) = *((__u16 *)((char *)data + 40));
-                        copied = 42;
-                    }
+                /* Clear UDP checksum for performance - original length preserved */
+                if (ring_ip->protocol == IPPROTO_UDP && 
+                    copied >= sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr)) {
+                    struct udphdr *ring_udp = (struct udphdr *)((char *)ring_ip + (ring_ip->ihl * 4));
+                    ring_udp->check = 0;  /* Clear checksum for performance */
                 }
-                
-                long ret = (copied > 0) ? 0 : -1;
-                update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_PROBE_READ_KERNEL_RESULT | (copied & DEBUG_VALUE_MASK));  /* DEBUG: actual copied bytes */
-                if (copied == 0) {
-                    /* Only count actual copy failures as errors */
-                    update_stat(STAT_BOUNDS_CHECK_FAILED, 4);  /* Track ring buffer copy systematic error */
-                    update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_RING_BUFFER_COPY_FAILURE);  /* Ring buffer copy failure marker */
-                    event->len = 0;  /* Mark as failed copy */
-                    /* SYSTEMATIC ERROR TEST: Comment out to test if this causes 1:1 error */
-                    /* update_stat(STAT_ERRORS, 1); */
-                } else {
-                    /* PRESERVE ORIGINAL: Ring buffer contains original inner packet with correct headers */
-                    if (copy_len >= sizeof(struct ethhdr) + sizeof(struct iphdr)) {
-                        struct iphdr *ring_ip = (struct iphdr *)(event->data + sizeof(struct ethhdr));
-                        
-                        /* Headers already have correct values from decapsulated inner packet */
-                        /* Only recalculate IP checksum to ensure integrity after any processing */
-                        ring_ip->check = ip_checksum(ring_ip);
-                        
-                        /* Clear UDP checksum for performance - original length preserved */
-                        if (ring_ip->protocol == IPPROTO_UDP && 
-                            copy_len >= sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr)) {
-                            struct udphdr *ring_udp = (struct udphdr *)((char *)ring_ip + (ring_ip->ihl * 4));
-                            ring_udp->check = 0;  /* Clear checksum for performance */
-                        }
-                    }
-                }
-            } else {
-                event->len = 0;  /* Mark as failed - insufficient data */
-                update_stat(STAT_BOUNDS_CHECK_FAILED, 5);  /* Track insufficient data systematic error */
-                update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_INSUFFICIENT_DATA_ERROR);  /* Insufficient data error marker */
-                /* SYSTEMATIC ERROR TEST: Comment out insufficient data error */
-                /* update_stat(STAT_ERRORS, 1); */
             }
         }
         
+        /* Submit to userspace - data and metadata are now consistent */
         bpf_ringbuf_submit(event, BPF_SUBMIT_FLAGS_NONE);
         update_stat(STAT_RINGBUF_SUBMITTED, 1);
     } else {
