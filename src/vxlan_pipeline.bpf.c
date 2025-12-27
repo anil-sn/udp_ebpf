@@ -1498,9 +1498,8 @@ static __always_inline int forward_packet(void *data, void *data_end,
         final_copy_len = available_data;
     }
     
-    /* Use consistent size for allocation and metadata */
-    __u32 alloc_size = sizeof(__u32) + sizeof(__u16) + final_copy_len; /* ifindex + len + data */
-    event = bpf_ringbuf_reserve(&packet_ringbuf, alloc_size, 0);
+    /* Use fixed ring buffer allocation - verifier requires known constant size */
+    event = bpf_ringbuf_reserve(&packet_ringbuf, sizeof(struct packet_event), 0);
     if (event) {
         /* Initialize metadata BEFORE copying data to prevent stale data visibility */
         event->ifindex = *target_ifindex;
