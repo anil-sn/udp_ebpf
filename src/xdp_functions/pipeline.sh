@@ -271,14 +271,16 @@ stop_pipeline() {
     fix_terminal
 }
 
-# Clean up pipeline
+# Comprehensive cleanup function with resource cleanup  
 cleanup_pipeline() {
     fix_terminal
     
-    print_color "yellow" "Cleaning up all processes..."
+    print_color "blue" "Performing comprehensive pipeline cleanup..."
+    
+    # Stop all processes first
+    print_color "yellow" "Stopping all processes..."
     sudo pkill -KILL -f "vxlan_loader" 2>/dev/null || true
     sudo pkill -KILL -f "packet_injector" 2>/dev/null || true
-    fix_terminal
     
     # Comprehensive interface and BPF cleanup
     sudo ip link set "$INTERFACE" xdpgeneric off 2>/dev/null || true
@@ -297,29 +299,6 @@ cleanup_pipeline() {
         fi
     done 2>/dev/null || true
     
-    # Wait for kernel garbage collection
-    sleep 3
-    
-    # Verify cleanup
-    local remaining=$(check_bpf_program)
-    if [ "$remaining" -eq 0 ]; then
-        print_color "green" "✓ All BPF programs cleaned up"
-    else
-        print_color "yellow" "Warning: $remaining BPF programs may still be loaded"
-    fi
-    
-    print_color "green" "Pipeline cleanup completed"
-}
-
-# Enhanced cleanup function with comprehensive resource cleanup  
-cleanup_pipeline() {
-    fix_terminal
-    
-    print_color "blue" "Performing comprehensive pipeline cleanup..."
-    
-    # Stop all processes first
-    stop_pipeline
-    
     # Clean up BPF maps and programs
     print_color "yellow" "Cleaning BPF resources..."
     
@@ -336,6 +315,7 @@ cleanup_pipeline() {
     if [ -f "$LOG_FILE" ]; then
         sudo rm -f "$LOG_FILE" && print_color "green" "  SUCCESS: Removed log file: $LOG_FILE"
     fi
+    sudo rm -f "/tmp/packet_injector.log" 2>/dev/null && print_color "green" "  SUCCESS: Removed packet injector logs"
     
     # Clean temporary test directories
     print_color "yellow" "Cleaning temporary files..."
@@ -351,7 +331,19 @@ cleanup_pipeline() {
         reset_interface_config "$TARGET_INTERFACE"
     fi
     
-    print_color "green" "Comprehensive cleanup completed"
+    # Wait for kernel garbage collection
+    sleep 2
+    
+    # Verify cleanup
+    local remaining=$(check_bpf_program)
+    if [ "$remaining" -eq 0 ]; then
+        print_color "green" "✓ All BPF programs cleaned up"
+    else
+        print_color "yellow" "Warning: $remaining BPF programs may still be loaded"
+    fi
+    
+    fix_terminal
+    print_color "green" "Comprehensive pipeline cleanup completed"
 }
 
 # Reset interface configuration to defaults
@@ -371,14 +363,4 @@ reset_interface_config() {
     sudo ethtool -L "$iface" combined 1 2>/dev/null && print_color "green" "  SUCCESS: Reset to single queue"
     
     return 0
-    # Clean up log files
-    rm -f "$LOG_FILE" 2>/dev/null || true
-    rm -f "/tmp/packet_injector.log" 2>/dev/null || true
-    
-    # Reset interface settings
-    reset_interface "$INTERFACE" 2>/dev/null || true
-    
-    fix_terminal
-    print_color "green" "Environment Reset - All processes and BPF programs cleaned."
-    fix_terminal
 }
