@@ -1486,24 +1486,11 @@ static __always_inline int forward_packet(void *data, void *data_end,
         return XDP_DROP;
     }
     
+    /* Use fixed ring buffer allocation - verifier friendly */
     event = bpf_ringbuf_reserve(&packet_ringbuf, sizeof(struct packet_event), 0);
     if (event) {
         event->ifindex = *target_ifindex;
         event->len = (__u16)temp_len;
-        
-        /* CRITICAL: Clear entire buffer to prevent stale data contamination */
-        /* Clear in 64-byte chunks - efficient and verifier friendly */
-        #pragma unroll
-        for (__u32 chunk = 0; chunk < 47; chunk++) {  /* 47 * 64 = 3008 bytes */
-            *((__u64 *)(event->data + chunk * 64 + 0))  = 0;
-            *((__u64 *)(event->data + chunk * 64 + 8))  = 0;
-            *((__u64 *)(event->data + chunk * 64 + 16)) = 0;
-            *((__u64 *)(event->data + chunk * 64 + 24)) = 0;
-            *((__u64 *)(event->data + chunk * 64 + 32)) = 0;
-            *((__u64 *)(event->data + chunk * 64 + 40)) = 0;
-            *((__u64 *)(event->data + chunk * 64 + 48)) = 0;
-            *((__u64 *)(event->data + chunk * 64 + 56)) = 0;
-        }
         
         /* Optimized bounds checking */
         if (temp_len > 0) {
