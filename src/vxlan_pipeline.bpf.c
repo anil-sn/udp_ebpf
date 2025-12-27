@@ -1079,7 +1079,8 @@ static __always_inline int decapsulate_vxlan(struct xdp_md *ctx,
 {
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
-    __u32 outer_headers_size, total_packet_size;
+    __s32 outer_headers_size;
+    __u32 total_packet_size;
 
     /* Calculate sizes for decapsulation with safety checks */
     outer_headers_size = (char *)inner_eth_ptr - (char *)data;
@@ -1087,7 +1088,7 @@ static __always_inline int decapsulate_vxlan(struct xdp_md *ctx,
     
     /* Validate calculations to prevent integer overflow/underflow */
     if (outer_headers_size <= 0 || outer_headers_size > MAX_OUTER_HEADERS_SIZE ||
-        total_packet_size <= outer_headers_size) {
+        total_packet_size <= (__u32)outer_headers_size) {
         update_stat(STAT_ERRORS, 1);
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
