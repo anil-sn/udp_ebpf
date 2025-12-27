@@ -1629,6 +1629,7 @@ int vxlan_processor(struct xdp_md *ctx)
     
     /* Validate IP header length */
     if (ip_hdr->ihl < 5) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0100);  /* IP header length validation failure - SYSTEMATIC ERROR SOURCE */
         update_stat(STAT_ERRORS, 1);
         return XDP_DROP;
     }
@@ -1750,6 +1751,7 @@ int nat_engine(struct xdp_md *ctx)
         if (ip_hdr->protocol == IPPROTO_UDP) {
             /* Validate IP header length before calculating UDP offset */
             if (ip_hdr->ihl < 5) {
+                update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0101);  /* NAT engine IP header length validation failure */
                 update_stat(STAT_ERRORS, 1);
                 return XDP_DROP;
             }
@@ -1767,6 +1769,7 @@ int nat_engine(struct xdp_md *ctx)
                 update_stat(STAT_NAT_APPLIED, 1);
             } else {
                 /* NAT failed - this might explain wrong destinations */
+                update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0102);  /* NAT apply failure marker */
                 update_stat(STAT_ERRORS, 1);
             }
         }
