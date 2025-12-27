@@ -1300,34 +1300,35 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
                 /* Continue processing - don't treat as fatal error */
             } else {
                 __u32 udp_len = original_inner_ip_len - ip_hdr_len;  /* Use ORIGINAL inner IP length */
-            __u32 remaining_bytes = (char *)data_end - (char *)udp_hdr;
-            
-            /* Additional safety: UDP length cannot exceed 16-bit field */
-            if (udp_len > 65535) {
-                /* UDP length exceeds 16-bit field capacity - use truncated value for graceful handling */
-                /* This can happen during VXLAN decapsulation length calculations */
-                udp_len = 65535;  /* Clamp to maximum UDP length */
-                /* Continue processing instead of treating as fatal error */
-            }
-            
-            /* 
-             * SIMPLIFIED UDP PROCESSING - Avoid over-validation that causes false errors
-             * ========================================================================
-             * After systematic error elimination, keep UDP processing simple and robust
-             */
-            if (remaining_bytes >= sizeof(struct udphdr)) {
-                /* We have full UDP header - do minimal correction and clear checksum */
-                if (udp_len >= sizeof(struct udphdr) && udp_len <= 65535) {
-                    /* UDP length looks reasonable - update if needed */
-                    udp_hdr->len = bpf_htons((__u16)udp_len);
-                    update_stat(STAT_UDP_LEN_UPDATED, 1);
+                __u32 remaining_bytes = (char *)data_end - (char *)udp_hdr;
+                
+                /* Additional safety: UDP length cannot exceed 16-bit field */
+                if (udp_len > 65535) {
+                    /* UDP length exceeds 16-bit field capacity - use truncated value for graceful handling */
+                    /* This can happen during VXLAN decapsulation length calculations */
+                    udp_len = 65535;  /* Clamp to maximum UDP length */
+                    /* Continue processing instead of treating as fatal error */
                 }
-                udp_hdr->check = 0;  /* Always clear checksum for performance */
-            } else if (remaining_bytes >= 4) {
-                /* We have at least port fields - clear checksum if accessible */
-                udp_hdr->check = 0;
+                
+                /* 
+                 * SIMPLIFIED UDP PROCESSING - Avoid over-validation that causes false errors
+                 * ========================================================================
+                 * After systematic error elimination, keep UDP processing simple and robust
+                 */
+                if (remaining_bytes >= sizeof(struct udphdr)) {
+                    /* We have full UDP header - do minimal correction and clear checksum */
+                    if (udp_len >= sizeof(struct udphdr) && udp_len <= 65535) {
+                        /* UDP length looks reasonable - update if needed */
+                        udp_hdr->len = bpf_htons((__u16)udp_len);
+                        update_stat(STAT_UDP_LEN_UPDATED, 1);
+                    }
+                    udp_hdr->check = 0;  /* Always clear checksum for performance */
+                } else if (remaining_bytes >= 4) {
+                    /* We have at least port fields - clear checksum if accessible */
+                    udp_hdr->check = 0;
+                }
+                /* No error counting - continue processing regardless of UDP validation results */
             }
-            /* No error counting - continue processing regardless of UDP validation results */
         }
     }
     
