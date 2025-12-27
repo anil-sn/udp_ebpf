@@ -124,7 +124,7 @@
 #define REDIRECT_MAP_TYPE              BPF_MAP_TYPE_ARRAY
 
 /* Memory and Buffer Size Constants */
-#define RINGBUF_SIZE_BYTES             (256 * 1024 * 1024) /* 256MB ring buffer - BTF-compatible high performance */
+#define RINGBUF_SIZE_BYTES             (512 * 1024 * 1024) /* 256MB ring buffer - BTF-compatible high performance */
 #define PACKET_DATA_MAX_SIZE           3000         /* Maximum packet data for large VXLAN packets */
 #define RINGBUF_RESERVE_SIZE           3006         /* Full reservation size (3000 bytes + 6 metadata) */
 #define IP_ALLOWLIST_MAX_ENTRIES       10000        /* Support up to 10K allowed IPs */
