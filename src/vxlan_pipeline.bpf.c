@@ -1519,8 +1519,7 @@ static __always_inline int forward_packet(void *data, void *data_end,
                 /* Simple byte-by-byte copy - verifier friendly */
                 __u32 copied = 0;
                 
-                /* Copy byte by byte with simple bounds - verifier can understand this */
-                #pragma unroll
+                /* Copy byte by byte with simple bounds - let compiler optimize */
                 for (__u32 i = 0; i < PACKET_DATA_MAX_SIZE && i < copy_len; i++) {
                     if ((char *)data + i >= (char *)data_end) break;
                     event->data[i] = *((char *)data + i);
