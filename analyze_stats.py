@@ -113,7 +113,18 @@ def get_comprehensive_stats() -> Dict[str, any]:
         }
         
         for item in data:
-            key = int(item['key'][0], 16)
+            # Handle different key formats
+            if 'key' in item:
+                if isinstance(item['key'], list) and len(item['key']) > 0:
+                    key = int(item['key'][0], 16)
+                elif isinstance(item['key'], str):
+                    key = int(item['key'], 16)
+                elif isinstance(item['key'], int):
+                    key = item['key']
+                else:
+                    continue  # Skip invalid key format
+            else:
+                continue  # Skip items without key
             
             # Handle different data structures (formatted vs direct values)
             if 'formatted' in item and 'values' in item['formatted']:
