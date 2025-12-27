@@ -1899,19 +1899,28 @@ int forwarding_stage(struct xdp_md *ctx)
     /* Update stage */
     pctx->stage = STAGE_FORWARDING;
     
-    /* Recalculate packet length after decapsulation */
-    pctx->packet_len = data_end - data;
+    /* Calculate proper decapsulated packet length
+     * bpf_xdp_adjust_head() invalidates data_end - data calculation
+     * Use IP header total length field for accurate size */
+    struct ethhdr *eth = (struct ethhdr *)data;
+    struct iphdr *ip = (struct iphdr *)(eth + 1);
+    __u32 decap_packet_len = 1500;  /* Safe default */
     
-    /* Debug: Check if packet length calculation is reasonable */
-    if (pctx->packet_len <= ETH_HLEN || pctx->packet_len > 9000) {
-        /* Packet length calculation seems wrong - use alternative method */
-        /* Temporarily comment out to avoid overwriting error markers */
-        /* update_stat(STAT_PACKET_SIZE_DEBUG, pctx->packet_len); */
-        
-        /* Skip header updates for suspicious packet lengths to avoid systematic errors */
-        /* The packet data is still valid even if length calculation fails */
-        update_stat(STAT_FORWARDED, 1);
-        return forward_packet(data, data_end, 1514);  /* Use reasonable default length */
+    if ((void *)(ip + 1) <= data_end) {
+        /* Use IP total length + Ethernet header for accurate size */
+        decap_packet_len = bpf_ntohs(ip->tot_len) + ETH_HLEN;
+        /* Validate calculated length */
+        if (decap_packet_len >= ETH_HLEN && decap_packet_len <= 9000) {
+            pctx->packet_len = decap_packet_len;
+        } else {
+            /* Fallback to safe default if calculation seems wrong */
+            pctx->packet_len = 1500;
+            update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0050);  /* Invalid calculated length marker */
+        }
+    } else {
+        /* Can't access IP header safely, use default */
+        pctx->packet_len = 1500; 
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0051);  /* No IP header access marker */
     }
     
     /* Update packet headers */
