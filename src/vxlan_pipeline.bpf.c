@@ -1913,12 +1913,20 @@ int forwarding_stage(struct xdp_md *ctx)
     __u32 vxlan_overhead = ETH_HLEN + sizeof(struct iphdr) + 
                           sizeof(struct udphdr) + sizeof(struct vxlanhdr);
     
+    /* Debug: Check what we're working with */
+    update_stat(STAT_PACKET_SIZE_DEBUG, 0x60000000 | original_packet_len);  /* Debug: original length */
+    update_stat(STAT_LENGTH_CORRECTIONS, vxlan_overhead);  /* Debug: overhead calculation */
+    
     if (original_packet_len > vxlan_overhead) {
         pctx->packet_len = original_packet_len - vxlan_overhead;
     } else {
         /* Fallback: use minimum valid ethernet frame */
         pctx->packet_len = ETH_HLEN + sizeof(struct iphdr);
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0x70000000 | original_packet_len);  /* Debug: fallback triggered */
     }
+    
+    /* Debug: Check final calculated length */
+    update_stat(STAT_PACKET_SIZE_DEBUG, 0x80000000 | pctx->packet_len);  /* Debug: final packet_len */
     
     /* Now set the actual start time for performance tracking */
     pctx->start_time = bpf_ktime_get_ns();
