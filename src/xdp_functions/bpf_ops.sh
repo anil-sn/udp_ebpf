@@ -126,19 +126,15 @@ get_nat_rules() {
     echo "Found $rule_count NAT rule(s):"
     echo "─────────────────────────────────"
     
-    # Process each NAT rule
+    # Process each NAT rule - use => to avoid grep shell interpretation issues
     echo "$nat_json" | jq -r '.[] | 
-        if (.formatted and .formatted.key and .formatted.value) then
-            (.formatted.key.src_port // 0) as $src_port |
-            (.formatted.value.target_ip // 0) as $target_ip_int |
-            (.formatted.value.target_port // 0) as $target_port |
-            (.formatted.value.flags // 0) as $flags |
-            "\($src_port) -> \($target_ip_int) : \($target_port) (flags: \($flags))"
-        else
-            "Invalid NAT entry format"
-        end
+        (.formatted.key.src_port // 0) as $src_port |
+        (.formatted.value.target_ip // 0) as $target_ip_int |
+        (.formatted.value.target_port // 0) as $target_port |
+        (.formatted.value.flags // 0) as $flags |
+        "\($src_port) => \($target_ip_int) : \($target_port) (flags: \($flags))"
     ' 2>/dev/null | while IFS= read -r line; do
-        if [[ "$line" =~ ([0-9]+)\ -\>\ ([0-9]+)\ :\ ([0-9]+)\ \(flags:\ ([0-9]+)\) ]]; then
+        if [[ "$line" =~ ([0-9]+)\ =\>\ ([0-9]+)\ :\ ([0-9]+)\ \(flags:\ ([0-9]+)\) ]]; then
             local src_port="${BASH_REMATCH[1]}"
             local target_ip_int="${BASH_REMATCH[2]}"
             local target_port="${BASH_REMATCH[3]}"
@@ -151,7 +147,7 @@ get_nat_rules() {
             local ip4=$(((target_ip_int >> 24) & 0xFF))
             local target_ip="$ip1.$ip2.$ip3.$ip4"
             
-            printf "  %-8s -> %-15s:%-5s (flags: %s)\n" "$src_port" "$target_ip" "$target_port" "$flags"
+            printf "  %-8s => %-15s:%-5s (flags: %s)\n" "$src_port" "$target_ip" "$target_port" "$flags"
         else
             echo "  $line"
         fi
@@ -198,14 +194,10 @@ get_ip_allowlist_entries() {
     echo "Found $ip_count IP address(es) in allowlist:"
     echo "──────────────────────────────────────────"
     
-    # Process and sort IP addresses
+    # Process and sort IP addresses - formatted.key is directly the IP integer
     local sorted_ips=$(echo "$ip_json" | jq -r '.[] | 
-        if (.formatted and .formatted.key) then
-            (.formatted.key.ip // 0) as $ip_int |
-            "\($ip_int)"
-        else
-            "Invalid IP entry"
-        end
+        (.formatted.key // 0) as $ip_int |
+        "\($ip_int)"
     ' 2>/dev/null | while IFS= read -r ip_int; do
         if [[ "$ip_int" =~ ^[0-9]+$ ]]; then
             # Convert integer IP to dotted decimal notation
