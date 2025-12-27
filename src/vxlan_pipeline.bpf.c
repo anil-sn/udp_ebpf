@@ -1525,28 +1525,20 @@ static __always_inline int forward_packet(void *data, void *data_end,
         
         /* Copy packet data with consistent size */
         if (final_copy_len > 0) {
-            /* Create verifier-friendly bounded copy length */
-            __u32 safe_copy_len = 64; /* Default safe size */
-            if (final_copy_len <= 4095) {
-                safe_copy_len = final_copy_len;
-            }
-            /* Ensure safe_copy_len is provably positive and bounded */
-            safe_copy_len &= 0x0FFF; /* Explicit mask for verifier */
-            if (safe_copy_len < 42) {
-                safe_copy_len = 42; /* Minimum header size */
-            }
+            /* Use fixed size for verifier compatibility - captures headers + some payload */
+            const __u32 COPY_SIZE = 256; /* Fixed 256 bytes - verifier friendly */
             
             /* Copy complete packet data using bpf_probe_read_kernel for safety */
-            long ret = bpf_probe_read_kernel(event->data, safe_copy_len, data);
-            __u32 copied = (ret == 0) ? safe_copy_len : 0;
+            long ret = bpf_probe_read_kernel(event->data, COPY_SIZE, data);
+            __u32 copied = (ret == 0) ? COPY_SIZE : 0;
             update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_PROBE_READ_KERNEL_RESULT | (copied & DEBUG_VALUE_MASK));  /* DEBUG: actual copied bytes */
             if (copied == 0) {
                 /* Copy failed - update metadata to reflect failure */
                 event->len = 0;  /* Mark as failed copy */
                 update_stat(STAT_BOUNDS_CHECK_FAILED, 4);  /* Track ring buffer copy systematic error */
                 update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_RING_BUFFER_COPY_FAILURE);  /* Ring buffer copy failure marker */
-            } else if (copied != safe_copy_len) {
-                /* Partial copy - update metadata to reflect actual copied size */
+            } else if (copied != COPY_SIZE) {
+                /* Should not happen with fixed size copy */
                 event->len = (__u16)copied;
                 update_stat(STAT_LENGTH_CORRECTIONS, 1);
             }
