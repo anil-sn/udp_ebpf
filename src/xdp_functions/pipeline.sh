@@ -94,6 +94,8 @@ start_pipeline() {
     # Verify startup with specific pattern match
     if wait_for_process "vxlan_loader.*-i.*$INTERFACE" 5; then
         local new_pid=$(pgrep -f "vxlan_loader.*-i.*$INTERFACE" | head -1)
+        # Ensure clean terminal state after background process
+        printf "\r"
         print_color "green" "SUCCESS: Pipeline started (PID: $new_pid)"
         print_color "green" "Log file: $LOG_FILE"
         
@@ -182,6 +184,8 @@ start_pipeline() {
             # Verify packet_injector startup and set CPU affinity
             local injector_count=$(pgrep -f "packet_injector.*vxlan_pipeline" | wc -l)
             if [ "$injector_count" -gt 0 ]; then
+                # Ensure clean terminal state after background processes
+                printf "\r"
                 print_color "green" "✓ Started $injector_count packet_injector instances"
                 
                 # Set CPU affinity for worker processes
@@ -191,6 +195,7 @@ start_pipeline() {
                     cpu=$(((cpu + 1) % 8))
                 done
                 
+                printf "\r"
                 print_color "green" "✓ CPU affinity optimized for all injector processes"
             else
                 print_color "yellow" "Warning: No packet injector processes started"
