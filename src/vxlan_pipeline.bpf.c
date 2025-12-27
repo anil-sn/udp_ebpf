@@ -1511,21 +1511,25 @@ static __always_inline int forward_packet(void *data, void *data_end,
                 }
                 
                 /* Perform the copy with exact packet length to prevent corruption */
-                /* Direct memory access - XDP context compatible */
+                /* Unrolled direct copy - eBPF verifier friendly */
                 __u32 copied = 0;
                 
-                /* Simple direct copy with bounds checking - limit to first 64 bytes for headers */
-                if (copy_len > 64) {
-                    copy_len = 64;  /* Only copy essential headers */
-                }
-                
-                /* Copy available data directly - verifier friendly */
-                if (copy_len > 0 && (char *)data + copy_len <= (char *)data_end) {
-                    /* Direct memory copy - byte by byte with fixed small bound */
-                    for (__u32 i = 0; i < copy_len && i < 64; i++) {
-                        event->data[i] = *((char *)data + i);
-                    }
-                    copied = copy_len;
+                /* Copy first 42 bytes (Eth+IP+UDP headers) with unrolled assignments */
+                if (copy_len > 0 && (char *)data + 42 <= (char *)data_end) {
+                    /* Copy in 8-byte chunks - much faster and verifier friendly */
+                    *((__u64 *)(event->data + 0))  = *((__u64 *)((char *)data + 0));
+                    *((__u64 *)(event->data + 8))  = *((__u64 *)((char *)data + 8));
+                    *((__u64 *)(event->data + 16)) = *((__u64 *)((char *)data + 16));
+                    *((__u64 *)(event->data + 24)) = *((__u64 *)((char *)data + 24));
+                    *((__u64 *)(event->data + 32)) = *((__u64 *)((char *)data + 32));
+                    *((__u16 *)(event->data + 40)) = *((__u16 *)((char *)data + 40));
+                    copied = 42;
+                } else if (copy_len > 0 && (char *)data + 14 <= (char *)data_end) {
+                    /* At least copy Ethernet header */
+                    *((__u64 *)(event->data + 0)) = *((__u64 *)((char *)data + 0));
+                    *((__u32 *)(event->data + 8)) = *((__u32 *)((char *)data + 8));
+                    *((__u16 *)(event->data + 12)) = *((__u16 *)((char *)data + 12));
+                    copied = 14;
                 } else {
                     copied = 0;
                 }
