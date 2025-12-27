@@ -382,12 +382,6 @@ def check_specific_debug_markers():
             print("\nANALYSIS RESULT:")
             print("   Systematic error markers still active")
             print("   Additional STAT_ERRORS elimination needed")
-                
-                break
-        
-        if not found_any:
-            print("No target systematic error markers detected.")
-            print("This suggests the systematic error is in an uninstrumented code path.")
         
         return found_any
         
