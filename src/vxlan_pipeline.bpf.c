@@ -1246,9 +1246,14 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
     
     if (measured_packet_size < required_size) {
         /* Insufficient data to support original inner IP length - packet was truncated */
-        update_stat(STAT_ERRORS, 1);
-        update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
-        /* Continue with available data rather than fail completely */
+        /* This is expected during VXLAN decapsulation, not an error if we have minimum required data */
+        if (measured_packet_size < ETH_HLEN + sizeof(struct iphdr)) {
+            /* Only count as error if we don't have minimum IP packet */
+            update_stat(STAT_ERRORS, 1);
+            update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
+            return -1;  /* Critical failure - insufficient data for basic IP packet */
+        }
+        /* Continue with available data - this is normal for VXLAN decapsulation */
     }
     
     /* EVIDENCE-BASED LENGTH DEBUGGING */
@@ -1302,23 +1307,30 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
              * ==================================
              * Ensure UDP length is consistent with corrected IP length
              */
-            if (udp_len >= sizeof(struct udphdr) && udp_len <= remaining_bytes) {
+            if (udp_len >= sizeof(struct udphdr)) {
+                /* Don't require remaining_bytes >= udp_len as packet may be truncated after VXLAN decapsulation */
+                /* Only ensure we have minimum UDP header space */
+                if (remaining_bytes >= sizeof(struct udphdr)) {
                 
-                old_len = bpf_ntohs(udp_hdr->len);      /* Get current UDP length */
-                
-                /* Check if UDP length needs correction */
-                if (old_len != udp_len) {
-                    /* UDP length mismatch - fix it */
-                    udp_hdr->len = bpf_htons((__u16)udp_len);
-                    udp_hdr->check = 0;                 /* Clear checksum */
+                    old_len = bpf_ntohs(udp_hdr->len);      /* Get current UDP length */
                     
-                    update_stat(STAT_UDP_LEN_UPDATED, 1);  /* Count UDP corrections */
+                    /* Check if UDP length needs correction */
+                    if (old_len != udp_len) {
+                        /* UDP length mismatch - fix it */
+                        udp_hdr->len = bpf_htons((__u16)udp_len);
+                        udp_hdr->check = 0;                 /* Clear checksum */
+                        
+                        update_stat(STAT_UDP_LEN_UPDATED, 1);  /* Count UDP corrections */
+                    } else {
+                        /* UDP length was already correct */
+                        udp_hdr->check = 0;  /* Still clear checksum for performance */
+                    }
                 } else {
-                    /* UDP length was already correct */
-                    udp_hdr->check = 0;  /* Still clear checksum for performance */
+                    /* Not enough data for UDP header - this IS an error */
+                    update_stat(STAT_ERRORS, 1);
                 }
             } else {
-                /* Invalid UDP length calculation */
+                /* UDP length calculation resulted in invalid size - this IS an error */
                 update_stat(STAT_ERRORS, 1);
             }
         }
