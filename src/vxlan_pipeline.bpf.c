@@ -1486,13 +1486,8 @@ static __always_inline int forward_packet(void *data, void *data_end,
         return XDP_DROP;
     }
     
-    /* Use variable ring buffer reservation size based on actual packet length */
-    __u32 reserve_size = sizeof(struct packet_event) - PACKET_DATA_MAX_SIZE + temp_len;
-    if (reserve_size > sizeof(struct packet_event)) {
-        reserve_size = sizeof(struct packet_event);
-    }
-    
-    event = bpf_ringbuf_reserve(&packet_ringbuf, reserve_size, 0);
+    /* Use fixed ring buffer allocation - verifier friendly */
+    event = bpf_ringbuf_reserve(&packet_ringbuf, sizeof(struct packet_event), 0);
     if (event) {
         event->ifindex = *target_ifindex;
         event->len = (__u16)temp_len;
@@ -1516,17 +1511,24 @@ static __always_inline int forward_packet(void *data, void *data_end,
                 }
                 
                 /* Perform the copy with exact packet length to prevent corruption */
-                /* Copy only essential headers - use compile-time constant bound */
-                __u32 copied = 0;
-                
-                /* Simple bounded copy with compile-time constant - verifier friendly */
-                for (__u32 i = 0; i < 128 && i < copy_len; i++) {
-                    if ((char *)data + i >= (char *)data_end) break;
-                    event->data[i] = *((char *)data + i);
-                    copied = i + 1;
+                /* Simple direct assignment - no loops needed */
+                __u32 copied = copy_len;
+                if (copied > PACKET_DATA_MAX_SIZE) {
+                    copied = PACKET_DATA_MAX_SIZE;
                 }
                 
-                long ret = 0;  /* Direct copy always succeeds with proper bounds */
+                /* Copy available data directly - verifier friendly */
+                if (copied > 0 && (char *)data + copied <= (char *)data_end) {
+                    /* Use BPF helper for safe copying */
+                    long ret = bpf_probe_read(event->data, copied, data);
+                    if (ret < 0) {
+                        copied = 0;  /* Mark as failed */
+                    }
+                } else {
+                    copied = 0;
+                }
+                
+                long ret = (copied > 0) ? 0 : -1;
                 update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_PROBE_READ_KERNEL_RESULT | (copied & DEBUG_VALUE_MASK));  /* DEBUG: actual copied bytes */
                 if (copied == 0) {
                     /* Only count actual copy failures as errors */
