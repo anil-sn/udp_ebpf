@@ -1516,25 +1516,34 @@ static __always_inline int forward_packet(void *data, void *data_end,
                 }
                 
                 /* Perform the copy with exact packet length to prevent corruption */
-                /* Manual copy for eBPF - use small bounded loops that verifier can handle */
+                /* Efficient 8-byte chunk copying - much simpler and faster */
                 __u32 copied = 0;
+                __u64 *src_ptr = (__u64 *)data;
+                __u64 *dst_ptr = (__u64 *)event->data;
                 
-                /* Copy in chunks of 256 bytes - verifier-friendly */
+                /* Copy 8 bytes at a time - verifier friendly and efficient */
                 #pragma unroll
-                for (__u32 chunk = 0; chunk < 12; chunk++) {  /* 12 * 256 = 3072 bytes max */
-                    #pragma unroll
-                    for (__u32 i = 0; i < 256; i++) {
-                        __u32 offset = chunk * 256 + i;
-                        if (offset >= copy_len) goto copy_done;
-                        if ((char *)data + offset >= (char *)data_end) goto copy_done;
-                        event->data[offset] = *((char *)data + offset);
-                        copied = offset + 1;
+                for (__u32 i = 0; i < 384; i++) {  /* 384 * 8 = 3072 bytes max */
+                    __u32 byte_offset = i * 8;
+                    if (byte_offset >= copy_len) break;
+                    if ((char *)data + byte_offset + 8 > (char *)data_end) break;
+                    
+                    dst_ptr[i] = src_ptr[i];
+                    copied = byte_offset + 8;
+                }
+                
+                /* Handle remaining bytes if copy_len is not 8-byte aligned */
+                if (copied < copy_len && copied + 8 > copy_len) {
+                    __u32 remaining = copy_len - copied;
+                    if ((char *)data + copied + remaining <= (char *)data_end && remaining <= 7) {
+                        for (__u32 j = 0; j < remaining; j++) {
+                            event->data[copied + j] = *((char *)data + copied + j);
+                        }
+                        copied = copy_len;
                     }
                 }
                 
-copy_done:
-                ; /* Required statement after label */
-                long ret = 0;  /* Manual copy always succeeds with proper bounds */
+                long ret = 0;  /* Direct copy always succeeds with proper bounds */
                 update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_PROBE_READ_KERNEL_RESULT | (copied & DEBUG_VALUE_MASK));  /* DEBUG: actual copied bytes */
                 if (copied == 0) {
                     /* Only count actual copy failures as errors */
