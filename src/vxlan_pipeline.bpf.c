@@ -1459,6 +1459,13 @@ static __always_inline int forward_packet(void *data, void *data_end,
     /* Use the tracked packet length for ring buffer copy - support large packets */
     temp_len = packet_len;
     
+    /* DEBUG: Track what packet_len value we receive */
+    if (packet_len == 0) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0099);  /* ZERO packet_len received */
+    } else {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0x90000000 | packet_len);  /* Non-zero packet_len */
+    }
+    
     /* Verifier-friendly bounds checking with compile-time constants */
     if (temp_len > PACKET_DATA_MAX_SIZE) {
         /* Truncate to ring buffer capacity - should be rare with increased buffer size */
