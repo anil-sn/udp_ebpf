@@ -593,6 +593,11 @@ def print_recommendations(stats: Dict[int, int], debug_markers: List[Tuple[str, 
     vxlan_packets = stats.get(0x07, 0)
     ringbuf_success = stats.get(0x0d, 0)
     
+    # Calculate metrics (initialize with defaults)
+    success_rate = 0
+    error_to_vxlan_ratio = 0
+    processing_efficiency = 0
+    
     if rx_packets > 0 and vxlan_packets > 0:
         error_to_vxlan_ratio = error_count / vxlan_packets if vxlan_packets > 0 else 0
         success_rate = (rx_packets - error_count) / rx_packets if rx_packets > 0 else 0
