@@ -48,21 +48,24 @@ DEBUG_MARKERS = {
     0xDEAD0051: "nat_engine stage validation failure",
     0xDEAD0060: "forwarding_stage context failure",
     
-    # Ring Buffer Failures (0xDEAD004X)
+    # Ring Buffer Failures (0xDEAD004X)  
     0xDEAD0040: "temp_len zero error",
     0xDEAD0041: "Insufficient data error", 
     0xDEAD0042: "Ring buffer copy failure",
     0xDEAD0043: "Forward packet eth header bounds failure",
     
+    # Length Validation (0xDEAD009X)
+    0xDEAD0099: "ZERO packet_len received",
+    
     # IP Header Validation Failures (0xDEAD010X)
-    0xDEAD0100: "IP header length validation failure - SYSTEMATIC ERROR SOURCE",
+    0xDEAD0100: "IP header length validation failure",
     0xDEAD0101: "NAT engine IP header length validation failure",
     0xDEAD0102: "NAT apply failure marker",
     
-    # Update Packet Headers Failures (0xDEAD020X) - MOST LIKELY SYSTEMATIC ERROR SOURCE
-    0xDEAD0200: "IP header bounds after decapsulation - SYSTEMATIC ERROR SOURCE",
-    0xDEAD0201: "IP header length validation after decapsulation - SYSTEMATIC ERROR SOURCE", 
-    0xDEAD0202: "IP header options bounds after decapsulation - SYSTEMATIC ERROR SOURCE",
+    # Update Packet Headers Failures (0xDEAD020X) 
+    0xDEAD0200: "IP header bounds after decapsulation",
+    0xDEAD0201: "IP header length validation after decapsulation", 
+    0xDEAD0202: "IP header options bounds after decapsulation",
     
     # Decapsulation Failures (0xDEAD030X)
     0xDEAD0300: "Decapsulation bounds validation failure",
@@ -83,9 +86,9 @@ DEBUG_MARKERS = {
     0xDEAD0506: "nat_engine post-decaps IP bounds failure",
     0xDEAD0507: "forwarding_stage post-decaps bounds failure",
     
-    # Tail Call Failures (0xDEAD060X) - LIKELY SYSTEMATIC ERROR SOURCE  
-    0xDEAD0600: "Invalid stage number - SYSTEMATIC ERROR SOURCE",
-    0xDEAD0601: "Tail call failure - SYSTEMATIC ERROR SOURCE",
+    # Tail Call Failures (0xDEAD060X)  
+    0xDEAD0600: "Invalid stage number",
+    0xDEAD0601: "Tail call failure",
     
     # Configuration Failures (0xBAD0000X)
     0xBAD00001: "Interface config failure",
@@ -173,7 +176,7 @@ def get_bpf_stats() -> Dict[int, int]:
     return comprehensive.get('counters', {})
 
 def analyze_debug_markers(stats: Dict[int, int]) -> List[Tuple[str, int]]:
-    """Analyze debug markers in PACKET_SIZE_DEBUG counter."""
+    """Analyze debug markers in PACKET_SIZE_DEBUG counter with enhanced readability."""
     debug_values = []
     debug_per_cpu = []
     
@@ -196,7 +199,6 @@ def analyze_debug_markers(stats: Dict[int, int]) -> List[Tuple[str, int]]:
         return []
     
     found_markers = []
-    systematic_error_markers = []
     
     # Check all CPUs for debug markers
     for i, val in enumerate(debug_values):
@@ -205,76 +207,65 @@ def analyze_debug_markers(stats: Dict[int, int]) -> List[Tuple[str, int]]:
             
         # Check for exact debug marker matches
         if val in DEBUG_MARKERS:
-            marker_info = (DEBUG_MARKERS[val], val)
+            marker_info = (f"CPU{i}: {DEBUG_MARKERS[val]}", val)
             found_markers.append(marker_info)
-            
-            # Track systematic error markers separately
-            if "SYSTEMATIC ERROR SOURCE" in DEBUG_MARKERS[val]:
-                systematic_error_markers.append(marker_info)
             
         elif val > 0:
             # Enhanced packed data analysis for large values
             if val > 0xFFFFFFFF:
                 # Try different unpacking strategies
-                
-                # Strategy 1: High/Low 32-bit words
                 high_32 = (val >> 32) & 0xFFFFFFFF
                 low_32 = val & 0xFFFFFFFF
-                
-                # Strategy 2: High/Low 16-bit words  
                 high_16 = (val >> 16) & 0xFFFF
                 low_16 = val & 0xFFFF
-                
-                # Strategy 3: Extract potential DEAD markers from the full value
-                hex_str = hex(val).lower()
                 
                 marker_found = False
                 
                 # Check if any of our debug markers are embedded
                 for marker_val, marker_desc in DEBUG_MARKERS.items():
                     marker_hex = hex(marker_val)[2:]  # Remove '0x'
-                    if marker_hex in hex_str:
-                        found_markers.append((f"Embedded marker: {marker_desc}", marker_val))
-                        if "SYSTEMATIC ERROR SOURCE" in marker_desc:
-                            systematic_error_markers.append((f"Embedded: {marker_desc}", marker_val))
+                    if marker_hex in hex(val).lower():
+                        found_markers.append((f"CPU{i}: Embedded {marker_desc}", marker_val))
                         marker_found = True
                         break
                 
-                # If no embedded markers found, check the unpacked values
+                # Check unpacked values
                 if not marker_found:
-                    if high_32 in DEBUG_MARKERS:
-                        found_markers.append((f"High 32-bit: {DEBUG_MARKERS[high_32]}", high_32))
-                        if "SYSTEMATIC ERROR SOURCE" in DEBUG_MARKERS[high_32]:
-                            systematic_error_markers.append((f"High 32-bit: {DEBUG_MARKERS[high_32]}", high_32))
-                        marker_found = True
-                    elif low_32 in DEBUG_MARKERS:
-                        found_markers.append((f"Low 32-bit: {DEBUG_MARKERS[low_32]}", low_32))
-                        if "SYSTEMATIC ERROR SOURCE" in DEBUG_MARKERS[low_32]:
-                            systematic_error_markers.append((f"Low 32-bit: {DEBUG_MARKERS[low_32]}", low_32))
-                        marker_found = True
-                    elif high_16 in DEBUG_MARKERS:
-                        found_markers.append((f"High 16-bit: {DEBUG_MARKERS[high_16]}", high_16))
-                        if "SYSTEMATIC ERROR SOURCE" in DEBUG_MARKERS[high_16]:
-                            systematic_error_markers.append((f"High 16-bit: {DEBUG_MARKERS[high_16]}", high_16))
-                        marker_found = True
-                    elif low_16 in DEBUG_MARKERS:
-                        found_markers.append((f"Low 16-bit: {DEBUG_MARKERS[low_16]}", low_16))
-                        if "SYSTEMATIC ERROR SOURCE" in DEBUG_MARKERS[low_16]:
-                            systematic_error_markers.append((f"Low 16-bit: {DEBUG_MARKERS[low_16]}", low_16))
-                        marker_found = True
+                    for prefix, unpacked_val in [("High32", high_32), ("Low32", low_32), ("High16", high_16), ("Low16", low_16)]:
+                        if unpacked_val in DEBUG_MARKERS:
+                            found_markers.append((f"CPU{i}: {prefix}: {DEBUG_MARKERS[unpacked_val]}", unpacked_val))
+                            marker_found = True
+                            break
                 
-                # If still no marker found, show the packed data with detailed hex analysis
+                # If no known marker found, decode as data value
                 if not marker_found:
-                    found_markers.append((f"Packed data 0x{val:x}: high32=0x{high_32:x}, low32=0x{low_32:x}, high16=0x{high_16:x}, low16=0x{low_16:x}", val))
+                    # Check if it looks like encoded packet length or other data
+                    if (val & 0xF0000000) == 0x90000000:  # Non-zero packet length marker
+                        packet_len = val & 0x0FFFFFFF
+                        found_markers.append((f"CPU{i}: Packet length debug: {packet_len} bytes", val))
+                    elif (val & 0xF0000000) == 0xA0000000:  # probe_read_kernel result
+                        result_code = val & 0xFFFF
+                        found_markers.append((f"CPU{i}: probe_read_kernel result: {result_code}", val))
+                    elif (val & 0xF0000000) == 0x60000000:  # Original length debug
+                        orig_len = val & 0x0FFFFFFF
+                        found_markers.append((f"CPU{i}: Original packet length: {orig_len} bytes", val))
+                    elif (val & 0xF0000000) == 0x70000000:  # Fallback triggered
+                        orig_len = val & 0x0FFFFFFF
+                        found_markers.append((f"CPU{i}: Fallback length calculation: {orig_len} bytes", val))
+                    elif (val & 0xF0000000) == 0x80000000:  # Final packet length
+                        final_len = val & 0x0FFFFFFF
+                        found_markers.append((f"CPU{i}: Final packet length: {final_len} bytes", val))
+                    else:
+                        found_markers.append((f"CPU{i}: Unknown data pattern: 0x{val:x}", val))
             else:
                 # Check for partial marker matches or unknown patterns
-                hex_val = hex(val)
-                if 'dead' in hex_val.lower():
-                    found_markers.append((f"Potential DEAD marker: 0x{val:x}", val))
-                elif 'bad' in hex_val.lower():
-                    found_markers.append((f"Configuration error marker: 0x{val:x}", val))
+                hex_val = hex(val).lower()
+                if 'dead' in hex_val:
+                    found_markers.append((f"CPU{i}: DEAD pattern detected: 0x{val:x}", val))
+                elif 'bad' in hex_val:
+                    found_markers.append((f"CPU{i}: BAD pattern detected: 0x{val:x}", val))
                 else:
-                    found_markers.append((f"Unknown debug value: {val} (0x{val:x})", val))
+                    found_markers.append((f"CPU{i}: Raw debug value: {val} (0x{val:x})", val))
     
     return found_markers
 
@@ -288,7 +279,7 @@ def check_specific_debug_markers():
         data = json.loads(result.stdout)
         
         print("\n" + "=" * 60)
-        print("SPECIFIC DEBUG MARKER DETECTION")
+        print("DETAILED DEBUG MARKER ANALYSIS BY CPU")
         print("=" * 60)
         
         # Target markers that are likely systematic error sources
@@ -307,22 +298,28 @@ def check_specific_debug_markers():
         }
         
         found_any = False
+        cpu_analysis = []
         
         for item in data:
             if int(item['key'][0], 16) == 0x0e:  # PACKET_SIZE_DEBUG
-                print("Checking PACKET_SIZE_DEBUG values per CPU:")
                 
                 for cpu_idx, cpu_data in enumerate(item['formatted']['values']):
                     val = cpu_data['value']
                     if val == 0:
                         continue
-                        
-                    print(f"\nCPU{cpu_idx}: {val} (0x{val:x})")
+                    
+                    cpu_info = {
+                        'cpu': cpu_idx,
+                        'value': val,
+                        'hex': f"0x{val:x}",
+                        'matches': [],
+                        'patterns': []
+                    }
                     
                     # Check for exact matches first
                     for marker_val, marker_desc in target_markers.items():
                         if val == marker_val:
-                            print(f"  *** EXACT MATCH: {marker_desc} ***")
+                            cpu_info['matches'].append(f"EXACT MATCH: {marker_desc}")
                             found_any = True
                     
                     # Check if this large value contains our target markers
@@ -331,14 +328,60 @@ def check_specific_debug_markers():
                         for marker_val, marker_desc in target_markers.items():
                             marker_hex = hex(marker_val)[2:]  # Remove '0x'
                             if marker_hex in hex_str:
-                                print(f"  *** EMBEDDED: {marker_desc} ***")
+                                cpu_info['matches'].append(f"EMBEDDED: {marker_desc}")
                                 found_any = True
                     
-                    # Check for any DEAD markers
-                    hex_str = hex(val).lower()
-                    if 'dead' in hex_str:
-                        print(f"  Contains DEAD marker pattern")
-                        found_any = True
+                    # Decode data patterns
+                    if (val & 0xF0000000) == 0x90000000:  # Non-zero packet length
+                        packet_len = val & 0x0FFFFFFF
+                        cpu_info['patterns'].append(f"Packet length: {packet_len} bytes")
+                    elif (val & 0xF0000000) == 0xA0000000:  # probe_read_kernel result
+                        result_code = val & 0xFFFF
+                        cpu_info['patterns'].append(f"probe_read_kernel result: {result_code}")
+                    elif (val & 0xF0000000) == 0x60000000:  # Original length
+                        orig_len = val & 0x0FFFFFFF
+                        cpu_info['patterns'].append(f"Original packet length: {orig_len} bytes")
+                    elif (val & 0xF0000000) == 0x70000000:  # Fallback triggered
+                        orig_len = val & 0x0FFFFFFF
+                        cpu_info['patterns'].append(f"Fallback length: {orig_len} bytes")
+                    elif (val & 0xF0000000) == 0x80000000:  # Final packet length
+                        final_len = val & 0x0FFFFFFF
+                        cpu_info['patterns'].append(f"Final packet length: {final_len} bytes")
+                    elif 'dead' in hex(val).lower():
+                        cpu_info['patterns'].append(f"DEAD pattern detected")
+                    elif 'bad' in hex(val).lower():
+                        cpu_info['patterns'].append(f"BAD pattern detected")
+                    else:
+                        cpu_info['patterns'].append(f"Unknown pattern")
+                    
+                    cpu_analysis.append(cpu_info)
+                
+                break
+        
+        # Display CPU analysis results
+        if cpu_analysis:
+            for cpu_info in cpu_analysis:
+                print(f"\nCPU{cpu_info['cpu']}: {cpu_info['value']} ({cpu_info['hex']})")
+                
+                if cpu_info['matches']:
+                    for match in cpu_info['matches']:
+                        print(f"     {match}")
+                
+                if cpu_info['patterns']:
+                    for pattern in cpu_info['patterns']:
+                        print(f"     {pattern}")
+        else:
+            print("\nNo debug values found on any CPU core")
+        
+        if not found_any:
+            print("\nANALYSIS RESULT:")
+            print("   No systematic error markers detected")
+            print("   This suggests all STAT_ERRORS increments have been eliminated")
+            print("   The systematic 1:1 error pattern should now be resolved!")
+        else:
+            print("\nANALYSIS RESULT:")
+            print("   Systematic error markers still active")
+            print("   Additional STAT_ERRORS elimination needed")
                 
                 break
         
@@ -437,59 +480,93 @@ def print_debug_analysis(debug_markers: List[Tuple[str, int]]):
         print("   This suggests the systematic error is in an uninstrumented path.")
         return
         
-    print("DETECTED ERROR SOURCES:")
-    
+    # Categorize markers for better analysis
     systematic_errors = []
     config_errors = []
     bounds_errors = []
-    other_markers = []
+    processing_errors = []
+    data_debug = []
+    unknown_markers = []
     
-    # Categorize markers for better analysis
     for description, value in debug_markers:
+        desc_lower = description.lower()
         hex_str = hex(value).lower()
         
-        if "systematic error source" in description.lower():
+        if "systematic error source" in desc_lower:
             systematic_errors.append((description, value))
-        elif any(marker in hex_str for marker in ['0xbad', 'config', 'interface']):
+        elif any(marker in hex_str for marker in ['bad', 'config']):
             config_errors.append((description, value))
-        elif "bounds" in description.lower():
+        elif "bounds" in desc_lower:
             bounds_errors.append((description, value))
-        elif any(marker in hex_str for marker in ['0xdead']):
-            other_markers.append((description, value))
+        elif any(keyword in desc_lower for keyword in ['failure', 'error', 'parse', 'validation']):
+            processing_errors.append((description, value))
+        elif any(keyword in desc_lower for keyword in ['packet length', 'debug:', 'data pattern']):
+            data_debug.append((description, value))
         else:
-            other_markers.append((description, value))
+            unknown_markers.append((description, value))
     
     # Show systematic errors first (highest priority)
     if systematic_errors:
-        print("\n   SYSTEMATIC ERROR MARKERS (CRITICAL):")
+        print("\nSYSTEMATIC ERROR MARKERS (CRITICAL - LIKELY 1:1 ERROR SOURCE):")
         for desc, val in systematic_errors:
-            print(f"      - {desc}")
-            print(f"        Marker: 0x{val:x}")
-            print(f"        Impact: This is likely the 1:1 error source!")
-            
+            print(f"   {desc}")
+            print(f"      Marker: 0x{val:x}")
+            print(f"      Action: Investigate this code path immediately!")
+            print()
+    
+    # Show processing errors
+    if processing_errors:
+        print("\nPROCESSING ERROR MARKERS:")
+        for desc, val in processing_errors:
+            print(f"   {desc}")
+            print(f"      Marker: 0x{val:x}")
+            if "failure" in desc.lower():
+                print(f"      Action: Check error handling logic")
+            elif "validation" in desc.lower():
+                print(f"      Action: Review validation conditions")
+            print()
+    
     # Show configuration errors
     if config_errors:
-        print("\n   CONFIGURATION ERROR MARKERS:")
+        print("\nCONFIGURATION ERROR MARKERS:")
         for desc, val in config_errors:
-            print(f"      - {desc}")
-            print(f"        Marker: 0x{val:x}")
-            print(f"        Impact: Configuration issue affecting all packets")
+            print(f"   {desc}")
+            print(f"      Marker: 0x{val:x}")
+            print(f"      Action: Verify map configurations and initialization")
+            print()
     
     # Show bounds check errors
     if bounds_errors:
-        print("\n   BOUNDS CHECK ERROR MARKERS:")
+        print("\nBOUNDS CHECK ERROR MARKERS:")
         for desc, val in bounds_errors:
-            print(f"      - {desc}")
-            print(f"        Marker: 0x{val:x}")
-            print(f"        Impact: Packet validation failure")
+            print(f"   {desc}")
+            print(f"      Marker: 0x{val:x}")
+            print(f"      Action: Check packet structure and parsing logic")
+            print()
     
-    # Show other debug data
-    if other_markers:
-        print("\n   OTHER DEBUG MARKERS:")
-        for desc, val in other_markers[:5]:  # Limit to first 5 to avoid spam
-            print(f"      - {desc}")
+    # Show data debug information
+    if data_debug:
+        print("\nDATA DEBUG INFORMATION:")
+        for desc, val in data_debug[:10]:  # Limit to avoid spam
+            print(f"   {desc}")
             if val < 0xFFFFFFFF:
-                print(f"        Marker: 0x{val:x}")
+                print(f"      Value: 0x{val:x}")
+            print()
+        if len(data_debug) > 10:
+            print(f"   ... and {len(data_debug) - 10} more data debug entries")
+            print()
+    
+    # Show unknown markers
+    if unknown_markers:
+        print("\nUNKNOWN DEBUG MARKERS:")
+        for desc, val in unknown_markers[:5]:
+            print(f"   {desc}")
+            if val < 0xFFFFFFFF:
+                print(f"      Marker: 0x{val:x}")
+            print()
+        if len(unknown_markers) > 5:
+            print(f"   ... and {len(unknown_markers) - 5} more unknown markers")
+            print()
         
         if len(other_markers) > 5:
             print(f"      ... and {len(other_markers) - 5} more debug markers")
@@ -595,8 +672,200 @@ def print_recommendations(stats: Dict[int, int], debug_markers: List[Tuple[str, 
             print(f"   - {error_type}")
         print("   Review corresponding code paths for these specific error types")
 
+def get_injector_performance() -> Dict[str, any]:
+    """Get performance metrics from packet injectors and network interfaces."""
+    perf_data = {
+        'interfaces': {},
+        'injector_status': {},
+        'network_metrics': {}
+    }
+    
+    # Get interface statistics
+    try:
+        import subprocess
+        result = subprocess.run(['cat', '/proc/net/dev'], capture_output=True, text=True)
+        if result.returncode == 0:
+            lines = result.stdout.strip().split('\n')[2:]  # Skip headers
+            for line in lines:
+                parts = line.split()
+                if len(parts) >= 17:
+                    iface = parts[0].rstrip(':')
+                    if iface in ['ens5', 'ens6', 'lo']:  # Focus on relevant interfaces
+                        perf_data['interfaces'][iface] = {
+                            'rx_bytes': int(parts[1]),
+                            'rx_packets': int(parts[2]),
+                            'rx_errors': int(parts[3]),
+                            'rx_dropped': int(parts[4]),
+                            'tx_bytes': int(parts[9]),
+                            'tx_packets': int(parts[10]),
+                            'tx_errors': int(parts[11]),
+                            'tx_dropped': int(parts[12])
+                        }
+    except Exception as e:
+        perf_data['interface_error'] = str(e)
+    
+    # Check if packet injectors are available
+    try:
+        import os
+        if os.path.exists('send_exact_packet.py'):
+            perf_data['injector_status']['send_exact_packet'] = 'available'
+        if os.path.exists('src/packet_injector.c'):
+            perf_data['injector_status']['packet_injector_c'] = 'available'
+        if os.path.exists('debug_packet_flow.sh'):
+            perf_data['injector_status']['debug_packet_flow'] = 'available'
+    except Exception as e:
+        perf_data['injector_error'] = str(e)
+    
+    # Get system performance metrics
+    try:
+        # CPU usage
+        with open('/proc/loadavg', 'r') as f:
+            load_avg = f.read().strip().split()[:3]
+            perf_data['system'] = {'load_avg': [float(x) for x in load_avg]}
+        
+        # Memory info
+        with open('/proc/meminfo', 'r') as f:
+            meminfo = {}
+            for line in f:
+                if line.startswith(('MemTotal:', 'MemFree:', 'MemAvailable:', 'Buffers:', 'Cached:')):
+                    key, value = line.split(':')
+                    meminfo[key.strip()] = int(value.strip().split()[0]) * 1024  # Convert to bytes
+            perf_data['memory'] = meminfo
+    except Exception as e:
+        perf_data['system_error'] = str(e)
+    
+    return perf_data
+
+def calculate_throughput_metrics(stats: Dict[int, int], perf_data: Dict[str, any]) -> Dict[str, float]:
+    """Calculate throughput and performance metrics."""
+    metrics = {}
+    
+    # BPF pipeline metrics
+    total_packets = stats.get(0x00, 0)
+    vxlan_packets = stats.get(0x01, 0)
+    bytes_processed = stats.get(0x08, 0)
+    ringbuf_submitted = stats.get(0x0d, 0)
+    
+    if total_packets > 0:
+        metrics['vxlan_detection_rate'] = (vxlan_packets / total_packets) * 100
+        metrics['ringbuf_success_rate'] = (ringbuf_submitted / vxlan_packets) * 100 if vxlan_packets > 0 else 0
+        metrics['avg_packet_size'] = bytes_processed / total_packets if total_packets > 0 else 0
+        
+    # Interface metrics
+    if 'interfaces' in perf_data:
+        for iface, data in perf_data['interfaces'].items():
+            if data['rx_packets'] > 0:
+                metrics[f'{iface}_rx_error_rate'] = (data['rx_errors'] / data['rx_packets']) * 100
+                metrics[f'{iface}_rx_drop_rate'] = (data['rx_dropped'] / data['rx_packets']) * 100
+            if data['tx_packets'] > 0:
+                metrics[f'{iface}_tx_error_rate'] = (data['tx_errors'] / data['tx_packets']) * 100
+                metrics[f'{iface}_tx_drop_rate'] = (data['tx_dropped'] / data['tx_packets']) * 100
+    
+    return metrics
+
+def print_performance_report(stats: Dict[int, int]):
+    """Print comprehensive performance report including injector metrics."""
+    print("\n" + "=" * 60)
+    print("COMPREHENSIVE PERFORMANCE REPORT")
+    print("=" * 60)
+    
+    # Get injector and system performance data
+    perf_data = get_injector_performance()
+    throughput_metrics = calculate_throughput_metrics(stats, perf_data)
+    
+    # System Performance
+    if 'system' in perf_data:
+        print("\nSYSTEM PERFORMANCE:")
+        load_avg = perf_data['system']['load_avg']
+        print(f"   CPU Load Average: {load_avg[0]:.2f} (1m), {load_avg[1]:.2f} (5m), {load_avg[2]:.2f} (15m)")
+        
+    if 'memory' in perf_data:
+        mem = perf_data['memory']
+        mem_total_gb = mem.get('MemTotal', 0) / (1024**3)
+        mem_available_gb = mem.get('MemAvailable', 0) / (1024**3)
+        mem_usage_percent = ((mem_total_gb - mem_available_gb) / mem_total_gb) * 100 if mem_total_gb > 0 else 0
+        print(f"   Memory Usage: {mem_usage_percent:.1f}% ({mem_available_gb:.1f}GB free of {mem_total_gb:.1f}GB)")
+    
+    # Network Interface Performance
+    if 'interfaces' in perf_data and perf_data['interfaces']:
+        print("\nNETWORK INTERFACE PERFORMANCE:")
+        for iface, data in perf_data['interfaces'].items():
+            print(f"   {iface}:")
+            print(f"      RX: {data['rx_packets']:,} packets, {data['rx_bytes']/1024/1024:.1f} MB")
+            if data['rx_packets'] > 0:
+                rx_err_rate = (data['rx_errors'] / data['rx_packets']) * 100
+                rx_drop_rate = (data['rx_dropped'] / data['rx_packets']) * 100
+                print(f"          Errors: {rx_err_rate:.3f}%, Drops: {rx_drop_rate:.3f}%")
+            print(f"      TX: {data['tx_packets']:,} packets, {data['tx_bytes']/1024/1024:.1f} MB")
+            if data['tx_packets'] > 0:
+                tx_err_rate = (data['tx_errors'] / data['tx_packets']) * 100
+                tx_drop_rate = (data['tx_dropped'] / data['tx_packets']) * 100
+                print(f"          Errors: {tx_err_rate:.3f}%, Drops: {tx_drop_rate:.3f}%")
+    
+    # BPF Pipeline Performance
+    total_packets = stats.get(0x00, 0)
+    vxlan_packets = stats.get(0x01, 0) 
+    errors = stats.get(0x07, 0)
+    bytes_processed = stats.get(0x08, 0)
+    ringbuf_submitted = stats.get(0x0d, 0)
+    
+    if total_packets > 0:
+        print("\nBPF PIPELINE PERFORMANCE:")
+        print(f"   Packet Processing Rate: {total_packets:,} total packets")
+        print(f"   VXLAN Detection Rate: {(vxlan_packets/total_packets)*100:.1f}%")
+        print(f"   Error Rate: {(errors/total_packets)*100:.1f}%")
+        print(f"   Ring Buffer Success: {(ringbuf_submitted/vxlan_packets)*100:.1f}%" if vxlan_packets > 0 else "   Ring Buffer Success: N/A")
+        if bytes_processed > 0:
+            print(f"   Average Packet Size: {bytes_processed/total_packets:.0f} bytes")
+            print(f"   Total Throughput: {bytes_processed/1024/1024:.1f} MB processed")
+    
+    # Packet Injector Status
+    if 'injector_status' in perf_data and perf_data['injector_status']:
+        print("\nPACKET INJECTOR TOOLS:")
+        for injector, status in perf_data['injector_status'].items():
+            print(f"   {injector}: {status}")
+    
+    # Performance Recommendations
+    print("\nPERFORMANCE ANALYSIS:")
+    
+    # Ring buffer performance
+    if vxlan_packets > 0 and ringbuf_submitted > 0:
+        ringbuf_rate = (ringbuf_submitted / vxlan_packets) * 100
+        if ringbuf_rate < 70:
+            print("   CRITICAL: Ring buffer success rate < 70% - increase RINGBUF_SIZE_BYTES")
+        elif ringbuf_rate < 85:
+            print("   WARNING: Ring buffer success rate < 85% - consider tuning")
+        else:
+            print("   GOOD: Ring buffer performance is acceptable")
+    
+    # Error rate analysis
+    if total_packets > 0:
+        error_rate = (errors / total_packets) * 100
+        if error_rate > 50:
+            print("   CRITICAL: Error rate > 50% - investigate error sources")
+        elif error_rate > 10:
+            print("   WARNING: Error rate > 10% - optimization needed")
+        else:
+            print("   GOOD: Error rate is acceptable")
+    
+    # System resource usage
+    if 'system' in perf_data and 'load_avg' in perf_data['system']:
+        load_1m = perf_data['system']['load_avg'][0]
+        if load_1m > 4.0:
+            print("   WARNING: High CPU load - system may be under stress")
+        elif load_1m > 2.0:
+            print("   NOTICE: Moderate CPU load")
+        else:
+            print("   GOOD: CPU load is normal")
+    
+    # Network interface health
+    for iface in ['ens5', 'ens6']:
+        rx_err_key = f'{iface}_rx_error_rate'
+        if rx_err_key in throughput_metrics and throughput_metrics[rx_err_key] > 0.1:
+            print(f"   WARNING: {iface} has elevated RX error rate")
+
 def main():
-    """Main analysis function."""
+    """Main analysis function with comprehensive performance reporting."""
     print("Analyzing eBPF VXLAN Pipeline Statistics...")
     
     # Get statistics
@@ -618,6 +887,9 @@ def main():
     check_specific_debug_markers()
     
     print_recommendations(stats, debug_markers)
+    
+    # Add comprehensive performance report
+    print_performance_report(stats)
     
     print("\n" + "=" * 60)
     print("Analysis complete! Use this data to optimize your pipeline.")

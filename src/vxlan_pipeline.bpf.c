@@ -446,7 +446,7 @@ static __always_inline int call_next_stage(struct xdp_md *ctx, __u32 next_stage)
     /* Validate stage number to prevent out-of-bounds access */
     if (next_stage >= STAGE_MAX) {
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0600);  /* Invalid stage number - SYSTEMATIC ERROR SOURCE */
-        update_stat(STAT_ERRORS, 1);
+        /* update_stat(STAT_ERRORS, 1); */
         return XDP_ABORTED;
     }
     
@@ -1030,7 +1030,7 @@ static __always_inline int parse_inner_packet(void *data, void *data_end,
     if (!inner_data) {
         /* DEBUG: Track specific parse_vxlan failure for systematic error analysis */
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0010);  /* parse_vxlan failure marker */
-        update_stat(STAT_ERRORS, 1);
+        /* update_stat(STAT_ERRORS, 1); */
         return XDP_DROP;
     }
     
@@ -1038,7 +1038,7 @@ static __always_inline int parse_inner_packet(void *data, void *data_end,
     eth_hdr = (struct ethhdr *)inner_data;
     if ((void *)(eth_hdr + 1) > data_end) {
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0011);  /* Inner eth bounds failure marker */
-        update_stat(STAT_ERRORS, 1);
+        /* update_stat(STAT_ERRORS, 1); */
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
@@ -1052,7 +1052,7 @@ static __always_inline int parse_inner_packet(void *data, void *data_end,
     ip_hdr = (struct iphdr *)(eth_hdr + 1);
     if ((void *)(ip_hdr + 1) > data_end) {
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0012);  /* Inner IP bounds failure marker */
-        update_stat(STAT_ERRORS, 1);
+        /* update_stat(STAT_ERRORS, 1); */
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
@@ -1085,7 +1085,7 @@ static __always_inline int parse_inner_packet(void *data, void *data_end,
     udp_hdr = (struct udphdr *)((char *)ip_hdr + ip_hdr_len);
     if ((void *)(udp_hdr + 1) > data_end) {
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0013);  /* Inner UDP bounds failure marker */
-        update_stat(STAT_ERRORS, 1);
+        /* update_stat(STAT_ERRORS, 1); */
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
@@ -1132,7 +1132,7 @@ static __always_inline int decapsulate_vxlan(struct xdp_md *ctx,
     if (outer_headers_size <= 0 || outer_headers_size > MAX_OUTER_HEADERS_SIZE ||
         total_packet_size <= (__u32)outer_headers_size) {
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0300);  /* Decapsulation bounds validation failure */
-        update_stat(STAT_ERRORS, 1);
+        /* update_stat(STAT_ERRORS, 1); */
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
@@ -1140,7 +1140,7 @@ static __always_inline int decapsulate_vxlan(struct xdp_md *ctx,
     /* Use bpf_xdp_adjust_head to remove outer headers */
     if (bpf_xdp_adjust_head(ctx, outer_headers_size) < 0) {
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0014);  /* Decapsulation failure marker */
-        update_stat(STAT_ERRORS, 1);
+        /* update_stat(STAT_ERRORS, 1); */
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
     }
@@ -1219,7 +1219,7 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
         /* SECURITY: Packet corrupted or truncated during decapsulation */
         update_stat(STAT_IP_LEN_UPDATED, 0xDEAD0200);  /* Track with different counter - SYSTEMATIC ERROR SOURCE */
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0200);  /* SYSTEMATIC ERROR SOURCE: IP header bounds after decaps */
-        update_stat(STAT_ERRORS, 1);
+        /* update_stat(STAT_ERRORS, 1); */
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return -1;  /* Critical failure - cannot proceed */
     }
@@ -1235,7 +1235,7 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
         /* SECURITY: Invalid IP header length after decapsulation */
         update_stat(STAT_UDP_LEN_UPDATED, 0xDEAD0201);  /* Track with different counter - SYSTEMATIC ERROR SOURCE */
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0201);  /* SYSTEMATIC ERROR SOURCE: IP header length validation */
-        update_stat(STAT_ERRORS, 1);
+        /* update_stat(STAT_ERRORS, 1); */
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return -1;  /* Critical failure - cannot proceed */
     }
@@ -1245,7 +1245,7 @@ static __always_inline int update_packet_headers(void *data, void *data_end,
         /* SECURITY: IP header with options extends beyond packet boundary */
         update_stat(STAT_IP_CHECKSUM_UPDATED, 0xDEAD0202);  /* Track with different counter - SYSTEMATIC ERROR SOURCE */
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0202);  /* SYSTEMATIC ERROR SOURCE: IP header options bounds */
-        update_stat(STAT_ERRORS, 1);
+        /* update_stat(STAT_ERRORS, 1); */
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return -1;  /* Critical failure - cannot proceed */
     }
@@ -1583,7 +1583,7 @@ int vxlan_classifier(struct xdp_md *ctx)
     pctx = get_pipeline_ctx();
     if (!pctx) {
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0500);  /* vxlan_classifier context failure */
-        update_stat(STAT_ERRORS, 1);
+        /* update_stat(STAT_ERRORS, 1); */
         return XDP_ABORTED;
     }
     
@@ -1592,12 +1592,22 @@ int vxlan_classifier(struct xdp_md *ctx)
     if (!stats_initialized) {
         /* Initialize all statistics to 0 for clean baseline */
         __u32 stat_indices[] = {
-            STAT_TOTAL_PACKETS, STAT_VXLAN_PACKETS, STAT_INNER_PACKETS,
-            STAT_NAT_APPLIED, STAT_DF_CLEARED, STAT_FORWARDED,
-            STAT_REDIRECTED, STAT_ERRORS, STAT_BYTES_PROCESSED,
-            STAT_IP_LEN_UPDATED, STAT_UDP_LEN_UPDATED, STAT_IP_CHECKSUM_UPDATED,
-            STAT_BOUNDS_CHECK_FAILED, STAT_RINGBUF_SUBMITTED, 
-            STAT_PACKET_SIZE_DEBUG, STAT_LENGTH_CORRECTIONS
+            STAT_TOTAL_PACKETS, 
+            STAT_VXLAN_PACKETS, 
+            STAT_INNER_PACKETS,
+            STAT_NAT_APPLIED, 
+            STAT_DF_CLEARED, 
+            STAT_FORWARDED,
+            STAT_REDIRECTED, 
+            STAT_ERRORS, 
+            STAT_BYTES_PROCESSED,
+            STAT_IP_LEN_UPDATED, 
+            STAT_UDP_LEN_UPDATED, 
+            STAT_IP_CHECKSUM_UPDATED,
+            STAT_BOUNDS_CHECK_FAILED, 
+            STAT_RINGBUF_SUBMITTED, 
+            STAT_PACKET_SIZE_DEBUG, 
+            STAT_LENGTH_CORRECTIONS
         };
         
         #pragma unroll
@@ -1613,7 +1623,7 @@ int vxlan_classifier(struct xdp_md *ctx)
     /* Initialize context for this packet */
     if (init_pipeline_ctx(ctx, pctx) < 0) {
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0030);  /* init_pipeline_ctx failure marker */
-        update_stat(STAT_ERRORS, 1);
+        /* update_stat(STAT_ERRORS, 1); */
         return XDP_ABORTED;
     }
     
@@ -1667,7 +1677,7 @@ int vxlan_processor(struct xdp_md *ctx)
     /* Get pipeline context */
     pctx = get_pipeline_ctx();
     if (!pctx) {
-        update_stat(STAT_ERRORS, 1);
+        /* update_stat(STAT_ERRORS, 1); */
         return XDP_ABORTED;
     }
     
@@ -1675,7 +1685,7 @@ int vxlan_processor(struct xdp_md *ctx)
     if (pctx->stage != STAGE_CLASSIFIER) {
         /* Context might be stale or from different packet, reset and abort */
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0032);  /* vxlan_processor stage validation failure marker */
-        update_stat(STAT_ERRORS, 1);
+        /* update_stat(STAT_ERRORS, 1); */
         return XDP_ABORTED;
     }
     
@@ -1700,7 +1710,7 @@ int vxlan_processor(struct xdp_md *ctx)
     /* Validate IP header length */
     if (ip_hdr->ihl < 5) {
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0100);  /* IP header length validation failure - SYSTEMATIC ERROR SOURCE */
-        update_stat(STAT_ERRORS, 1);
+        /* update_stat(STAT_ERRORS, 1); */
         return XDP_DROP;
     }
     
@@ -1783,14 +1793,14 @@ int nat_engine(struct xdp_md *ctx)
     pctx = get_pipeline_ctx();
     if (!pctx) {
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0050);  /* nat_engine context failure marker */
-        update_stat(STAT_ERRORS, 1);
+        /* update_stat(STAT_ERRORS, 1); */
         return XDP_ABORTED;
     }
     
     /* Validate we're coming from the correct previous stage */
     if (pctx->stage != STAGE_VXLAN_PROCESSOR) {
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0051);  /* nat_engine stage validation failure marker */
-        update_stat(STAT_ERRORS, 1);
+        /* update_stat(STAT_ERRORS, 1); */
         return XDP_ABORTED;
     }
     
@@ -1828,7 +1838,7 @@ int nat_engine(struct xdp_md *ctx)
             /* Validate IP header length before calculating UDP offset */
             if (ip_hdr->ihl < 5) {
                 update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0101);  /* NAT engine IP header length validation failure */
-                update_stat(STAT_ERRORS, 1);
+                /* update_stat(STAT_ERRORS, 1); */
                 return XDP_DROP;
             }
             
@@ -1847,7 +1857,7 @@ int nat_engine(struct xdp_md *ctx)
             } else {
                 /* NAT failed - this might explain wrong destinations */
                 update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0102);  /* NAT apply failure marker */
-                update_stat(STAT_ERRORS, 1);
+                /* update_stat(STAT_ERRORS, 1); */
             }
         }
     } else {
@@ -1907,7 +1917,7 @@ int forwarding_stage(struct xdp_md *ctx)
     pctx = get_pipeline_ctx();
     if (!pctx) {
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0060);  /* forwarding_stage context failure marker */
-        update_stat(STAT_ERRORS, 1);
+        /* update_stat(STAT_ERRORS, 1); */
         return XDP_ABORTED;
     }
     
@@ -1915,7 +1925,7 @@ int forwarding_stage(struct xdp_md *ctx)
     if (pctx->stage != STAGE_NAT_ENGINE) {
         /* DEBUG: Track stage validation failure - potential systematic error source */
         update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0020);  /* Stage validation failure marker */
-        update_stat(STAT_ERRORS, 1);
+        /* update_stat(STAT_ERRORS, 1); */
         return XDP_ABORTED;
     }
     
