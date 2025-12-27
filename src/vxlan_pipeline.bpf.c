@@ -1385,6 +1385,7 @@ static __always_inline int forward_packet(void *data, void *data_end,
     /* Access Ethernet header for MAC address updates */
     eth_hdr = (struct ethhdr *)data;
     if ((void *)(eth_hdr + 1) > data_end) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0043);  /* Forward packet eth header bounds failure marker */
         update_stat(STAT_ERRORS, 1);
         update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
         return XDP_DROP;
@@ -1422,6 +1423,7 @@ static __always_inline int forward_packet(void *data, void *data_end,
     
     /* Ensure temp_len is within valid range for ring buffer */
     if (temp_len == 0) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0040);  /* temp_len zero error marker */
         update_stat(STAT_ERRORS, 1);
         return XDP_DROP;
     }
@@ -1454,6 +1456,7 @@ static __always_inline int forward_packet(void *data, void *data_end,
                 long ret = bpf_probe_read_kernel(event->data, copy_len & (PACKET_DATA_MAX_SIZE - 1), data);
                 if (ret < 0) {
                     /* Only count actual copy failures as errors */
+                    update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0042);  /* Ring buffer copy failure marker */
                     event->len = 0;  /* Mark as failed copy */
                     update_stat(STAT_ERRORS, 1);
                 } else {
@@ -1475,6 +1478,7 @@ static __always_inline int forward_packet(void *data, void *data_end,
                 }
             } else {
                 event->len = 0;  /* Mark as failed - insufficient data */
+                update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0041);  /* Insufficient data error marker */
                 update_stat(STAT_BOUNDS_CHECK_FAILED, 1);
                 update_stat(STAT_ERRORS, 1);
             }
@@ -1540,6 +1544,7 @@ int vxlan_classifier(struct xdp_md *ctx)
     
     /* Initialize context for this packet */
     if (init_pipeline_ctx(ctx, pctx) < 0) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0030);  /* init_pipeline_ctx failure marker */
         update_stat(STAT_ERRORS, 1);
         return XDP_ABORTED;
     }
@@ -1601,6 +1606,7 @@ int vxlan_processor(struct xdp_md *ctx)
     /* Validate we're coming from the correct previous stage */
     if (pctx->stage != STAGE_CLASSIFIER) {
         /* Context might be stale or from different packet, reset and abort */
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0032);  /* vxlan_processor stage validation failure marker */
         update_stat(STAT_ERRORS, 1);
         return XDP_ABORTED;
     }
@@ -1703,12 +1709,14 @@ int nat_engine(struct xdp_md *ctx)
     /* Get pipeline context */
     pctx = get_pipeline_ctx();
     if (!pctx) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0050);  /* nat_engine context failure marker */
         update_stat(STAT_ERRORS, 1);
         return XDP_ABORTED;
     }
     
     /* Validate we're coming from the correct previous stage */
     if (pctx->stage != STAGE_VXLAN_PROCESSOR) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0051);  /* nat_engine stage validation failure marker */
         update_stat(STAT_ERRORS, 1);
         return XDP_ABORTED;
     }
@@ -1818,6 +1826,7 @@ int forwarding_stage(struct xdp_md *ctx)
     /* Get pipeline context */
     pctx = get_pipeline_ctx();
     if (!pctx) {
+        update_stat(STAT_PACKET_SIZE_DEBUG, 0xDEAD0060);  /* forwarding_stage context failure marker */
         update_stat(STAT_ERRORS, 1);
         return XDP_ABORTED;
     }
