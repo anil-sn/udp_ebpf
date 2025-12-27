@@ -259,7 +259,24 @@ install_dependencies() {
                 
                 info "Cloning bpftool repository (this may take a moment)..."
                 cd /tmp
-                if git clone --quiet --recurse-submodules https://github.com/libbpf/bpftool.git; then
+                
+                # Handle existing directory gracefully
+                if [ -d "bpftool" ]; then
+                    info "Existing bpftool directory found, updating..."
+                    cd bpftool
+                    if git pull --quiet && git submodule update --quiet --init --recursive; then
+                        info "Updated existing bpftool repository"
+                    else
+                        warn "Failed to update existing repository, removing and re-cloning..."
+                        cd /tmp
+                        rm -rf bpftool
+                        git clone --quiet --recurse-submodules https://github.com/libbpf/bpftool.git
+                    fi
+                else
+                    git clone --quiet --recurse-submodules https://github.com/libbpf/bpftool.git
+                fi
+                
+                if [ -d "bpftool" ]; then
                     cd bpftool/src
                     
                     info "Building bpftool from source (this may take a few minutes)..."
@@ -356,13 +373,33 @@ install_xdp_tools() {
     # Remove existing directory if it exists
     [ -d "$xdp_tools_dir" ] && rm -rf "$xdp_tools_dir"
     
-    # Clone xdp-tools (non-interactive)
+    # Clone/update xdp-tools (non-interactive)
     info "Downloading XDP tools source code..."
-    if git clone --quiet https://github.com/xdp-project/xdp-tools.git "$xdp_tools_dir"; then
-        log "XDP tools repository cloned successfully"
+    
+    # Handle existing directory gracefully  
+    if [ -d "$xdp_tools_dir" ]; then
+        info "Existing XDP tools directory found, updating..."
+        cd "$xdp_tools_dir"
+        if git pull --quiet && git submodule update --quiet --init --recursive; then
+            log "Updated existing XDP tools repository"
+        else
+            warn "Failed to update existing repository, removing and re-cloning..."
+            cd /tmp
+            rm -rf "$xdp_tools_dir"
+            if git clone --quiet https://github.com/xdp-project/xdp-tools.git "$xdp_tools_dir"; then
+                log "XDP tools repository cloned successfully"
+            else
+                warn "Failed to clone xdp-tools repository"
+                return 1
+            fi
+        fi
     else
-        warn "Failed to clone xdp-tools repository"
-        return 1
+        if git clone --quiet https://github.com/xdp-project/xdp-tools.git "$xdp_tools_dir"; then
+            log "XDP tools repository cloned successfully"
+        else
+            warn "Failed to clone xdp-tools repository"
+            return 1
+        fi
     fi
     
     cd "$xdp_tools_dir"
