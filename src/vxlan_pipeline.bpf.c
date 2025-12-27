@@ -1516,11 +1516,12 @@ static __always_inline int forward_packet(void *data, void *data_end,
                 }
                 
                 /* Perform the copy with exact packet length to prevent corruption */
-                /* Simple byte-by-byte copy - verifier friendly */
+                /* Copy only essential headers - keep program size small */
                 __u32 copied = 0;
+                __u32 copy_limit = (copy_len > 128) ? 128 : copy_len;  /* Max 128 bytes */
                 
-                /* Copy byte by byte with simple bounds - let compiler optimize */
-                for (__u32 i = 0; i < PACKET_DATA_MAX_SIZE && i < copy_len; i++) {
+                /* Simple bounded copy for headers only */
+                for (__u32 i = 0; i < copy_limit; i++) {
                     if ((char *)data + i >= (char *)data_end) break;
                     event->data[i] = *((char *)data + i);
                     copied = i + 1;
