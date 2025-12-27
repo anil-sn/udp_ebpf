@@ -99,44 +99,52 @@ count_bpf_map_entries() {
     fi
 }
 
-# Get NAT rules from BPF map - Enhanced for human-readable format
+# Get NAT rules from BPF map - Fixed for actual JSON format
 get_nat_rules() {
-    local nat_data=$(dump_bpf_map "nat_map" "json")
+    # Get JSON data directly from bpftool
+    local nat_json=$(sudo bpftool map dump name nat_map --json 2>/dev/null)
     
-    if [ -z "$nat_data" ]; then
+    if [ -z "$nat_json" ]; then
         return 1
     fi
     
-    # Use jq to parse the JSON and convert to human readable format
-    if command -v jq >/dev/null 2>&1; then
-        # Parse the specific JSON format from bpftool
-        local parsed_rules=$(echo "$nat_data" | jq -r '
-            .[] | 
-            if .key and .value then
-                # Handle object format: {"key": {"src_port": 5500}, "value": {"target_ip": 844242604, "target_port": 8081}}
-                if (.key | type) == "object" and (.value | type) == "object" then
-                    "\(.key.src_port) -> \(.value.target_ip):\(.value.target_port)"
-                else empty end
-            else empty end
-        ' 2>/dev/null)
-        
-        if [ -n "$parsed_rules" ]; then
-            echo "$parsed_rules" | while read -r rule; do
-                if [[ "$rule" =~ ([0-9]+)\ -\>\ ([0-9]+):([0-9]+) ]]; then
-                    local src_port="${BASH_REMATCH[1]}"
-                    local target_ip_int="${BASH_REMATCH[2]}"
-                    local target_port="${BASH_REMATCH[3]}"
-                    
-                    # Convert integer IP to dotted decimal using corrected function
-                    local target_ip=$(printf "%d.%d.%d.%d" $((target_ip_int & 0xFF)) $(((target_ip_int >> 8) & 0xFF)) $(((target_ip_int >> 16) & 0xFF)) $(((target_ip_int >> 24) & 0xFF)))
-                    echo "$src_port -> $target_ip:$target_port"
-                fi
-            done
-            return 0
-        fi
+    # Check if we have jq
+    if ! command -v jq >/dev/null 2>&1; then
+        return 1
     fi
     
-    return 1
+    # Parse and convert NAT rules to human readable format
+    local rules_found=0
+    echo "$nat_json" | jq -r '
+        .[] | 
+        if .key and .value then
+            if (.key | type) == "object" and (.value | type) == "object" then
+                (.key.src_port // 0) as $src_port |
+                (.value.target_ip // 0) as $target_ip_int |
+                (.value.target_port // 0) as $target_port |
+                "\($src_port)->\($target_ip_int):\($target_port)"
+            else empty end
+        else empty end
+    ' 2>/dev/null | while IFS= read -r rule; do
+        if [[ "$rule" =~ ([0-9]+)-\>([0-9]+):([0-9]+) ]]; then
+            local src_port="${BASH_REMATCH[1]}"
+            local target_ip_int="${BASH_REMATCH[2]}" 
+            local target_port="${BASH_REMATCH[3]}"
+            
+            # Convert integer IP to dotted decimal
+            local target_ip=$(printf "%d.%d.%d.%d" \
+                $((target_ip_int & 0xFF)) \
+                $(((target_ip_int >> 8) & 0xFF)) \
+                $(((target_ip_int >> 16) & 0xFF)) \
+                $(((target_ip_int >> 24) & 0xFF)))
+            
+            echo "$src_port -> $target_ip:$target_port"
+            rules_found=1
+        fi
+    done
+    
+    [ "$rules_found" = "1" ] && return 0 || return 1
+}
 }
 
 # Get IP allowlist count
