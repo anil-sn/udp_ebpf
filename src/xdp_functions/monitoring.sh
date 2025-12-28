@@ -692,16 +692,21 @@ show_bpf_maps() {
         return
     fi
     
-    # Get raw dump output (both JSON and plain text for debugging)
-    local ip_raw=$(sudo bpftool map dump name ip_allowlist 2>/dev/null)
+    # Get JSON dump for reliable parsing
     local ip_json=$(sudo bpftool map dump name ip_allowlist --json 2>/dev/null)
     
-    if [ -z "$ip_raw" ]; then
+    if [ -z "$ip_json" ]; then
         echo "Total allowed IPs: 0"
         echo "Map exists but is empty"
     else
-        # Count entries using simple line counting (more reliable)
-        local ip_count=$(echo "$ip_raw" | grep -c "key:" 2>/dev/null || echo "0")
+        # Count entries using jq if available, otherwise use grep
+        local ip_count
+        if command -v jq >/dev/null 2>&1; then
+            ip_count=$(echo "$ip_json" | jq -r 'length' 2>/dev/null || echo "0")
+        else
+            ip_count=$(echo "$ip_json" | grep -c '"formatted"' 2>/dev/null || echo "0")
+        fi
+        
         echo "Total allowed IPs: $ip_count"
         
         if [ "$ip_count" -gt 0 ]; then
@@ -709,23 +714,33 @@ show_bpf_maps() {
             echo "│   IP Address    │                  Status                     │"
             echo "├─────────────────┼─────────────────────────────────────────────┤"
             
-            # Parse using more robust method - extract hex keys and convert
-            echo "$ip_raw" | grep "key:" | head -20 | while read -r line; do
-                # Extract hex key (4 bytes for IPv4)
-                local hex_key=$(echo "$line" | sed -n 's/.*key:\s*\([0-9a-f][0-9a-f]\s[0-9a-f][0-9a-f]\s[0-9a-f][0-9a-f]\s[0-9a-f][0-9a-f]\).*/\1/p')
-                if [ -n "$hex_key" ]; then
-                    # Convert hex to IP (assuming network byte order)
-                    local ip_addr=$(echo "$hex_key" | awk '{
-                        gsub(/\s/, "");
-                        a=strtonum("0x"substr($0,1,2));
-                        b=strtonum("0x"substr($0,3,2));
-                        c=strtonum("0x"substr($0,5,2));
-                        d=strtonum("0x"substr($0,7,2));
-                        printf "%d.%d.%d.%d", a,b,c,d
-                    }')
-                    printf "│ %15s │                 Allowed                     │\n" "$ip_addr"
-                fi
-            done
+            if command -v jq >/dev/null 2>&1; then
+                # Use jq for reliable JSON parsing
+                echo "$ip_json" | jq -r '.[].formatted.key' 2>/dev/null | head -20 | while read -r ip_int; do
+                    if [ -n "$ip_int" ] && [[ "$ip_int" =~ ^[0-9]+$ ]]; then
+                        # Convert integer IP to dotted decimal (network byte order)
+                        local a=$(( (ip_int >> 24) & 0xFF ))
+                        local b=$(( (ip_int >> 16) & 0xFF ))
+                        local c=$(( (ip_int >> 8) & 0xFF ))
+                        local d=$(( ip_int & 0xFF ))
+                        local ip_addr="$a.$b.$c.$d"
+                        printf "│ %15s │                 Allowed                     │\n" "$ip_addr"
+                    fi
+                done
+            else
+                # Fallback: parse without jq using grep/sed
+                echo "$ip_json" | grep -o '"formatted":{"key":[0-9]*' | sed 's/"formatted":{"key"://' | head -20 | while read -r ip_int; do
+                    if [ -n "$ip_int" ] && [[ "$ip_int" =~ ^[0-9]+$ ]]; then
+                        # Convert integer IP to dotted decimal
+                        local a=$(( (ip_int >> 24) & 0xFF ))
+                        local b=$(( (ip_int >> 16) & 0xFF ))
+                        local c=$(( (ip_int >> 8) & 0xFF ))
+                        local d=$(( ip_int & 0xFF ))
+                        local ip_addr="$a.$b.$c.$d"
+                        printf "│ %15s │                 Allowed                     │\n" "$ip_addr"
+                    fi
+                done
+            fi
             
             if [ "$ip_count" -gt 20 ]; then
                 printf "│       ...       │         (showing first 20 of %d)           │\n" "$ip_count"
@@ -733,11 +748,11 @@ show_bpf_maps() {
             
             echo "└─────────────────┴─────────────────────────────────────────────┘"
             
-            # Show raw dump for debugging if needed
+            # Show sample raw data for debugging if small list
             if [ "$ip_count" -le 5 ]; then
                 echo ""
-                print_color "yellow" "Raw map dump (for debugging):"
-                echo "$ip_raw"
+                print_color "yellow" "Sample entries (for debugging):"
+                echo "$ip_json" | head -3
             fi
         fi
     fi
