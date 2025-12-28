@@ -677,10 +677,6 @@ show_bpf_maps() {
             fi
         fi
     fi
-        else
-            printf "│      -      │        -        │      -       │   Map Empty     │\n"
-        fi
-    fi
     echo "└─────────────┴─────────────────┴──────────────┴─────────────────┘"
     
     echo ""
