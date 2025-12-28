@@ -41,6 +41,20 @@ class Logger:
         
     def critical(self, message: str, **kwargs):
         self.logger.critical(message, **kwargs)
+    
+    def set_level(self, level: str):
+        """Set logging level dynamically"""
+        level_map = {
+            'DEBUG': logging.DEBUG,
+            'INFO': logging.INFO,
+            'WARNING': logging.WARNING,
+            'ERROR': logging.ERROR,
+            'CRITICAL': logging.CRITICAL
+        }
+        if level.upper() in level_map:
+            self.logger.setLevel(level_map[level.upper()])
+        else:
+            self.logger.warning(f"Unknown log level: {level}, keeping current level")
         
     def add_file_handler(self, log_file: str):
         """Add file logging handler"""
