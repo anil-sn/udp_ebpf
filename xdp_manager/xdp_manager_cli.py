@@ -551,11 +551,17 @@ Examples:
             
             self.logger.info(f"Using program: {program}, mode: {mode}")
             
-            # Start the pipeline with all parameters
+            # Update config with runtime parameters if provided
+            if args.program or args.mode:
+                config = self.config_manager.get_config()
+                if args.program:
+                    config.pipeline_config.program_path = program
+                if args.mode:
+                    config.pipeline_config.mode = mode
+            
+            # Start the pipeline (it will use config for program and mode)
             result = self.pipeline.start(
                 interface=interface,
-                program_path=program,
-                mode=mode,
                 force=args.force
             )
             
