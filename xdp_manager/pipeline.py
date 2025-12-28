@@ -162,27 +162,71 @@ class XDPPipeline:
                 
                 # Load IP allowlist after successful pipeline start (matches bash)
                 self.logger.info("Loading IP allowlist...")
-                allowlist_file = "ip_allowlist.json"  # bash looks in current dir
+                allowlist_file = "ip_allowlist.json"  # Look in src directory
                 
-                if os.path.exists(allowlist_file):
+                if os.path.exists(allowlist_file):  # Check in src directory
                     # Give BPF maps time to fully initialize (matches bash sleep 2)
                     time.sleep(2)
                     self.logger.info("Attempting to load IPs from allowlist...")
                     
                     try:
-                        # Use load_ip_allowlist.py from current directory (matches bash exactly)
+                        # Use load_ip_allowlist.py from current directory (src/) - matches bash exactly
                         subprocess.run([
                             'sudo', 'python3', 'load_ip_allowlist.py', allowlist_file
-                        ], check=True, cwd=original_cwd)
+                        ], check=True, cwd="src")  # Run from src directory
                         self.logger.info("IP allowlist loaded successfully")
                     except subprocess.CalledProcessError:
                         self.logger.warning("Warning: Failed to load IP allowlist - check BPF program status")
                 else:
-                    self.logger.warning("Warning: ip_allowlist.json not found")
+                    self.logger.warning("Warning: ip_allowlist.json not found in src directory")
                 
                 # Allow time for vxlan_loader to fully initialize (matches bash sleep 3)
                 self.logger.info("Waiting for BPF map initialization...")
                 time.sleep(3)
+                
+                # Start packet_injector instances (matches bash implementation exactly)
+                self.logger.info("Starting packet_injector instances for maximum performance...")
+                
+                # Kill any existing packet_injector processes first
+                subprocess.run(['sudo', 'pkill', '-f', 'packet_injector'], 
+                             capture_output=True, check=False)
+                time.sleep(1)
+                
+                # Start 8 packet injector instances with CPU affinity (matches bash)
+                egress_iface = pipeline_cfg.egress_interface
+                injector_pids = []
+                
+                for cpu in range(8):  # 8-core system optimization
+                    try:
+                        cmd = [
+                            'sudo', 'taskset', '-c', str(cpu), 
+                            './packet_injector', 'vxlan_pipeline.bpf.o', egress_iface
+                        ]
+                        
+                        # Start with nohup equivalent (matches bash nohup)
+                        with open(os.devnull, 'r') as devnull:
+                            with open(os.devnull, 'w') as devnull_out:
+                                injector_proc = subprocess.Popen(
+                                    cmd,
+                                    stdin=devnull,
+                                    stdout=devnull_out,
+                                    stderr=devnull_out,
+                                    cwd="src",
+                                    start_new_session=True
+                                )
+                                injector_pids.append(injector_proc.pid)
+                        
+                        self.logger.debug(f"Started packet_injector on CPU {cpu} (PID: {injector_proc.pid})")
+                    except Exception as e:
+                        self.logger.warning(f"Failed to start packet_injector on CPU {cpu}: {e}")
+                
+                if injector_pids:
+                    self.logger.info(f"Successfully started {len(injector_pids)} packet_injector instances")
+                else:
+                    self.logger.warning("No packet_injector instances started - may affect performance")
+                
+                # Brief pause for injectors to initialize
+                time.sleep(2)
                 
                 return True
             else:
