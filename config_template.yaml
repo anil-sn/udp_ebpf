@@ -1,0 +1,65 @@
+# XDP Manager Configuration
+# This file provides default values for the XDP pipeline management system
+# Place this file as ~/.xdp_manager.yaml or /etc/xdp_manager/config.yaml
+
+pipeline:
+  # Default network interface (auto-detected if not specified)
+  interface: "eth0"
+  
+  # Default BPF program path
+  program_path: "src/vxlan_pipeline.bpf.o"
+  
+  # XDP attachment mode: xdp, xdpgeneric, xdpdrv, xdpoffload
+  mode: "xdp"
+  
+  # Target interface for forwarding
+  target_interface: "eth1"
+
+# Network configuration
+network:
+  # NAT configuration
+  nat_ip: "172.30.82.95"
+  nat_port: 8081
+  source_port: 31765
+
+# Performance settings
+performance:
+  # Target packets per second
+  target_pps: 85000
+  
+  # Performance threshold for alerts
+  threshold_pps: 60000
+  
+  # Statistics collection interval (seconds)
+  stats_interval: 5
+
+# Monitoring configuration  
+monitoring:
+  # Enable live statistics
+  live_stats: true
+  
+  # Default monitoring duration (seconds)
+  duration: 300
+  
+  # Update interval for live displays (seconds)
+  refresh_interval: 1.0
+
+# Logging configuration
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  level: "INFO"
+  
+  # Log file path (empty for console only)
+  file: ""
+  
+  # Enable colored output
+  colors: true
+
+# Paths configuration
+paths:
+  # IP allowlist files
+  allowlist_file: "xdp_manager/config/ip_allowlist.json"
+  allowlist_prod_file: "xdp_manager/config/ip_allowlist_prod.json"
+  
+  # BPF programs directory
+  bpf_programs_dir: "src"

@@ -1,0 +1,198 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "xdp-manager"
+version = "2.0.0"
+description = "Professional XDP Pipeline Management System with Advanced Analytics"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Anilkumar Srirangapatna Nagesh", email = "your.email@domain.com"}
+]
+maintainers = [
+    {name = "Anilkumar Srirangapatna Nagesh", email = "your.email@domain.com"}
+]
+keywords = [
+    "xdp", "ebpf", "networking", "vxlan", "pipeline", "performance",
+    "packet-processing", "linux", "bpf", "network-monitoring"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers", 
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10", 
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Networking",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "rich>=13.0.0",
+    "pyyaml>=6.0", 
+    "psutil>=5.9.0",
+    "argcomplete>=2.0.0",
+    "netifaces>=0.11.0", 
+    "scapy>=2.5.0",
+    "numpy>=1.20.0",
+    "pandas>=1.5.0",
+    "matplotlib>=3.5.0",
+    "seaborn>=0.11.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0", 
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+    "types-PyYAML",
+    "types-psutil",
+]
+docs = [
+    "sphinx>=6.0.0",
+    "sphinx-rtd-theme>=1.2.0", 
+    "sphinx-autodoc-typehints>=1.20.0",
+    "myst-parser>=2.0.0",
+]
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.10.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/xdp-manager"
+Repository = "https://github.com/yourusername/xdp-manager.git"
+Documentation = "https://xdp-manager.readthedocs.io/"
+"Bug Tracker" = "https://github.com/yourusername/xdp-manager/issues"
+Changelog = "https://github.com/yourusername/xdp-manager/blob/main/CHANGELOG.md"
+
+[project.scripts]
+xdp-manager = "xdp_manager.cli:main"
+xdp-pipeline = "xdp_manager.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["xdp_manager"]
+
+[tool.hatch.build.targets.wheel.sources]
+"xdp_manager" = "xdp_manager"
+
+[tool.hatch.build.targets.wheel.force-include]
+"xdp_manager/config" = "xdp_manager/config"
+
+[tool.black]
+line-length = 88
+target-version = ["py38", "py39", "py310", "py311", "py312"]
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.ruff]
+line-length = 88
+target-version = "py38"
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501",  # line too long, handled by black
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]  # Allow unused imports in __init__.py
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "scapy.*",
+    "netifaces.*",
+    "matplotlib.*", 
+    "seaborn.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--cov=xdp_manager",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-report=xml",
+    "--strict-markers",
+    "--disable-warnings",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+
+[tool.coverage.run]
+source = ["xdp_manager"]
+omit = [
+    "*/tests/*",
+    "*/test_*", 
+    "setup.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]

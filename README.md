@@ -135,6 +135,74 @@ sudo sysctl -w net.core.netdev_max_backlog=5000 # Increased packet queue
 ./xdp.sh info               # Detailed system configuration and state
 ```
 
+### **Professional CLI Management Interface**
+
+**NEW: Modern CLI with Professional Features**
+
+The XDP Manager provides a comprehensive command-line interface for enterprise-grade pipeline management, monitoring, and analytics.
+
+#### **Automated Setup & Installation**
+```bash
+# Complete automated setup (fresh VM to production-ready)
+./prepare.sh                # Installs everything + global CLI access
+
+# After setup, CLI available globally:
+xdp-manager --help          # Professional CLI interface
+xdp-pipeline --help         # Alias for compatibility
+```
+
+#### **Essential CLI Operations**
+```bash
+# Pipeline Management
+xdp-manager start --interface eth0     # Start with interface selection
+xdp-manager status --live              # Real-time status monitoring  
+xdp-manager restart --quick            # Fast restart without validation
+xdp-manager stop --force               # Emergency stop
+
+# IP Allowlist Management  
+xdp-manager allowlist list             # Show current allowlist
+xdp-manager allowlist add 192.168.1.0/24    # Add network range
+xdp-manager allowlist import --file config/ip_allowlist_prod.json
+xdp-manager allowlist export --file backup.json
+
+# Advanced Monitoring & Analytics
+xdp-manager monitor --duration 300     # 5-minute monitoring session
+xdp-manager analytics --performance    # Performance analysis
+xdp-manager top                        # Interactive top-like interface
+xdp-manager stats --export stats.json  # Export metrics
+
+# Diagnostics & Troubleshooting  
+xdp-manager diagnostics --comprehensive # Full system check
+xdp-manager debug --trace --interface eth0  # Packet flow tracing
+xdp-manager config validate            # Configuration validation
+```
+
+#### **Multiple Access Methods**
+```bash
+# Global access (after prepare.sh)
+xdp-manager <command>
+
+# Direct execution
+.venv/bin/xdp-manager <command>
+
+# Using uv package manager
+uv run xdp-manager <command>
+
+# Environment activation
+source activate-xdp.sh
+xdp-manager <command>  # Now available directly
+```
+
+#### **Professional Features**
+- **Rich Output Formats**: JSON, YAML, Table, Plain text
+- **Live Monitoring**: Real-time statistics and alerts
+- **Comprehensive Analytics**: Performance, security, and traffic analysis
+- **Advanced Diagnostics**: System health checks and troubleshooting
+- **Configuration Management**: Validation, editing, and backup
+- **Scripting Support**: JSON output for automation and integration
+
+**Documentation**: See `xdp_manager/CLI_USAGE.md` for complete command reference and `xdp_manager/QUICK_REFERENCE.md` for essential commands.
+
 ## **Enterprise Monitoring & Analytics**
 
 ### **Real-Time Performance Dashboard**

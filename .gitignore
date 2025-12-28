@@ -1,0 +1,329 @@
+# XDP/eBPF Project .gitignore
+
+# ==============================================================================
+# Build outputs and compiled files
+# ==============================================================================
+
+# eBPF compiled objects
+*.bpf.o
+*.bpf.ll
+*.o
+*.so
+*.a
+
+# C/C++ build artifacts
+*.out
+*.exe
+.deps/
+.libs/
+
+# BPF bytecode and LLVM IR
+*.bc
+*.ll
+
+# Object files and libraries
+*.obj
+*.lib
+*.dll
+*.dylib
+
+# Executables
+vxlan_loader
+packet_injector
+debug_*
+test_*
+
+# Make build artifacts
+Makefile.deps
+.make_*
+
+# ==============================================================================
+# Python environment and cache
+# ==============================================================================
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env/
+
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# Python distribution and packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test and coverage reports
+htmlcov/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# ==============================================================================
+# Development tools and IDEs
+# ==============================================================================
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# IntelliJ IDEA
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ==============================================================================
+# System and OS files
+# ==============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.nfs*
+
+# ==============================================================================
+# Project-specific files
+# ==============================================================================
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.production
+secrets.yaml
+private_config.yaml
+
+# Logs and debugging output
+*.log
+logs/
+debug_output/
+trace_*.txt
+packet_dump_*
+tcpdump_*
+*.pcap
+*.cap
+
+# Statistics and monitoring data
+stats_*.json
+analytics_*.json
+monitoring_*.json
+performance_*.json
+metrics_*.csv
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*_backup
+*_old
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+*.tmp
+*.temp
+
+# Data files (adjust as needed)
+data/
+datasets/
+*.dat
+*.bin
+
+# Reports and generated documentation
+reports/
+*.pdf
+*.docx
+generated_docs/
+
+# ==============================================================================
+# eBPF and XDP specific
+# ==============================================================================
+
+# BPF maps and programs persistence
+/sys/fs/bpf/
+pinned_maps/
+
+# XDP program state
+xdp_state_*
+bpf_program_*
+
+# Network capture and analysis
+*.pcapng
+network_trace_*
+packet_analysis_*
+
+# Performance profiling
+perf.data*
+*.prof
+profile_*
+
+# BPF debugging
+bpf_debug_*
+verifier_log_*
+
+# ==============================================================================
+# Package managers and dependencies
+# ==============================================================================
+
+# npm (if using Node.js tools)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# pip
+pip-log.txt
+pip-delete-this-directory.txt
+
+# UV package manager
+.uv-cache/
+
+# ==============================================================================
+# Documentation and presentation
+# ==============================================================================
+
+# Sphinx documentation
+docs/_build/
+site/
+
+# MkDocs
+site/
+
+# LaTeX
+*.aux
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*.toc
+
+# ==============================================================================
+# Testing and CI/CD
+# ==============================================================================
+
+# Test results
+test-results/
+test_output/
+*.xml
+results.json
+
+# GitHub Actions
+.github/workflows/secrets/
+
+# ==============================================================================
+# Networking and monitoring tools
+# ==============================================================================
+
+# Wireshark
+*.pcap
+*.pcapng
+
+# tcpdump
+*.dmp
+
+# Network monitoring
+monitoring_data/
+network_stats/
+
+# ==============================================================================
+# Security and compliance
+# ==============================================================================
+
+# API keys and tokens
+.secrets
+api_keys.txt
+tokens.json
+
+# SSL certificates (adjust path as needed)
+*.pem
+*.crt
+*.key
+certificates/
+
+# ==============================================================================
+# Custom project exclusions
+# ==============================================================================
+
+# Add your project-specific exclusions here
+# Example:
+# custom_configs/
+# proprietary_data/

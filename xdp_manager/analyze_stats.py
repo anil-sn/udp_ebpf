@@ -29,74 +29,151 @@ STATS_MAP = {
     0x0f: "LENGTH_CORRECTIONS"
 }
 
-# Debug marker mappings for systematic error analysis
-DEBUG_MARKERS = {
-    # Processing Failures (0xDEAD001X)
-    0xDEAD0010: "parse_vxlan failure",
-    0xDEAD0011: "Inner ethernet bounds failure",
-    0xDEAD0012: "Inner IP bounds failure",
-    0xDEAD0013: "Inner UDP bounds failure",
-    0xDEAD0014: "Decapsulation failure",
-    0xDEAD0015: "Header update failure (non-fatal)",
+# ===================================================================
+# ERROR MARKER CONSTANT DEFINITIONS
+# ===================================================================
+# These constants correspond to the error markers defined in vxlan_pipeline.h
+# and ensure consistency between kernel and userspace error reporting.
 
-    # Stage Failures (0xDEAD002X-0xDEAD006X)
-    0xDEAD0020: "Forwarding stage validation failure",
-    0xDEAD0030: "init_pipeline_ctx failure in classifier",
-    0xDEAD0031: "vxlan_processor context failure",
-    0xDEAD0032: "vxlan_processor stage validation failure",
-    0xDEAD0050: "nat_engine context failure",
-    0xDEAD0051: "nat_engine stage validation failure",
-    0xDEAD0060: "forwarding_stage context failure",
+# Processing Failures (0xE002001X)
+ERR_PARSE_VXLAN_FAILURE = 0xE0020010
+ERR_INNER_ETH_BOUNDS_FAILURE = 0xE0020011
+ERR_INNER_IP_BOUNDS_FAILURE = 0xE0020012
+ERR_INNER_UDP_BOUNDS_FAILURE = 0xE0020013
+ERR_DECAPSULATION_FAILURE = 0xE0020014
+ERR_HEADER_UPDATE_FAILURE = 0xE0020015
 
-    # Ring Buffer Failures (0xDEAD004X)
-    0xDEAD0040: "temp_len zero error",
-    0xDEAD0041: "Insufficient data error",
-    0xDEAD0042: "Ring buffer copy failure",
-    0xDEAD0043: "Forward packet eth header bounds failure",
+# Stage Failures (0xE002002X-0xE002006X)
+ERR_STAGE_VALIDATION_FAILURE = 0xE0020020
+ERR_INIT_PIPELINE_CTX_FAILURE = 0xE0020030
+ERR_VXLAN_PROCESSOR_CONTEXT_FAILURE = 0xE0020031
+ERR_VXLAN_PROCESSOR_STAGE_FAILURE = 0xE0020032
+ERR_NAT_ENGINE_CONTEXT_FAILURE = 0xE0020050
+ERR_NAT_ENGINE_STAGE_FAILURE = 0xE0020051
+ERR_FORWARDING_STAGE_CONTEXT_FAILURE = 0xE0020060
 
-    # Length Validation (0xDEAD009X)
-    0xDEAD0099: "ZERO packet_len received",
+# Ring Buffer Failures (0xE002004X)
+ERR_BUFFER_LENGTH_ZERO_ERROR = 0xE0020040
+ERR_INSUFFICIENT_DATA_ERROR = 0xE0020041
+ERR_RING_BUFFER_COPY_FAILURE = 0xE0020042
+ERR_FORWARD_PACKET_ETH_BOUNDS = 0xE0020043
 
-    # IP Header Validation Failures (0xDEAD010X)
-    0xDEAD0100: "IP header length validation failure",
-    0xDEAD0101: "NAT engine IP header length validation failure",
-    0xDEAD0102: "NAT apply failure marker",
+# Length Validation (0xE002009X)
+ERR_ZERO_PACKET_LENGTH = 0xE0020099
 
-    # Update Packet Headers Failures (0xDEAD020X)
-    0xDEAD0200: "IP header bounds after decapsulation",
-    0xDEAD0201: "IP header length validation after decapsulation",
-    0xDEAD0202: "IP header options bounds after decapsulation",
+# IP Header Validation Failures (0xE002010X)
+ERR_IP_HEADER_LENGTH_VALIDATION = 0xE0020100
+ERR_NAT_ENGINE_IP_HEADER_VALIDATION = 0xE0020101
+ERR_NAT_APPLICATION_FAILURE = 0xE0020102
 
-    # Decapsulation Failures (0xDEAD030X)
-    0xDEAD0300: "Decapsulation bounds validation failure",
+# Update Packet Headers Failures (0xE002020X)
+ERR_IP_HEADER_BOUNDS_AFTER_DECAPS = 0xE0020200
+ERR_IP_HEADER_LENGTH_AFTER_DECAPS = 0xE0020201
+ERR_IP_HEADER_OPTIONS_BOUNDS_AFTER_DECAPS = 0xE0020202
 
-    # Parse Outer Headers Failures (0xDEAD040X)
-    0xDEAD0400: "Outer ethernet header bounds failure",
-    0xDEAD0401: "Outer IP header bounds failure",
-    0xDEAD0402: "Outer IP header length validation failure",
-    0xDEAD0403: "Outer UDP header bounds failure",
+# Decapsulation Failures (0xE002030X)
+ERR_DECAPSULATION_BOUNDS_VALIDATION = 0xE0020300
 
-    # Pipeline Stage Bounds Failures (0xDEAD050X)
-    0xDEAD0500: "vxlan_classifier context failure",
-    0xDEAD0501: "vxlan_processor eth bounds failure",
-    0xDEAD0502: "vxlan_processor IP bounds failure",
-    0xDEAD0503: "vxlan_processor UDP bounds failure",
-    0xDEAD0504: "vxlan_processor VXLAN header bounds failure",
-    0xDEAD0505: "nat_engine UDP bounds after validation failure",
-    0xDEAD0506: "nat_engine post-decaps IP bounds failure",
-    0xDEAD0507: "forwarding_stage post-decaps bounds failure",
+# Parse Outer Headers Failures (0xE002040X)
+ERR_OUTER_ETH_BOUNDS_FAILURE = 0xE0020400
+ERR_OUTER_IP_BOUNDS_FAILURE = 0xE0020401
+ERR_OUTER_IP_HEADER_LENGTH_VALIDATION = 0xE0020402
+ERR_OUTER_UDP_BOUNDS_FAILURE = 0xE0020403
 
-    # Tail Call Failures (0xDEAD060X)
-    0xDEAD0600: "Invalid stage number",
-    0xDEAD0601: "Tail call failure",
+# Pipeline Stage Bounds Failures (0xE002050X)
+ERR_VXLAN_CLASSIFIER_CONTEXT_FAILURE = 0xE0020500
 
-    # Configuration Failures (0xBAD0000X)
-    0xBAD00001: "Interface config failure",
-    0xBAD00002: "NAT config failure",
-    0xBAD00003: "Target ifindex failure",
+# Legacy error markers (to be updated in next release)
+LEGACY_ERR_VXLAN_PROCESSOR_ETH_BOUNDS = 0xDEAD0501
+LEGACY_ERR_VXLAN_PROCESSOR_IP_BOUNDS = 0xDEAD0502
+LEGACY_ERR_VXLAN_PROCESSOR_UDP_BOUNDS = 0xDEAD0503
+LEGACY_ERR_VXLAN_PROCESSOR_VXLAN_BOUNDS = 0xDEAD0504
+LEGACY_ERR_NAT_ENGINE_UDP_BOUNDS = 0xDEAD0505
+LEGACY_ERR_NAT_ENGINE_POST_DECAPS_IP_BOUNDS = 0xDEAD0506
+LEGACY_ERR_FORWARDING_STAGE_POST_DECAPS_BOUNDS = 0xDEAD0507
 
-    # VXLAN Parse Specific (0xDEAD0002)
-    0xDEAD0002: "VNI validation failure in parse_vxlan"
+# Tail Call Failures (Legacy - to be updated)
+LEGACY_ERR_INVALID_STAGE_NUMBER = 0xDEAD0600
+LEGACY_ERR_TAIL_CALL_FAILURE = 0xDEAD0601
+
+# Configuration Failures (Legacy - to be updated)
+LEGACY_ERR_INTERFACE_CONFIG_FAILURE = 0xBAD00001
+LEGACY_ERR_NAT_CONFIG_FAILURE = 0xBAD00002
+LEGACY_ERR_TARGET_IFINDEX_FAILURE = 0xBAD00003
+
+# VXLAN Parse Specific (Legacy - to be updated)
+LEGACY_ERR_VNI_VALIDATION_FAILURE = 0xDEAD0002
+
+# Pipeline Error Diagnostic Markers for systematic error analysis
+ERROR_MARKERS = {
+    # Processing Failures
+    ERR_PARSE_VXLAN_FAILURE: "VXLAN parsing failure",
+    ERR_INNER_ETH_BOUNDS_FAILURE: "Inner Ethernet bounds validation failure",
+    ERR_INNER_IP_BOUNDS_FAILURE: "Inner IP header bounds validation failure",
+    ERR_INNER_UDP_BOUNDS_FAILURE: "Inner UDP header bounds validation failure",
+    ERR_DECAPSULATION_FAILURE: "VXLAN decapsulation failure",
+    ERR_HEADER_UPDATE_FAILURE: "Packet header update failure (non-fatal)",
+
+    # Stage Failures
+    ERR_STAGE_VALIDATION_FAILURE: "Pipeline stage validation failure",
+    ERR_INIT_PIPELINE_CTX_FAILURE: "Pipeline context initialization failure in classifier",
+    ERR_VXLAN_PROCESSOR_CONTEXT_FAILURE: "VXLAN processor context initialization failure",
+    ERR_VXLAN_PROCESSOR_STAGE_FAILURE: "VXLAN processor stage validation failure",
+    ERR_NAT_ENGINE_CONTEXT_FAILURE: "NAT engine context initialization failure",
+    ERR_NAT_ENGINE_STAGE_FAILURE: "NAT engine processing stage failure",
+    ERR_FORWARDING_STAGE_CONTEXT_FAILURE: "Forwarding stage context initialization failure",
+
+    # Ring Buffer Failures
+    ERR_BUFFER_LENGTH_ZERO_ERROR: "Buffer length validation error",
+    ERR_INSUFFICIENT_DATA_ERROR: "Insufficient packet data error",
+    ERR_RING_BUFFER_COPY_FAILURE: "Ring buffer copy operation failure",
+    ERR_FORWARD_PACKET_ETH_BOUNDS: "Forward packet Ethernet bounds validation failure",
+
+    # Length Validation
+    ERR_ZERO_PACKET_LENGTH: "Zero packet length received",
+
+    # IP Header Validation Failures
+    ERR_IP_HEADER_LENGTH_VALIDATION: "IP header length validation failure",
+    ERR_NAT_ENGINE_IP_HEADER_VALIDATION: "NAT engine IP header length validation failure",
+    ERR_NAT_APPLICATION_FAILURE: "NAT application failure marker",
+
+    # Update Packet Headers Failures
+    ERR_IP_HEADER_BOUNDS_AFTER_DECAPS: "IP header bounds validation after decapsulation",
+    ERR_IP_HEADER_LENGTH_AFTER_DECAPS: "IP header length validation after decapsulation",
+    ERR_IP_HEADER_OPTIONS_BOUNDS_AFTER_DECAPS: "IP header options bounds validation after decapsulation",
+
+    # Decapsulation Failures
+    ERR_DECAPSULATION_BOUNDS_VALIDATION: "Decapsulation bounds validation failure",
+
+    # Parse Outer Headers Failures
+    ERR_OUTER_ETH_BOUNDS_FAILURE: "Outer Ethernet header bounds validation failure",
+    ERR_OUTER_IP_BOUNDS_FAILURE: "Outer IP header bounds validation failure",
+    ERR_OUTER_IP_HEADER_LENGTH_VALIDATION: "Outer IP header length validation failure",
+    ERR_OUTER_UDP_BOUNDS_FAILURE: "Outer UDP header bounds validation failure",
+
+    # Pipeline Stage Bounds Failures
+    ERR_VXLAN_CLASSIFIER_CONTEXT_FAILURE: "VXLAN classifier context initialization failure",
+
+    # Legacy error markers (backward compatibility)
+    LEGACY_ERR_VXLAN_PROCESSOR_ETH_BOUNDS: "vxlan_processor eth bounds failure",
+    LEGACY_ERR_VXLAN_PROCESSOR_IP_BOUNDS: "vxlan_processor IP bounds failure",
+    LEGACY_ERR_VXLAN_PROCESSOR_UDP_BOUNDS: "vxlan_processor UDP bounds failure",
+    LEGACY_ERR_VXLAN_PROCESSOR_VXLAN_BOUNDS: "vxlan_processor VXLAN header bounds failure",
+    LEGACY_ERR_NAT_ENGINE_UDP_BOUNDS: "nat_engine UDP bounds after validation failure",
+    LEGACY_ERR_NAT_ENGINE_POST_DECAPS_IP_BOUNDS: "nat_engine post-decaps IP bounds failure",
+    LEGACY_ERR_FORWARDING_STAGE_POST_DECAPS_BOUNDS: "forwarding_stage post-decaps bounds failure",
+
+    # Tail Call Failures (Legacy)
+    LEGACY_ERR_INVALID_STAGE_NUMBER: "Invalid stage number",
+    LEGACY_ERR_TAIL_CALL_FAILURE: "Tail call failure",
+
+    # Configuration Failures (Legacy)
+    LEGACY_ERR_INTERFACE_CONFIG_FAILURE: "Interface config failure",
+    LEGACY_ERR_NAT_CONFIG_FAILURE: "NAT config failure",
+    LEGACY_ERR_TARGET_IFINDEX_FAILURE: "Target ifindex failure",
+
+    # VXLAN Parse Specific (Legacy)
+    LEGACY_ERR_VNI_VALIDATION_FAILURE: "VNI validation failure in parse_vxlan"
 }
 
 def get_comprehensive_stats() -> Dict[str, any]:
@@ -111,7 +188,7 @@ def get_comprehensive_stats() -> Dict[str, any]:
         comprehensive_stats = {
             'counters': {},
             'per_cpu_data': {},
-            'debug_markers': [],
+            'error_markers': [],
             'raw_data': data
         }
 
@@ -149,15 +226,15 @@ def get_comprehensive_stats() -> Dict[str, any]:
             comprehensive_stats['counters'][key] = total
             comprehensive_stats['per_cpu_data'][key] = per_cpu_values
 
-            # Special handling for debug markers
+            # Special handling for error diagnostic markers
             if key == 0x0e:  # PACKET_SIZE_DEBUG
                 for cpu_idx, cpu_data in enumerate(item['formatted']['values']):
                     val = cpu_data['value']
-                    if val > 0 and val in DEBUG_MARKERS:
-                        comprehensive_stats['debug_markers'].append({
+                    if val > 0 and val in ERROR_MARKERS:
+                        comprehensive_stats['error_markers'].append({
                             'cpu': cpu_idx,
                             'value': val,
-                            'description': DEBUG_MARKERS[val],
+                            'description': ERROR_MARKERS[val],
                             'hex': f"0x{val:x}"
                         })
 
@@ -175,10 +252,10 @@ def get_bpf_stats() -> Dict[int, int]:
     comprehensive = get_comprehensive_stats()
     return comprehensive.get('counters', {})
 
-def analyze_debug_markers(stats: Dict[int, int]) -> List[Tuple[str, int]]:
-    """Analyze debug markers in PACKET_SIZE_DEBUG counter with enhanced readability."""
-    debug_values = []
-    debug_per_cpu = []
+def analyze_error_markers(stats: Dict[int, int]) -> List[Tuple[str, int]]:
+    """Analyze pipeline error diagnostic markers with enhanced readability and professional reporting."""
+    error_values = []
+    error_per_cpu = []
 
     # Get debug counter values per CPU
     try:
@@ -200,14 +277,14 @@ def analyze_debug_markers(stats: Dict[int, int]) -> List[Tuple[str, int]]:
 
     found_markers = []
 
-    # Check all CPUs for debug markers
+    # Check all CPUs for error diagnostic markers
     for i, val in enumerate(debug_values):
         if val == 0:
             continue
 
-        # Check for exact debug marker matches
-        if val in DEBUG_MARKERS:
-            marker_info = (f"CPU{i}: {DEBUG_MARKERS[val]}", val)
+        # Check for exact error marker matches
+        if val in ERROR_MARKERS:
+            marker_info = (f"CPU{i}: {ERROR_MARKERS[val]}", val)
             found_markers.append(marker_info)
 
         elif val > 0:
@@ -221,8 +298,8 @@ def analyze_debug_markers(stats: Dict[int, int]) -> List[Tuple[str, int]]:
 
                 marker_found = False
 
-                # Check if any of our debug markers are embedded
-                for marker_val, marker_desc in DEBUG_MARKERS.items():
+                # Check if any of our error markers are embedded
+                for marker_val, marker_desc in ERROR_MARKERS.items():
                     marker_hex = hex(marker_val)[2:]  # Remove '0x'
                     if marker_hex in hex(val).lower():
                         found_markers.append((f"CPU{i}: Embedded {marker_desc}", marker_val))
@@ -232,8 +309,8 @@ def analyze_debug_markers(stats: Dict[int, int]) -> List[Tuple[str, int]]:
                 # Check unpacked values
                 if not marker_found:
                     for prefix, unpacked_val in [("High32", high_32), ("Low32", low_32), ("High16", high_16), ("Low16", low_16)]:
-                        if unpacked_val in DEBUG_MARKERS:
-                            found_markers.append((f"CPU{i}: {prefix}: {DEBUG_MARKERS[unpacked_val]}", unpacked_val))
+                        if unpacked_val in ERROR_MARKERS:
+                            found_markers.append((f"CPU{i}: {prefix}: {ERROR_MARKERS[unpacked_val]}", unpacked_val))
                             marker_found = True
                             break
 
@@ -269,7 +346,7 @@ def analyze_debug_markers(stats: Dict[int, int]) -> List[Tuple[str, int]]:
 
     return found_markers
 
-def check_specific_debug_markers():
+def check_specific_error_markers():
     """Check for specific debug markers that might indicate systematic errors."""
     try:
         result = subprocess.run(
@@ -577,7 +654,7 @@ def print_debug_analysis(debug_markers: List[Tuple[str, int]]):
         print("     Bounds check failures suggest packet parsing issues.")
         print("     Check packet structure assumptions and validation logic.")
 
-def print_recommendations(stats: Dict[int, int], debug_markers: List[Tuple[str, int]]):
+def print_recommendations(stats: Dict[int, int], error_markers: List[Tuple[str, int]]):
     """Print actionable recommendations based on comprehensive analysis."""
     print("\n" + "=" * 60)
     print("RECOMMENDATIONS & ANALYSIS")
@@ -614,12 +691,12 @@ def print_recommendations(stats: Dict[int, int], debug_markers: List[Tuple[str, 
             print("   Every VXLAN packet appears to generate exactly one error.")
             print("   This indicates a fundamental issue in error counting logic.")
 
-            # Analyze debug markers to identify source
-            if debug_markers:
-                print("\nDEBUG MARKER ANALYSIS:")
-                for desc, val in debug_markers[:5]:  # Show top 5 markers
-                    if val in DEBUG_MARKERS:
-                        marker_info = DEBUG_MARKERS[val]
+            # Analyze error markers to identify source
+            if error_markers:
+                print("\nERROR MARKER ANALYSIS:")
+                for desc, val in error_markers[:5]:  # Show top 5 markers
+                    if val in ERROR_MARKERS:
+                        marker_info = ERROR_MARKERS[val]
                         print(f"   0x{val:x}: {desc}")
                         print(f"      Description: {marker_info}")
 
@@ -872,17 +949,17 @@ def main():
         return
 
     # Analyze debug markers
-    debug_markers = analyze_debug_markers(stats)
+    error_markers = analyze_error_markers(stats)
 
     # Print analysis
     print_performance_summary(stats)
     print_detailed_stats(stats)
-    print_debug_analysis(debug_markers)
+    print_error_analysis(error_markers)
 
     # Check for specific systematic error markers
-    check_specific_debug_markers()
+    check_specific_error_markers()
 
-    print_recommendations(stats, debug_markers)
+    print_recommendations(stats, error_markers)
 
     # Add comprehensive performance report
     print_performance_report(stats)
