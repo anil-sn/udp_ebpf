@@ -42,22 +42,122 @@ class XDPPipeline:
         self.config.load_config()
         
     def start(self, interface: Optional[str] = None, force: bool = False) -> bool:
-        """Start XDP pipeline with comprehensive validation and deployment"""
+        """Start XDP pipeline following repomix-output.xml patterns exactly"""
         try:
             self.logger.info("Starting XDP pipeline deployment...")
             
-            with self.perf_monitor.measure("pipeline_start"):
-                # Determine target interface first 
-                target_interface = interface or self.config.pipeline_config.ingress_interface
+            # Determine target interface first 
+            target_interface = interface or self.config.pipeline_config.ingress_interface
+            if not target_interface:
+                target_interface = self.network.get_recommended_interface()
                 if not target_interface:
-                    target_interface = self.network.get_recommended_interface()
-                    if not target_interface:
-                        self.logger.error("No suitable network interface found")
-                        return False
-                
-                # Check for existing processes first (like bash version)
-                if not self._check_running_processes(target_interface, force):
+                    self.logger.error("No suitable network interface found")
                     return False
+            
+            # Check for existing processes first (matches bash implementation exactly)
+            import subprocess
+            result = subprocess.run(
+                ['pgrep', '-f', f'vxlan_loader.*-i.*{target_interface}'],
+                capture_output=True, text=True
+            )
+            
+            if result.returncode == 0 and not force:
+                pids = result.stdout.strip().split('\n')
+                self.logger.error(f"Pipeline already running on {target_interface} (PID: {pids[0]})")
+                self.logger.info("Use --force to restart or stop first")
+                return False
+            
+            # Force cleanup existing XDP programs (matches bash approach exactly)
+            self.logger.info("Cleaning any orphaned XDP programs...")
+            try:
+                subprocess.run([
+                    'sudo', 'ip', 'link', 'set', target_interface, 'xdp', 'off'
+                ], capture_output=True, check=False)
+            except:
+                pass  # May not exist
+            
+            # Get config for vxlan_loader parameters
+            config = self.config.get_config()
+            pipeline_cfg = config.pipeline_config
+            
+            # Change to the main directory (matches bash: cd "$SCRIPT_DIR")
+            import os
+            original_cwd = os.getcwd()
+            
+            # Build vxlan_loader command (matches bash implementation exactly)
+            cmd = [
+                'sudo', './vxlan_loader',  # Note: in current dir, not src/
+                '-i', target_interface,
+                '-t', pipeline_cfg.egress_interface,
+                '-a', str(getattr(pipeline_cfg, 'nat_target_ip', '172.30.82.95')),
+                '-p', str(getattr(pipeline_cfg, 'nat_target_port', 8081)),
+                '-s', str(getattr(pipeline_cfg, 'source_port', 31765)),
+                '-I', str(getattr(pipeline_cfg, 'statistics_interval', 5))
+            ]
+            
+            # Start vxlan_loader with nohup (matches bash exactly)
+            log_file = f"pipeline_{target_interface}.log"
+            self.logger.info(f"Launching vxlan_loader, log: {log_file}")
+            
+            # Use nohup equivalent with proper redirection (matches bash nohup)
+            with open(os.devnull, 'r') as devnull:
+                with open(log_file, 'w') as f:
+                    process = subprocess.Popen(
+                        cmd,
+                        stdin=devnull,
+                        stdout=f,
+                        stderr=subprocess.STDOUT,
+                        cwd=original_cwd,  # Run from main directory
+                        start_new_session=True  # Equivalent to nohup
+                    )
+            
+            # Give time for startup (matches bash sleep 3 exactly)
+            import time
+            time.sleep(3)
+            
+            # Verify startup with specific pattern match (matches bash exactly)
+            result = subprocess.run(
+                ['pgrep', '-f', f'vxlan_loader.*-i.*{target_interface}'],
+                capture_output=True, text=True
+            )
+            
+            if result.returncode == 0:
+                new_pid = result.stdout.strip().split('\n')[0]
+                self.logger.info(f"SUCCESS: Pipeline started (PID: {new_pid})")
+                self.logger.info(f"Log file: {log_file}")
+                
+                # Load IP allowlist after successful pipeline start (matches bash)
+                self.logger.info("Loading IP allowlist...")
+                allowlist_file = "ip_allowlist.json"  # bash looks in current dir
+                
+                if os.path.exists(allowlist_file):
+                    # Give BPF maps time to fully initialize (matches bash sleep 2)
+                    time.sleep(2)
+                    self.logger.info("Attempting to load IPs from allowlist...")
+                    
+                    try:
+                        # Use load_ip_allowlist.py from current directory (matches bash exactly)
+                        subprocess.run([
+                            'sudo', 'python3', 'load_ip_allowlist.py', allowlist_file
+                        ], check=True, cwd=original_cwd)
+                        self.logger.info("IP allowlist loaded successfully")
+                    except subprocess.CalledProcessError:
+                        self.logger.warning("Warning: Failed to load IP allowlist - check BPF program status")
+                else:
+                    self.logger.warning("Warning: ip_allowlist.json not found")
+                
+                # Allow time for vxlan_loader to fully initialize (matches bash sleep 3)
+                self.logger.info("Waiting for BPF map initialization...")
+                time.sleep(3)
+                
+                return True
+            else:
+                self.logger.error("Failed to start vxlan_loader process")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Pipeline start failed: {e}")
+            return False
                 
                 # Pre-deployment validation
                 if not self._pre_deployment_checks(target_interface, force):
@@ -132,47 +232,75 @@ class XDPPipeline:
             return False
     
     def stop(self, interface: Optional[str] = None, force: bool = False, cleanup: bool = True) -> bool:
-        """Stop XDP pipeline with optional cleanup"""
+        """Stop XDP pipeline following repomix-output.xml patterns exactly"""
         try:
             self.logger.info("Stopping XDP pipeline...")
             
-            # Check for running processes first (like bash version)
-            if not self._check_running_processes(interface, force):
-                self.logger.info("No running pipeline processes found")
-                return True
+            import subprocess
+            import time
             
-            # Stop vxlan_loader process if running (matching working solution cleanup)
-            if hasattr(self, '_pipeline_process') and self._pipeline_process:
-                try:
-                    self.logger.info("Terminating vxlan_loader process...")
-                    self._pipeline_process.terminate()
-                    
-                    # Give it time to cleanup gracefully
-                    import time
-                    time.sleep(2)
-                    
-                    # Force kill if still running
-                    if self._pipeline_process.poll() is None:
-                        self.logger.warning("Force killing vxlan_loader process...")
-                        self._pipeline_process.kill()
-                    
-                    self._pipeline_process = None
-                    self.logger.info("vxlan_loader process stopped")
-                    
-                except Exception as e:
-                    self.logger.error(f"Error stopping vxlan_loader process: {e}")
+            # Kill vxlan_loader process if exists (matches bash exactly)
+            result = subprocess.run(['pgrep', '-f', 'vxlan_loader'], 
+                                  capture_output=True, text=True)
             
-            # Detach from all interfaces
-            detached_interfaces = self.network.detach_all_xdp()
+            if result.returncode == 0:
+                self.logger.info("Stopping vxlan_loader...")
+                
+                # TERM signal first (matches bash)
+                subprocess.run(['sudo', 'pkill', '-TERM', '-f', 'vxlan_loader'], 
+                             capture_output=True)
+                
+                # Wait loop (matches bash: for i in {1..3})
+                for i in range(1, 4):  # 1,2,3
+                    result = subprocess.run(['pgrep', '-f', 'vxlan_loader'],
+                                          capture_output=True)
+                    if result.returncode != 0:  # No processes found
+                        break
+                    time.sleep(1)
+                
+                # Force kill (matches bash)
+                subprocess.run(['sudo', 'pkill', '-KILL', '-f', 'vxlan_loader'], 
+                             capture_output=True)
+                self.logger.info("✓ vxlan_loader stopped")
             
-            if detached_interfaces:
-                self.logger.info(f"Detached XDP from interfaces: {', '.join(detached_interfaces)}")
-            else:
-                self.logger.info("No XDP programs were attached")
+            # Kill packet_injector process if exists (matches bash exactly)
+            result = subprocess.run(['pgrep', '-f', 'packet_injector'],
+                                  capture_output=True, text=True)
+                                  
+            if result.returncode == 0:
+                self.logger.info("Stopping packet_injector...")
+                
+                # TERM signal first
+                subprocess.run(['sudo', 'pkill', '-TERM', '-f', 'packet_injector'],
+                             capture_output=True)
+                
+                # Wait loop
+                for i in range(1, 4):  # 1,2,3
+                    result = subprocess.run(['pgrep', '-f', 'packet_injector'],
+                                          capture_output=True)
+                    if result.returncode != 0:  # No processes found
+                        break
+                    time.sleep(1)
+                
+                # Force kill
+                subprocess.run(['sudo', 'pkill', '-KILL', '-f', 'packet_injector'],
+                             capture_output=True)
+                self.logger.info("✓ packet_injector stopped")
             
-            # Optional cleanup
+            # Clean interface using xdpgeneric (matches bash exactly)
+            config = self.config.get_config()
+            target_interface = interface or config.pipeline_config.ingress_interface
+            
+            if target_interface:
+                # Use xdpgeneric off as in bash: sudo ip link set "$INTERFACE" xdpgeneric off
+                subprocess.run([
+                    'sudo', 'ip', 'link', 'set', target_interface, 'xdpgeneric', 'off'
+                ], capture_output=True)
+                self.logger.info(f"Cleaned XDP from {target_interface}")
+            
+            # Clean up BPF resources (matches bash cleanup_bpf call)
             if cleanup:
-                self._cleanup_resources()
+                self._cleanup_bpf_resources(target_interface)
             
             self.logger.info("Pipeline stopped successfully")
             return True
@@ -558,7 +686,10 @@ class XDPPipeline:
         try:
             result = self.runner.run(['sudo', 'bpftool', 'net', 'list'], capture=True, check=False)
             if result.returncode != 0:
+                self.logger.debug("bpftool command failed")
                 return False
+            
+            self.logger.debug(f"bpftool output: {repr(result.stdout)}")
             
             # Parse output to check if XDP programs are actually attached
             # Look for lines with interface names after "xdp:" section
@@ -567,6 +698,8 @@ class XDPPipeline:
             
             for line in output_lines:
                 line = line.strip()
+                self.logger.debug(f"Processing line: '{line}', in_xdp_section: {in_xdp_section}")
+                
                 if line == 'xdp:':
                     in_xdp_section = True
                     continue
@@ -575,13 +708,13 @@ class XDPPipeline:
                     continue
                 elif in_xdp_section and line and not line.isspace():
                     # Found an actual XDP attachment
-                    self.logger.debug(f"Found XDP attachment: {line}")
+                    self.logger.info(f"Found XDP attachment: {line}")
                     return True
             
-            self.logger.debug("No XDP programs currently attached")
+            self.logger.info("No XDP programs currently attached")
             return False
         except Exception as e:
-            self.logger.debug(f"Error checking XDP status: {e}")
+            self.logger.error(f"Error checking XDP status: {e}")
             return False
     
     def _verify_maps(self) -> bool:
@@ -650,6 +783,113 @@ class XDPPipeline:
                 memory_mb=0
             )
     
+    def _cleanup_bpf_resources(self, interface: Optional[str] = None) -> None:
+        """Clean up BPF resources following bash cleanup_bpf function exactly"""
+        import subprocess
+        
+        # Use detected interface if not provided
+        if not interface:
+            interface = self.config.pipeline_config.ingress_interface or "ens5"
+        
+        # 1. Kill processes first to stop new activity (matches bash exactly)
+        subprocess.run(['sudo', 'pkill', '-KILL', '-f', 'vxlan_loader'], 
+                      capture_output=True, check=False)
+        
+        # 2. Detach XDP from ALL interfaces (matches bash exactly)
+        self.logger.info("Cleaning up XDP programs...")
+        egress_interface = getattr(self.config.pipeline_config, 'egress_interface', 'ens6')
+        
+        try:
+            # ip link set <interface> xdp off (matches bash exactly)
+            subprocess.run(['sudo', 'ip', 'link', 'set', interface, 'xdp', 'off'],
+                          capture_output=True, check=False)
+            subprocess.run(['sudo', 'ip', 'link', 'set', egress_interface, 'xdp', 'off'],
+                          capture_output=True, check=False)
+        except Exception as e:
+            self.logger.debug(f"Failed to remove xdp: {e}")
+        
+        # 3. CRITICAL: Force remove ALL vxlan_pipeline_main programs by ID (matches bash exactly)
+        try:
+            result = subprocess.run(['sudo', 'bpftool', 'prog', 'list'], 
+                                  capture_output=True, text=True)
+            if result.returncode == 0:
+                lines = result.stdout.strip().split('\n')
+                prog_ids = []
+                for line in lines:
+                    if 'vxlan_pipeline_main' in line:
+                        parts = line.split(':')
+                        if len(parts) >= 2:
+                            prog_id = parts[0].strip()
+                            if prog_id:
+                                prog_ids.append(prog_id)
+                
+                for prog_id in prog_ids:
+                    self.logger.info(f"Force removing XDP program ID: {prog_id}")
+                    # Try to detach from both interfaces (matches bash)
+                    subprocess.run(['sudo', 'bpftool', 'prog', 'detach', 'xdp', 
+                                  'id', prog_id, 'dev', interface], 
+                                 capture_output=True, check=False)
+                    subprocess.run(['sudo', 'bpftool', 'prog', 'detach', 'xdp', 
+                                  'id', prog_id, 'dev', egress_interface], 
+                                 capture_output=True, check=False)
+                
+                if prog_ids:
+                    self.logger.info("✓ All XDP programs successfully removed")
+        except Exception as e:
+            self.logger.debug(f"BPF program cleanup failed: {e}")
+            
+        # 3. Force remove any tc programs (matches bash tc cleanup)
+        try:
+            # Remove clsact qdisc which removes attached programs (matches bash)
+            subprocess.run([
+                'sudo', 'tc', 'qdisc', 'del', 'dev', interface, 'clsact'
+            ], capture_output=True, check=False)
+        except:
+            pass  # May not exist
+            
+        # 4. Clean up pinned maps (matches bash exactly)
+        self.logger.info("Cleaning pinned BPF maps...")
+        bpf_maps = [
+            "/sys/fs/bpf/vxlan_stats_map",
+            "/sys/fs/bpf/vxlan_nat_map", 
+            "/sys/fs/bpf/vxlan_redirect_map",
+            "/sys/fs/bpf/vxlan_interface_map",
+            "/sys/fs/bpf/vxlan_ip_allowlist",
+            "/sys/fs/bpf/vxlan_packet_ringbuf"
+        ]
+        
+        for map_path in bpf_maps:
+            subprocess.run(['sudo', 'rm', '-f', map_path], 
+                         capture_output=True, check=False)
+        
+        # Remove pinned BPF objects with find (matches bash exactly)
+        if os.path.exists("/sys/fs/bpf"):
+            find_patterns = ['*vxlan*', '*nat_map*', '*stats_map*', '*ip_allowlist*', '*packet_ringbuf*']
+            for pattern in find_patterns:
+                subprocess.run(['sudo', 'find', '/sys/fs/bpf', '-name', pattern, '-delete'], 
+                             capture_output=True, check=False)
+        
+        # Wait for kernel cleanup and garbage collection (matches bash)
+        import time
+        time.sleep(3)
+        
+        # Verify cleanup worked (matches bash verification)
+        try:
+            result = subprocess.run(['sudo', 'bpftool', 'prog', 'list'], 
+                                  capture_output=True, text=True)
+            if result.returncode == 0:
+                remaining = len([line for line in result.stdout.split('\n') 
+                               if 'vxlan_pipeline_main' in line])
+                if remaining > 0:
+                    self.logger.warning(f"Warning: {remaining} XDP programs still loaded")
+                    self.logger.warning("Manual cleanup may be needed: sudo bpftool prog list | grep vxlan")
+                else:
+                    self.logger.info("✓ All XDP programs successfully removed")
+        except:
+            pass
+            
+        self.logger.info(f"BPF cleanup completed for {interface}")
+
     def _cleanup_resources(self) -> None:
         """Clean up system resources and temporary files"""
         try:
