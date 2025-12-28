@@ -60,6 +60,11 @@ class BPFMapManager:
             map_data = json.loads(result.stdout)
             
             for map_info in map_data:
+                # Skip maps with missing essential fields (graceful fallback)
+                if not all(key in map_info for key in ['id', 'type', 'key_size', 'value_size', 'max_entries']):
+                    self.logger.debug(f"Skipping incomplete map info: {map_info}")
+                    continue
+                
                 # Get entry count for each map
                 entry_count = self._count_map_entries(map_info['id'])
                 

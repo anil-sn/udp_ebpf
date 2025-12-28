@@ -325,46 +325,33 @@ class XDPPipeline:
         return self.start(interface)
     
     def get_status(self) -> PipelineStatus:
-        """Get current pipeline operational status"""
+        """Get current pipeline operational status (matches bash approach)"""
         try:
-            # Check if BPF program exists
-            config = self.config.get_config()
-            if hasattr(config, 'pipeline_config'):
-                # Construct BPF path from config
-                program_path = config.pipeline_config.program_path
-                if program_path.endswith('.c'):
-                    program_path = program_path.replace('.c', '.o')
-                
-                # Check in src directory if not absolute path
-                from pathlib import Path
-                if not Path(program_path).is_absolute():
-                    bpf_path = Path(config.pipeline_config.src_directory) / program_path
-                else:
-                    bpf_path = Path(program_path)
-                
-                if not bpf_path.exists():
-                    self.logger.debug(f"BPF program not found at {bpf_path}")
-                    return PipelineStatus.ERROR
-            else:
-                self.logger.error("No pipeline config available")
-                return PipelineStatus.ERROR
+            import subprocess
             
-            # Check if XDP is loaded
+            # Method 1: Check for vxlan_loader process (matches bash approach exactly)
+            result = subprocess.run(['pgrep', '-f', 'vxlan_loader'], 
+                                  capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                # Process is running - this is primary indicator
+                self.logger.debug("vxlan_loader process detected - pipeline running")
+                return PipelineStatus.RUNNING
+            
+            # Method 2: Check for XDP attachment (secondary verification) 
             if self._is_xdp_loaded():
-                self.logger.debug("XDP program detected as loaded")
-                # Verify maps exist and are accessible (with fallback)
+                self.logger.debug("XDP program detected but no vxlan_loader process")
+                # Maps verification is optional - don't fail on map errors
                 try:
-                    if self._verify_maps():
-                        return PipelineStatus.RUNNING
-                    else:
-                        self.logger.warning("Map verification failed, but XDP is loaded")
-                        return PipelineStatus.RUNNING  # Still consider running if XDP is attached
+                    self._verify_maps()  # Log any issues but don't fail
                 except Exception as e:
-                    self.logger.warning(f"Map verification error: {e}, but XDP is loaded")
-                    return PipelineStatus.RUNNING  # Still consider running if XDP is attached
-            else:
-                self.logger.debug("No XDP program detected")
-                return PipelineStatus.STOPPED
+                    self.logger.debug(f"Map verification error (non-critical): {e}")
+                
+                return PipelineStatus.RUNNING  # Consider running if XDP is attached
+            
+            # No process and no XDP attachment
+            self.logger.debug("No vxlan_loader process or XDP programs detected")
+            return PipelineStatus.STOPPED
                 
         except Exception as e:
             self.logger.error(f"Status check failed: {e}")
@@ -718,20 +705,26 @@ class XDPPipeline:
             return False
     
     def _verify_maps(self) -> bool:
-        """Verify required BPF maps exist and are accessible"""
+        """Verify required BPF maps exist and are accessible (graceful fallback)"""
         try:
             map_validation = self.bpf_maps.validate_maps()
             required_maps = ['stats_map', 'ip_allowlist_lpm']
             
+            missing_maps = []
             for map_name in required_maps:
                 if not map_validation.get(map_name, False):
-                    self.logger.error(f"Required BPF map missing: {map_name}")
-                    return False
+                    missing_maps.append(map_name)
             
+            if missing_maps:
+                self.logger.debug(f"BPF maps not found: {missing_maps} (may be expected when stopped)")
+                return False
+            
+            self.logger.debug("All required BPF maps verified successfully")
             return True
             
         except Exception as e:
-            self.logger.error(f"Map verification failed: {e}")
+            # Log but don't fail - maps may not exist when pipeline is stopped
+            self.logger.debug(f"Map verification failed (non-critical): {e}")
             return False
     
     def _check_running_processes(self, interface: Optional[str], force: bool) -> bool:

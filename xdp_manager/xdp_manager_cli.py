@@ -586,27 +586,21 @@ Examples:
             return 1
     
     def _handle_stop(self, args) -> int:
-        """Handle stop command"""
+        """Handle stop command - matches bash stop_pipeline exactly"""
         try:
-            if args.interface:
-                result = self.pipeline.stop(args.interface, force=args.force)
-                if result:
-                    self._success(f"XDP pipeline stopped on {args.interface}")
-                    return 0
-                else:
-                    self._error(f"Failed to stop XDP pipeline on {args.interface}")
-                    return 1
-            else:
-                # Stop on all interfaces
-                interfaces = self.network_manager.get_interfaces()
-                success_count = 0
-                
-                for iface in interfaces:
-                    if self.pipeline.stop(iface.name, force=args.force):
-                        success_count += 1
-                
-                self._success(f"XDP pipeline stopped on {success_count} interface(s)")
+            # Get target interface (matches bash $INTERFACE logic)
+            interface = args.interface if hasattr(args, 'interface') and args.interface else None
+            
+            # Stop pipeline once (matches bash approach - no iteration)
+            result = self.pipeline.stop(interface, force=getattr(args, 'force', False))
+            
+            if result:
+                interface_msg = f" on {interface}" if interface else ""
+                self._success(f"XDP pipeline stopped{interface_msg}")
                 return 0
+            else:
+                self._error("Failed to stop XDP pipeline")
+                return 1
                 
         except Exception as e:
             self._error(f"Stop command failed: {e}")
