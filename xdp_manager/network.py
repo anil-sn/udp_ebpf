@@ -208,11 +208,21 @@ class NetworkManager:
             return False
     
     def detach_xdp(self, interface: str) -> bool:
-        """Detach XDP program from interface (handles both bpftool and ip attached programs)"""
+        """Detach XDP program from interface (handles xdp-loader and fallback methods)"""
         try:
             self.logger.info(f"Detaching XDP program from {interface}")
             
-            # Method 1: Try bpftool detach first
+            # Method 1: Try xdp-loader first (preferred for this codebase)
+            try:
+                self.runner.run([
+                    'sudo', 'xdp-loader', 'unload', interface, '--all'
+                ])
+                self.logger.info(f"Successfully detached XDP from {interface} using xdp-loader")
+                return True
+            except Exception as xdp_loader_error:
+                self.logger.debug(f"xdp-loader unload failed: {xdp_loader_error}")
+            
+            # Method 2: Try bpftool detach
             try:
                 self.runner.run([
                     'sudo', 'bpftool', 'net', 'detach', 'xdp', 'dev', interface
@@ -222,7 +232,7 @@ class NetworkManager:
             except Exception as bpftool_error:
                 self.logger.debug(f"bpftool detach failed: {bpftool_error}")
                 
-                # Method 2: Fallback to ip command
+                # Method 3: Fallback to ip command
                 self.runner.run([
                     'sudo', 'ip', 'link', 'set', 'dev', interface, 'xdp', 'off'
                 ])

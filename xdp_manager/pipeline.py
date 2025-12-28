@@ -557,8 +557,31 @@ class XDPPipeline:
         """Check if any XDP program is currently loaded"""
         try:
             result = self.runner.run(['sudo', 'bpftool', 'net', 'list'], capture=True, check=False)
-            return 'xdp' in result.stdout.lower() if result.returncode == 0 else False
-        except:
+            if result.returncode != 0:
+                return False
+            
+            # Parse output to check if XDP programs are actually attached
+            # Look for lines with interface names after "xdp:" section
+            output_lines = result.stdout.strip().split('\n')
+            in_xdp_section = False
+            
+            for line in output_lines:
+                line = line.strip()
+                if line == 'xdp:':
+                    in_xdp_section = True
+                    continue
+                elif line.endswith(':'):  # New section (tc:, flow_dissector:, etc.)
+                    in_xdp_section = False
+                    continue
+                elif in_xdp_section and line and not line.isspace():
+                    # Found an actual XDP attachment
+                    self.logger.debug(f"Found XDP attachment: {line}")
+                    return True
+            
+            self.logger.debug("No XDP programs currently attached")
+            return False
+        except Exception as e:
+            self.logger.debug(f"Error checking XDP status: {e}")
             return False
     
     def _verify_maps(self) -> bool:
