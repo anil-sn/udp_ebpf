@@ -436,7 +436,7 @@ Examples:
             
             # Auto-detect primary interface
             self.logger.info("No configured interface found, auto-detecting...")
-            interfaces = self.network_manager.list_interfaces()
+            interfaces = self.network_manager.get_interfaces()
             for iface in interfaces:
                 if iface.state == 'UP' and not iface.name.startswith(('lo', 'docker', 'br-')):
                     self.logger.info(f"Auto-detected interface: {iface.name}")
@@ -487,7 +487,7 @@ Examples:
     def _interface_completer(self, prefix, parsed_args, **kwargs):
         """Autocomplete network interfaces"""
         try:
-            interfaces = self.network_manager.list_interfaces()
+            interfaces = self.network_manager.get_interfaces()
             return [iface.name for iface in interfaces if iface.name.startswith(prefix)]
         except Exception:
             # Load from configuration if available
@@ -598,7 +598,7 @@ Examples:
                     return 1
             else:
                 # Stop on all interfaces
-                interfaces = self.network_manager.list_interfaces()
+                interfaces = self.network_manager.get_interfaces()
                 success_count = 0
                 
                 for iface in interfaces:
@@ -1453,7 +1453,7 @@ Examples:
             
             with Live(console=self.console, refresh_per_second=1/args.refresh) as live:
                 while True:
-                    interfaces = self.network_manager.list_interfaces()
+                    interfaces = self.network_manager.get_interfaces()
                     stats_data = []
                     
                     for iface in interfaces:
