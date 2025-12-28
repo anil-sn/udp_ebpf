@@ -77,12 +77,13 @@ class XDPManagerCLI:
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog="""
 Examples:
-  xdp-manager start --interface eth0 --program vxlan_pipeline.bpf.o
+  xdp-manager start                                        # Uses config defaults (ens5, vxlan_pipeline.bpf.o)
+  xdp-manager start --interface ens5 --program custom.bpf.o
   xdp-manager status --live
   xdp-manager allowlist add 192.168.1.0/24
   xdp-manager stats --analyze --export stats.json
-  xdp-manager diagnostics --comprehensive --interface eth0
-  xdp-manager monitor --interface eth0 --duration 300
+  xdp-manager diagnostics --comprehensive --interface ens5
+  xdp-manager monitor --interface ens5 --duration 300
             """
         )
         
@@ -134,8 +135,8 @@ Examples:
         """Add pipeline management commands"""
         # Start command
         start_parser = subparsers.add_parser('start', help='Start XDP pipeline')
-        start_parser.add_argument('--interface', '-i', help='Network interface (defaults to config)')
-        start_parser.add_argument('--program', '-p', help='BPF program path (defaults to config)')
+        start_parser.add_argument('--interface', '-i', help='Network interface (defaults to ens5 from config)')
+        start_parser.add_argument('--program', '-p', help='BPF program path (defaults to src/vxlan_pipeline.bpf.o)')
         start_parser.add_argument('--mode', choices=['xdp', 'xdpgeneric', 'xdpdrv', 'xdpoffload'], 
                                  default='xdp', help='XDP attachment mode')
         start_parser.add_argument('--force', action='store_true', help='Force attachment')
@@ -148,7 +149,7 @@ Examples:
         
         # Restart command
         restart_parser = subparsers.add_parser('restart', help='Restart XDP pipeline')
-        restart_parser.add_argument('--interface', '-i', help='Network interface (defaults to config)')
+        restart_parser.add_argument('--interface', '-i', help='Network interface (defaults to ens5 from config)')
         restart_parser.add_argument('--program', '-p', help='BPF program path')
         restart_parser.add_argument('--quick', action='store_true', help='Quick restart without validation')
         
@@ -160,7 +161,7 @@ Examples:
         
         # Reload command
         reload_parser = subparsers.add_parser('reload', help='Reload BPF program')
-        reload_parser.add_argument('--interface', '-i', help='Network interface (defaults to config)')
+        reload_parser.add_argument('--interface', '-i', help='Network interface (defaults to ens5 from config)')
         reload_parser.add_argument('--program', '-p', help='BPF program path (defaults to config)')
         
     def _add_allowlist_commands(self, subparsers):
@@ -239,7 +240,7 @@ Examples:
         
         # Debug command
         debug_parser = subparsers.add_parser('debug', help='Debug XDP pipeline')
-        debug_parser.add_argument('--interface', '-i', help='Network interface (defaults to config)')
+        debug_parser.add_argument('--interface', '-i', help='Network interface (defaults to ens5 from config)')
         debug_parser.add_argument('--packet-count', type=int, default=100, help='Packets to analyze')
         debug_parser.add_argument('--duration', type=int, default=30, help='Analysis duration')
         debug_parser.add_argument('--live', action='store_true', help='Live debugging mode')
@@ -285,7 +286,7 @@ Examples:
         """Add system tuning and validation commands"""
         # System tuning command
         tune_parser = subparsers.add_parser('tune', help='Apply system performance tuning')
-        tune_parser.add_argument('--interface', '-i', help='Network interface for tuning')
+        tune_parser.add_argument('--interface', '-i', help='Network interface for tuning (e.g., ens5, ens6)')
         tune_parser.add_argument('--validate-only', action='store_true', help='Only validate system readiness')
         tune_parser.add_argument('--force', action='store_true', help='Apply tuning even if warnings exist')
         
@@ -293,7 +294,7 @@ Examples:
         scale_parser = subparsers.add_parser('scale', help='Dynamic performance scaling')
         scale_parser.add_argument('mode', choices=['max-performance', 'balanced', 'monitor'], 
                                 help='Scaling mode')
-        scale_parser.add_argument('--interface', '-i', help='Network interface')
+        scale_parser.add_argument('--interface', '-i', help='Network interface (e.g., ens5, ens6)')
         
     def _add_advanced_commands(self, subparsers):
         """Add advanced monitoring and debugging commands"""
@@ -451,9 +452,29 @@ Examples:
         try:
             config = self.config_manager.get_config()
             if hasattr(config, 'pipeline_config') and config.pipeline_config.program_path:
-                return config.pipeline_config.program_path
+                program_path = config.pipeline_config.program_path
+                
+                # Convert .c to .o for compiled version
+                if program_path.endswith('.c'):
+                    program_path = program_path.replace('.c', '.o')
+                
+                # If relative path, check in src directory
+                from pathlib import Path
+                if not Path(program_path).is_absolute():
+                    src_path = Path('src') / program_path
+                    if src_path.exists():
+                        return str(src_path)
+                    # Also check current directory
+                    elif Path(program_path).exists():
+                        return program_path
+                else:
+                    if Path(program_path).exists():
+                        return program_path
+                        
+                # Return configured path even if file doesn't exist (may be built later)
+                return str(Path('src') / program_path) if not Path(program_path).is_absolute() else program_path
             
-            # Check for common program names
+            # Check for common program names if no config
             common_names = ['vxlan_pipeline.bpf.o', 'src/vxlan_pipeline.bpf.o']
             for name in common_names:
                 from pathlib import Path
@@ -499,9 +520,9 @@ Examples:
             return ['vxlan_pipeline.bpf.o', 'src/vxlan_pipeline.bpf.o']  # Fallbacks
         # Command handlers
     def _handle_start(self, args) -> int:
-        """Handle start command - matches working solution behavior"""
+        """Handle start command - uses config defaults when arguments not provided"""
         try:
-            # Log config status like working solution
+            # Log config status
             self.logger.info("Config loaded: pipeline_config exists: True")
             
             # Get interface from args or config
@@ -510,29 +531,52 @@ Examples:
                 self._error("No interface specified and no default available. Use --interface or configure default.")
                 return 1
                 
-            # Log interface usage like working solution
-            self.logger.info(f"Using configured ingress interface: {interface}")
+            # Log interface usage
+            self.logger.info(f"Using interface: {interface}")
             
             # Get program from args or config  
             program = args.program or self._get_default_program()
+            if not program:
+                self._error("No BPF program specified and no default available. Use --program or configure default.")
+                return 1
             
-            # Process collision detection (matches bash behavior)
+            # Get mode from args or config
+            mode = args.mode
+            if not mode:
+                config = self.config_manager.get_config()
+                if hasattr(config, 'pipeline_config') and config.pipeline_config.mode:
+                    mode = config.pipeline_config.mode
+                else:
+                    mode = "xdp"  # fallback default
+            
+            self.logger.info(f"Using program: {program}, mode: {mode}")
+            
+            # Start the pipeline with all parameters
             result = self.pipeline.start(
                 interface=interface,
+                program_path=program,
+                mode=mode,
                 force=args.force
             )
             
             if result:
-                if args.optimize:
+                # Apply optimizations if requested or configured
+                if args.optimize or (hasattr(config, 'pipeline_config') and 
+                                   getattr(config.pipeline_config, 'performance_mode', False)):
                     self.pipeline.optimize_performance()
-                print(f"[SUCCESS] XDP pipeline started on {interface}")
+                    
+                # Apply system tuning if configured
+                if hasattr(config, 'pipeline_config') and getattr(config.pipeline_config, 'apply_system_tuning', False):
+                    self.system_tuner.apply_tuning()
+                    
+                self._success(f"XDP pipeline started on {interface} with {program} (mode: {mode})")
                 return 0
             else:
-                print(f"[ERROR] Failed to start XDP pipeline on {interface}")
+                self._error(f"Failed to start XDP pipeline on {interface}")
                 return 1
                 
         except Exception as e:
-            print(f"[ERROR] Start command failed: {e}")
+            self._error(f"Start command failed: {e}")
             return 1
     
     def _handle_stop(self, args) -> int:
