@@ -7,6 +7,7 @@ Integrates with the professional CLI framework for enhanced user experience
 import sys
 import argparse
 from pathlib import Path
+from typing import Optional, List, Dict, Any
 
 # Add the parent directory to the path so we can import our modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
