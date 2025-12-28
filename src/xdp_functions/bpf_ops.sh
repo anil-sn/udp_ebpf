@@ -233,6 +233,15 @@ get_statistics() {
             "bytes"|"8")
                 echo "$stats_data" | jq -r '.[8].formatted.values | map(.value) | add // 0' 2>/dev/null || echo "0"
                 ;;
+            "allowlist_hits"|"16")
+                echo "$stats_data" | jq -r '.[16].formatted.values | map(.value) | add // 0' 2>/dev/null || echo "0"
+                ;;
+            "allowlist_misses"|"17")
+                echo "$stats_data" | jq -r '.[17].formatted.values | map(.value) | add // 0' 2>/dev/null || echo "0"
+                ;;
+            "total_dropped"|"18")
+                echo "$stats_data" | jq -r '.[18].formatted.values | map(.value) | add // 0' 2>/dev/null || echo "0"
+                ;;
             "all")
                 echo "$stats_data"
                 ;;
@@ -254,6 +263,15 @@ get_statistics() {
                 ;;
             "bytes"|"8")
                 echo "$stats_data" | grep -A10 '"key":8' | grep -o '"value":[0-9]*' | cut -d':' -f2 | awk '{sum+=$1} END {print sum+0}' 2>/dev/null || echo "0"
+                ;;
+            "allowlist_hits"|"16")
+                echo "$stats_data" | grep -A10 '"key":16' | grep -o '"value":[0-9]*' | cut -d':' -f2 | awk '{sum+=$1} END {print sum+0}' 2>/dev/null || echo "0"
+                ;;
+            "allowlist_misses"|"17")
+                echo "$stats_data" | grep -A10 '"key":17' | grep -o '"value":[0-9]*' | cut -d':' -f2 | awk '{sum+=$1} END {print sum+0}' 2>/dev/null || echo "0"
+                ;;
+            "total_dropped"|"18")
+                echo "$stats_data" | grep -A10 '"key":18' | grep -o '"value":[0-9]*' | cut -d':' -f2 | awk '{sum+=$1} END {print sum+0}' 2>/dev/null || echo "0"
                 ;;
             "all")
                 echo "$stats_data"

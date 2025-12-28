@@ -13,6 +13,7 @@ import json
 import argparse
 import re
 import time
+import os
 
 def parse_bpf_key_robust(line):
     """More robust parsing of bpftool output using regex"""
@@ -280,6 +281,191 @@ def display_loaded_ips():
     except Exception as e:
         print(f"Error displaying IPs: {e}")
 
+def check_ip_status():
+    """Check status of IPs comparing JSON file with eBPF map"""
+    try:
+        # Load IPs from JSON file
+        json_file = 'ip_allowlist.json'
+        if not os.path.exists(json_file):
+            print(f"Error: {json_file} not found")
+            return
+            
+        with open(json_file, 'r') as f:
+            data = json.load(f)
+        
+        # Get IPs from JSON
+        if 'flat_ip_list' in data:
+            json_ips = set(data['flat_ip_list'])
+        else:
+            json_ips = set()
+            for org in data.get('organizations', []):
+                json_ips.update(org.get('ips', []))
+        
+        # Get IPs from eBPF map
+        map_ips = get_ips_from_map()
+        
+        # Create organization mapping
+        org_mapping = {}
+        for org in data.get('organizations', []):
+            org_name = org.get('org_name', 'Unknown')
+            org_id = org.get('org_id', 'N/A')
+            for ip in org.get('ips', []):
+                org_mapping[ip] = {'name': org_name, 'id': org_id}
+        
+        print("=== IP ALLOWLIST STATUS CHECK ===")
+        print(f"JSON File: {json_file}")
+        print(f"JSON IPs: {len(json_ips)}")
+        print(f"Map IPs: {len(map_ips)}")
+        print()
+        
+        # Check each JSON IP against map
+        active_count = 0
+        inactive_count = 0
+        
+        print("┌─── IP STATUS REPORT ───────────────────────────────────────────────────────┐")
+        print("│ Status │ IP Address      │ Organization                                    │")
+        print("├────────┼─────────────────┼─────────────────────────────────────────────────┤")
+        
+        for ip in sorted(json_ips, key=lambda x: ipaddress.IPv4Address(x)):
+            status = "ACTIVE" if ip in map_ips else "INACTIVE"
+            if status == "ACTIVE":
+                active_count += 1
+            else:
+                inactive_count += 1
+                
+            org_info = org_mapping.get(ip, {'name': 'Unknown', 'id': 'N/A'})
+            org_display = f"{org_info['name'][:40]}{'...' if len(org_info['name']) > 40 else ''}"
+            
+            print(f"│ {status:6} │ {ip:15} │ {org_display:47} │")
+        
+        print("└────────┴─────────────────┴─────────────────────────────────────────────────┘")
+        print()
+        print(f"Summary:")
+        print(f"  • Active IPs (in both JSON and map): {active_count}")
+        print(f"  • Inactive IPs (in JSON but not in map): {inactive_count}")
+        
+        # Show orphaned IPs (in map but not in JSON)
+        orphaned_ips = map_ips - json_ips
+        if orphaned_ips:
+            print(f"  • Orphaned IPs (in map but not in JSON): {len(orphaned_ips)}")
+            print("\n--- ORPHANED IPs (in eBPF map but not in JSON) ---")
+            for ip in sorted(orphaned_ips, key=lambda x: ipaddress.IPv4Address(x)):
+                print(f"    {ip} (source unknown - manually added or from old config)")
+        
+        # Show recommendations
+        print("\nRecommendations:")
+        if inactive_count > 0:
+            print(f"  • Run 'sudo python3 load_ip_allowlist.py --reload' to activate {inactive_count} inactive IPs")
+        if orphaned_ips:
+            print(f"  • Consider updating JSON file or clearing orphaned IPs")
+        if active_count == len(json_ips) and not orphaned_ips:
+            print(f"  • ✓ Perfect sync: All {active_count} IPs are properly configured")
+            
+    except Exception as e:
+        print(f"Error checking IP status: {e}")
+
+def reload_ips_from_json():
+    """Reload IPs from JSON file (clear and reload)"""
+    json_file = 'ip_allowlist.json'
+    if not os.path.exists(json_file):
+        print(f"Error: {json_file} not found")
+        return
+        
+    print("=== RELOADING IP ALLOWLIST ===")
+    print("Step 1: Clearing existing IPs...")
+    clear_all_ips()
+    print("\nStep 2: Loading IPs from JSON...")
+    loaded_count = load_from_json(json_file)
+    print(f"\n✓ Reload complete: {loaded_count} IPs loaded from {json_file}")
+
+def show_orphaned_ips():
+    """Show IPs that are in the eBPF map but not in the JSON file"""
+    try:
+        # Load IPs from JSON file
+        json_file = 'ip_allowlist.json'
+        json_ips = set()
+        
+        if os.path.exists(json_file):
+            with open(json_file, 'r') as f:
+                data = json.load(f)
+            
+            if 'flat_ip_list' in data:
+                json_ips = set(data['flat_ip_list'])
+            else:
+                for org in data.get('organizations', []):
+                    json_ips.update(org.get('ips', []))
+        
+        # Get IPs from eBPF map
+        map_ips = get_ips_from_map()
+        
+        # Find orphaned IPs
+        orphaned_ips = map_ips - json_ips
+        
+        print("=== ORPHANED IPs (in eBPF map but not in JSON) ===")
+        if orphaned_ips:
+            print(f"Found {len(orphaned_ips)} orphaned IP addresses:")
+            print()
+            for i, ip in enumerate(sorted(orphaned_ips, key=lambda x: ipaddress.IPv4Address(x)), 1):
+                print(f"  {i:2}. {ip:15} (source: unknown - manually added or from old config)")
+            print()
+            print("These IPs are active in the eBPF map but not defined in the JSON configuration.")
+            print("They may have been:")
+            print("  • Manually added via bpftool")
+            print("  • Left over from a previous configuration")
+            print("  • Added by a different script")
+            print()
+            print("To clean up: sudo python3 load_ip_allowlist.py --clear && sudo python3 load_ip_allowlist.py ip_allowlist.json")
+        else:
+            print("✓ No orphaned IPs found. All active IPs are properly defined in the JSON file.")
+            print(f"JSON IPs: {len(json_ips)}, Map IPs: {len(map_ips)}")
+            
+    except Exception as e:
+        print(f"Error checking orphaned IPs: {e}")
+
+def get_ips_from_map():
+    """Get set of IP addresses currently loaded in the eBPF map"""
+    try:
+        # Use JSON format for reliable parsing
+        cmd = ['bpftool', 'map', 'dump', 'name', 'ip_allowlist', '--json']
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        
+        ip_addresses = set()
+        
+        if result.stdout.strip():
+            try:
+                json_data = json.loads(result.stdout)
+                
+                for entry in json_data:
+                    if 'formatted' in entry and 'key' in entry['formatted']:
+                        try:
+                            key_val = entry['formatted']['key']
+                            if isinstance(key_val, int):
+                                ip_int = key_val
+                            else:
+                                continue
+                                
+                            # Convert integer IP to dotted decimal notation
+                            ip1 = ip_int & 0xFF
+                            ip2 = (ip_int >> 8) & 0xFF
+                            ip3 = (ip_int >> 16) & 0xFF
+                            ip4 = (ip_int >> 24) & 0xFF
+                            ip_str = f"{ip1}.{ip2}.{ip3}.{ip4}"
+                            
+                            # Validate IP
+                            ipaddress.IPv4Address(ip_str)
+                            ip_addresses.add(ip_str)
+                            
+                        except (ValueError, OverflowError):
+                            continue
+                            
+            except json.JSONDecodeError:
+                pass
+                
+        return ip_addresses
+        
+    except subprocess.CalledProcessError:
+        return set()
+
 def clear_all_ips():
     """Clear all IPs from the BPF map with enhanced error handling"""
     try:
@@ -334,6 +520,9 @@ def main():
     group.add_argument('json_file', nargs='?', help='JSON file to load IPs from')
     group.add_argument('--display', action='store_true', help='Display currently loaded IPs')
     group.add_argument('--clear', action='store_true', help='Clear all loaded IPs')
+    group.add_argument('--check-status', action='store_true', help='Check status of IPs (JSON vs eBPF map)')
+    group.add_argument('--reload', action='store_true', help='Reload IPs from JSON file (clears and reloads)')
+    group.add_argument('--show-orphaned', action='store_true', help='Show IPs in map but not in JSON file')
     
     args = parser.parse_args()
     
@@ -341,6 +530,12 @@ def main():
         display_loaded_ips()
     elif args.clear:
         clear_all_ips()
+    elif args.check_status:
+        check_ip_status()
+    elif args.reload:
+        reload_ips_from_json()
+    elif args.show_orphaned:
+        show_orphaned_ips()
     elif args.json_file:
         load_from_json(args.json_file)
     else:

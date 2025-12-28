@@ -44,7 +44,11 @@ COMMANDS:
     stats           Show real-time packet statistics (compact format)
     config          Show current pipeline configuration
     maps            Show detailed eBPF maps status and contents
-    ips             Display IP allowlist in sorted order
+    ips             Display IP allowlist management options:
+                   'ips' or 'ips show'     - Show all IPs from eBPF map with organization info
+                   'ips status'            - Check JSON vs eBPF map status for each IP
+                   'ips reload'            - Reload all IPs from JSON file (clear + load)
+                   'ips orphaned'          - Show IPs in map but not in JSON file
                    Shows all currently loaded allowed IPs from the BPF map
     logs            Show recent pipeline log entries
                    Usage: logs [count] [filter]
@@ -73,7 +77,9 @@ EXAMPLES:
     ./xdp.sh start                          # Start pipeline with default config
     ./xdp.sh config                         # Show current configuration  
     ./xdp.sh maps                           # Show eBPF maps with live data
-    ./xdp.sh ips                            # Show sorted IP allowlist
+    ./xdp.sh ips status                     # Check JSON vs map status for all IPs
+    ./xdp.sh ips reload                     # Clear and reload IPs from JSON  
+    ./xdp.sh ips orphaned                   # Show IPs in map but not in JSON
     ./xdp.sh logs 50 ALERT                  # Show last 50 log entries with alerts
     ./xdp.sh stats                          # Show live statistics
     ./xdp.sh pps both 1 60                  # Monitor PPS on both interfaces for 60s
@@ -112,16 +118,64 @@ case "$CMD" in
         show_bpf_maps "$@"
         ;;
     "ips")
-        # Display IP allowlist in sorted order
-        print_color "blue" "Displaying IP allowlist in sorted order..."
-        if [ -f "src/load_ip_allowlist.py" ]; then
-            cd src && sudo python3 load_ip_allowlist.py --display
-        elif [ -f "load_ip_allowlist.py" ]; then
-            sudo python3 load_ip_allowlist.py --display  
-        else
-            print_color "red" "ERROR: load_ip_allowlist.py not found"
-            print_color "yellow" "Expected locations: ./src/load_ip_allowlist.py or ./load_ip_allowlist.py"
-        fi
+        # Enhanced IP allowlist management with status checking
+        IPS_ACTION="${1:-show}"
+        case "$IPS_ACTION" in
+            "show"|"")
+                print_color "blue" "Displaying IP allowlist from eBPF map..."
+                if [ -f "src/load_ip_allowlist.py" ]; then
+                    cd src && sudo python3 load_ip_allowlist.py --display
+                elif [ -f "load_ip_allowlist.py" ]; then
+                    sudo python3 load_ip_allowlist.py --display  
+                else
+                    print_color "red" "ERROR: load_ip_allowlist.py not found"
+                    print_color "yellow" "Expected locations: ./src/load_ip_allowlist.py or ./load_ip_allowlist.py"
+                fi
+                ;;
+            "status")
+                print_color "blue" "Checking IP status (JSON vs eBPF map)..."
+                if [ -f "src/load_ip_allowlist.py" ]; then
+                    cd src && sudo python3 load_ip_allowlist.py --check-status
+                elif [ -f "load_ip_allowlist.py" ]; then
+                    sudo python3 load_ip_allowlist.py --check-status
+                else
+                    print_color "red" "ERROR: load_ip_allowlist.py not found"
+                    print_color "yellow" "Expected locations: ./src/load_ip_allowlist.py or ./load_ip_allowlist.py"
+                fi
+                ;;
+            "reload")
+                print_color "blue" "Reloading IPs from JSON file..."
+                if [ -f "src/load_ip_allowlist.py" ]; then
+                    cd src && sudo python3 load_ip_allowlist.py --reload
+                elif [ -f "load_ip_allowlist.py" ]; then
+                    sudo python3 load_ip_allowlist.py --reload
+                else
+                    print_color "red" "ERROR: load_ip_allowlist.py not found"
+                    print_color "yellow" "Expected locations: ./src/load_ip_allowlist.py or ./load_ip_allowlist.py"
+                fi
+                ;;
+            "orphaned")
+                print_color "blue" "Showing orphaned IPs (in map but not in JSON)..."
+                if [ -f "src/load_ip_allowlist.py" ]; then
+                    cd src && sudo python3 load_ip_allowlist.py --show-orphaned
+                elif [ -f "load_ip_allowlist.py" ]; then
+                    sudo python3 load_ip_allowlist.py --show-orphaned
+                else
+                    print_color "red" "ERROR: load_ip_allowlist.py not found"
+                    print_color "yellow" "Expected locations: ./src/load_ip_allowlist.py or ./load_ip_allowlist.py"
+                fi
+                ;;
+            *)
+                print_color "red" "ERROR: Invalid ips command option: $IPS_ACTION"
+                echo "Valid options: show, status, reload, orphaned"
+                echo "Usage examples:"
+                echo "  ./xdp.sh ips show      # Display current IPs in eBPF map"
+                echo "  ./xdp.sh ips status    # Check JSON vs eBPF map status"  
+                echo "  ./xdp.sh ips reload    # Clear and reload from JSON"
+                echo "  ./xdp.sh ips orphaned  # Show orphaned IPs"
+                exit 1
+                ;;
+        esac
         ;;
     "logs") 
         show_logs "$@"
