@@ -23,11 +23,15 @@ class NetworkManager:
         try:
             # Get interface list with ip command
             result = self.runner.run(['ip', 'link', 'show'], capture=True)
+            self.logger.debug(f"ip link show output: {result.stdout}")
             interface_blocks = self._parse_ip_link_output(result.stdout)
+            self.logger.debug(f"Parsed {len(interface_blocks)} interface blocks")
             
-            for block in interface_blocks:
+            for i, block in enumerate(interface_blocks):
+                self.logger.debug(f"Processing block {i}: {block[:100]}...")
                 interface = self._parse_interface_block(block)
                 if interface:
+                    self.logger.debug(f"Successfully parsed interface: {interface.name}")
                     # Get IP addresses for this interface
                     interface.ip_addresses = self._get_interface_ips(interface.name)
                     
@@ -35,10 +39,15 @@ class NetworkManager:
                     interface.xdp_attached = self._check_xdp_attached(interface.name)
                     
                     interfaces.append(interface)
+                else:
+                    self.logger.warning(f"Failed to parse interface block {i}")
                     
         except Exception as e:
             self.logger.error(f"Error getting interfaces: {e}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
             
+        self.logger.info(f"Found {len(interfaces)} interfaces: {[iface.name for iface in interfaces]}")
         return interfaces
     
     def get_interface_names(self) -> List[str]:
