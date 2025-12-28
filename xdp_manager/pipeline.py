@@ -200,20 +200,30 @@ class XDPPipeline:
         """Get current pipeline operational status"""
         try:
             # Check if BPF program exists
-            if not self.config.get_bpf_path().exists():
+            bpf_path = self.config.get_bpf_path()
+            if not bpf_path.exists():
+                self.logger.debug(f"BPF program not found at {bpf_path}")
                 return PipelineStatus.ERROR
             
             # Check if XDP is loaded
             if self._is_xdp_loaded():
-                # Verify maps exist and are accessible
-                if self._verify_maps():
-                    return PipelineStatus.RUNNING
-                else:
-                    return PipelineStatus.ERROR
+                self.logger.debug("XDP program detected as loaded")
+                # Verify maps exist and are accessible (with fallback)
+                try:
+                    if self._verify_maps():
+                        return PipelineStatus.RUNNING
+                    else:
+                        self.logger.warning("Map verification failed, but XDP is loaded")
+                        return PipelineStatus.RUNNING  # Still consider running if XDP is attached
+                except Exception as e:
+                    self.logger.warning(f"Map verification error: {e}, but XDP is loaded")
+                    return PipelineStatus.RUNNING  # Still consider running if XDP is attached
             else:
+                self.logger.debug("No XDP program detected")
                 return PipelineStatus.STOPPED
                 
-        except Exception:
+        except Exception as e:
+            self.logger.error(f"Status check failed: {e}")
             return PipelineStatus.UNKNOWN
     
     def is_running(self) -> bool:
