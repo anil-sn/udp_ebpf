@@ -1,0 +1,147 @@
+# XDP Manager Configuration
+# This file provides default values for the XDP pipeline management system
+# All configurable parameters for setup, build, and runtime operations
+
+# Pipeline configuration
+pipeline:
+  # Default network interface (ens5 for VXLAN ingress)
+  interface: "ens5"
+  
+  # Default BPF program path
+  program_path: "src/vxlan_pipeline.bpf.o"
+  
+  # XDP attachment mode: xdp, xdpgeneric, xdpdrv, xdpoffload
+  mode: "xdp"
+  
+  # Target interface for forwarding (ens6 for egress)
+  target_interface: "ens6"
+
+# Network configuration
+network:
+  # NAT configuration - target IP for DNAT
+  nat_ip: "172.30.82.95"
+  nat_port: 8081
+  
+  # Source port matching - matches inner destination port
+  source_port: 31765
+  
+  # Network interfaces for setup and operations
+  egress_interface: "ens6"
+  
+  # Connectivity test hosts
+  connectivity_test_hosts:
+    - "8.8.8.8"
+    - "1.1.1.1"
+
+# Performance settings
+performance:
+  # Target packets per second
+  target_pps: 85000
+  
+  # Performance threshold for alerts
+  threshold_pps: 60000
+  
+  # Statistics collection interval (seconds)
+  stats_interval: 5
+
+# Monitoring configuration  
+monitoring:
+  # Enable live statistics
+  live_stats: true
+  
+  # Default monitoring duration (seconds)
+  duration: 300
+  
+  # Update interval for live displays (seconds)
+  refresh_interval: 1.0
+
+# Logging configuration
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  level: "INFO"
+  
+  # Log file path (empty for console only)
+  file: ""
+  
+  # Enable colored output
+  colors: true
+
+# Paths configuration
+paths:
+  # IP allowlist files
+  allowlist_file: "xdp_manager/config/ip_allowlist.json"
+  allowlist_prod_file: "xdp_manager/config/ip_allowlist_prod.json"
+  
+  # BPF programs directory
+  bpf_programs_dir: "src"
+
+# System requirements and dependencies
+system:
+  # Required disk space in GB
+  min_disk_space_gb: 2
+  
+  # Minimum kernel version for XDP support  
+  min_kernel_version: "4.18"
+  
+  # Package manager settings
+  package_manager:
+    update_timeout: 300
+    install_timeout: 600
+    retry_count: 3
+
+# Build configuration
+build:
+  # Compiler settings
+  compiler_jobs: "auto"  # auto uses $(nproc)
+  
+  # Build directories and paths
+  source_dir: "src"
+  temp_dir: "/tmp"
+  
+  # Required build tools (will be installed by prepare.sh)
+  required_tools:
+    - "clang"
+    - "gcc" 
+    - "make"
+    - "git"
+    - "python3"
+    - "bpftool"
+
+# Installation paths
+installation:
+  # Global CLI installation
+  user_bin_dir: "$HOME/.local/bin"
+  system_bin_dir: "/usr/local/bin"
+  
+  # Configuration files
+  user_config_dir: "$HOME/.config/xdp-manager"
+  system_config_dir: "/etc/xdp-manager"
+  
+  # Shell profiles to update
+  shell_profiles:
+    - "$HOME/.bashrc"
+    - "$HOME/.bash_profile" 
+    - "$HOME/.zshrc"
+    - "$HOME/.profile"
+
+#
+# VXLAN Pipeline Translation Details:
+# SOURCE_PORT (31765) - matches inner destination port 
+# NAT_IP (172.30.82.95) - target IP for DNAT
+# NAT_PORT (8081) - target port for DNAT
+#  
+# Incoming VXLAN Packet:
+# Outer: [Outer Src IP]:65518 → [Outer Dst IP]:4789 (VXLAN)
+# Inner: [Inner Src IP]:[Inner Src Port] → [Inner Dst IP]:31765 (UDP)
+# VNI: 1 
+#
+# Expected Translation Results:
+# Outgoing Packet Should Be:
+# [Inner Src IP]:[Inner Src Port] → [NAT_IP]:[NAT_PORT] (UDP)
+#
+# Packet Flow Description:
+# ens5: VXLAN[Outer IP:65518→IP:4789 + VNI=1 + Inner[SrcIP:SrcPort→DstIP:31765] + Payload]
+#   ↓ XDP Decapsulation & NAT
+# Ring Buffer: L2 Frame[Eth + SrcIP:SrcPort→172.30.82.95:8081 + Payload] 
+#   ↓ packet_injector reads
+# ens6: Complete processed packet injected

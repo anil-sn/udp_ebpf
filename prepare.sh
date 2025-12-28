@@ -75,25 +75,46 @@ check_sudo() {
 preflight_checks() {
     section "Pre-flight System Checks"
     
+    # Load configuration first
+    local config_loaded=false
+    if [ -f "config.yaml" ]; then
+        if load_config_values "config.yaml"; then
+            config_loaded=true
+        fi
+    fi
+    
+    # Use configured values or defaults
+    local min_disk_gb="${MIN_DISK_SPACE_GB:-2}"
+    local min_kernel="${MIN_KERNEL_VERSION:-4.18}"
+    local connectivity_hosts="${CONNECTIVITY_TEST_HOSTS:-8.8.8.8 1.1.1.1}"
+    
     local issues=0
     
     # Check internet connectivity
     info "Checking internet connectivity..."
-    if ping -c 1 8.8.8.8 >/dev/null 2>&1 || ping -c 1 1.1.1.1 >/dev/null 2>&1; then
-        log "Internet connectivity confirmed"
-    else
+    local connectivity_ok=false
+    for host in $connectivity_hosts; do
+        if ping -c 1 "$host" >/dev/null 2>&1; then
+            log "Internet connectivity confirmed (tested $host)"
+            connectivity_ok=true
+            break
+        fi
+    done
+    
+    if [ "$connectivity_ok" = false ]; then
         error "No internet connectivity detected"
         issues=1
     fi
     
-    # Check disk space (need at least 2GB)
+    # Check disk space (convert GB to KB)
     info "Checking available disk space..."
     local available
     available=$(df / | awk 'NR==2 {print $4}')
-    if [ "$available" -gt 2097152 ] 2>/dev/null; then  # 2GB in KB
-        log "Sufficient disk space available"
+    local required_kb=$((min_disk_gb * 1024 * 1024))
+    if [ "$available" -gt "$required_kb" ] 2>/dev/null; then
+        log "Sufficient disk space available (${min_disk_gb}GB+ required)"
     else
-        warn "Low disk space detected (less than 2GB free)"
+        warn "Low disk space detected (less than ${min_disk_gb}GB free)"
         issues=1
     fi
     
@@ -105,10 +126,10 @@ preflight_checks() {
     # Check kernel version for XDP support
     local kernel_version
     kernel_version=$(uname -r | cut -d. -f1,2)
-    if awk "BEGIN {exit !($kernel_version >= 4.18)}"; then
-        log "Kernel version supports XDP ($(uname -r))"
+    if awk "BEGIN {exit !($kernel_version >= $min_kernel)}"; then
+        log "Kernel version supports XDP ($(uname -r), minimum $min_kernel required)"
     else
-        warn "Kernel version may have limited XDP support ($(uname -r))"
+        warn "Kernel version may have limited XDP support ($(uname -r), minimum $min_kernel recommended)"
     fi
     
     return $issues
@@ -604,22 +625,47 @@ EOF
         info "Adding $user_bin to PATH for current session"
         export PATH="$user_bin:$PATH"
         
-        # Add to shell profile for persistence
-        local shell_profile=""
-        if [ -n "$BASH_VERSION" ] && [ -f "$HOME/.bashrc" ]; then
-            shell_profile="$HOME/.bashrc"
-        elif [ -n "$ZSH_VERSION" ] && [ -f "$HOME/.zshrc" ]; then
-            shell_profile="$HOME/.zshrc"
-        elif [ -f "$HOME/.profile" ]; then
-            shell_profile="$HOME/.profile"
+        # Add to shell profile for persistence - check multiple locations
+        local shell_profiles=()
+        local primary_profile=""
+        
+        # Detect current shell and preferred profiles
+        if [ -n "$ZSH_VERSION" ]; then
+            [ -f "$HOME/.zshrc" ] && shell_profiles+=("$HOME/.zshrc")
+            primary_profile="$HOME/.zshrc"
+        elif [ -n "$BASH_VERSION" ]; then
+            [ -f "$HOME/.bashrc" ] && shell_profiles+=("$HOME/.bashrc")
+            [ -f "$HOME/.bash_profile" ] && shell_profiles+=("$HOME/.bash_profile")
+            primary_profile="$HOME/.bashrc"
         fi
         
-        if [ -n "$shell_profile" ] && ! grep -q "$user_bin" "$shell_profile"; then
-            echo "" >> "$shell_profile"
-            echo "# XDP Manager CLI - Added by prepare.sh" >> "$shell_profile"
-            echo "export PATH=\"$user_bin:\$PATH\"" >> "$shell_profile"
-            log "Added PATH export to $shell_profile"
-            info "Restart your shell or run: source $shell_profile"
+        # Always check .profile as fallback
+        [ -f "$HOME/.profile" ] && shell_profiles+=("$HOME/.profile")
+        [ -z "$primary_profile" ] && primary_profile="$HOME/.profile"
+        
+        # Update existing profiles
+        local updated_any=false
+        for profile in "${shell_profiles[@]}"; do
+            if [ -f "$profile" ] && ! grep -q "$user_bin" "$profile" 2>/dev/null; then
+                echo "" >> "$profile"
+                echo "# XDP Manager CLI - Added by prepare.sh $(date)" >> "$profile"
+                echo "export PATH=\"$user_bin:\$PATH\"" >> "$profile"
+                log "Added PATH export to $profile"
+                updated_any=true
+            fi
+        done
+        
+        # Create primary profile if no profiles exist
+        if [ "$updated_any" = false ] && [ ! -f "$primary_profile" ]; then
+            echo "# XDP Manager CLI - Added by prepare.sh $(date)" > "$primary_profile"
+            echo "export PATH=\"$user_bin:\$PATH\"" >> "$primary_profile"
+            log "Created $primary_profile with PATH export"
+            updated_any=true
+        fi
+        
+        if [ "$updated_any" = true ]; then
+            info "PATH will be available in new shell sessions"
+            info "For current session, run: export PATH=\"$user_bin:\$PATH\""
         fi
     else
         log "PATH already includes $user_bin"
@@ -662,8 +708,26 @@ EOF
     if command -v xdp-manager >/dev/null 2>&1; then
         log "Global xdp-manager command verified and ready"
     else
-        warn "xdp-manager not immediately available. You may need to restart your shell."
-        info "Or run: export PATH=\"$user_bin:\$PATH\""
+        warn "xdp-manager not immediately available in current session"
+        info "To activate now: export PATH=\"$user_bin:\$PATH\""
+        info "Or restart your shell to pick up profile changes"
+        
+        # Create a source-able script for immediate activation
+        cat > "setup-path.sh" << EOF
+#!/bin/bash
+# Temporary PATH setup for XDP Manager CLI
+# Run: source setup-path.sh
+
+export PATH="$user_bin:\$PATH"
+echo "✓ XDP Manager CLI added to PATH for this session"
+echo "✓ You can now use 'xdp-manager' directly"
+echo ""
+echo "To make permanent, restart your shell or add to your profile:"
+echo "  echo 'export PATH=\"$user_bin:\$PATH\"' >> ~/.bashrc"
+echo ""
+EOF
+        chmod +x "setup-path.sh"
+        info "Created setup-path.sh - run 'source setup-path.sh' for immediate access"
     fi
 }
 
@@ -719,16 +783,11 @@ verify_setup() {
     log "All build artifacts present"
     
     # Check configuration
-    if [ -f ".env" ]; then
-        log ".env configuration file found"
+    if [ -f "config.yaml" ]; then
+        log "config.yaml configuration file found"
     else
-        if [ -f ".env.example" ]; then
-            cp ".env.example" ".env"
-            log "Created .env from .env.example"
-            warn "Please edit .env file with your configuration"
-        else
-            warn ".env file not found. You may need to create one manually"
-        fi
+        warn "No configuration file found. CLI will use defaults"
+        info "You can create config.yaml manually or run: xdp-manager config init"
     fi
     
     # Check key commands
@@ -775,23 +834,125 @@ verify_setup() {
 }
 
 # ============================================================================
-# STEP 6: NETWORK CONFIGURATION
+# CONFIGURATION LOADING FUNCTION
+# ============================================================================
+
+load_config_values() {
+    local config_file="$1"
+    
+    if [ ! -f "$config_file" ]; then
+        warn "Configuration file not found: $config_file"
+        return 1
+    fi
+    
+    if ! command -v python3 >/dev/null 2>&1; then
+        warn "Python3 not available for configuration parsing"
+        return 1
+    fi
+    
+    # Test if PyYAML is available
+    if ! python3 -c "import yaml" 2>/dev/null; then
+        warn "PyYAML not available, using default values"
+        return 1
+    fi
+    
+    info "Loading configuration from $config_file"
+    
+    # Load configuration using Python
+    local config_script="
+import yaml
+import sys
+import os
+
+try:
+    with open('$config_file', 'r') as f:
+        config = yaml.safe_load(f)
+    
+    # Network configuration
+    network = config.get('network', {})
+    TARGET_IP = network.get('nat_ip', '172.30.82.95')
+    TARGET_PORT = network.get('nat_port', '8081')
+    SOURCE_PORT = network.get('source_port', '31765')
+    EGRESS_INTERFACE = network.get('egress_interface', 'ens6')
+    
+    # Pipeline configuration
+    pipeline = config.get('pipeline', {})
+    BRIDGE_INTERFACE = pipeline.get('bridge_interface', 'br0')
+    INTERFACE = pipeline.get('interface', 'eth0')
+    TARGET_INTERFACE = pipeline.get('target_interface', 'eth1')
+    
+    # System configuration
+    system = config.get('system', {})
+    MIN_DISK_SPACE_GB = system.get('min_disk_space_gb', 2)
+    MIN_KERNEL_VERSION = system.get('min_kernel_version', '4.18')
+    
+    # Build configuration  
+    build = config.get('build', {})
+    SOURCE_DIR = build.get('source_dir', 'src')
+    TEMP_DIR = build.get('temp_dir', '/tmp')
+    COMPILER_JOBS = build.get('compiler_jobs', 'auto')
+    
+    # Installation configuration
+    install = config.get('installation', {})
+    USER_BIN_DIR = install.get('user_bin_dir', '\$HOME/.local/bin')
+    
+    # Export as shell variables
+    print(f'export TARGET_IP=\"{TARGET_IP}\"')
+    print(f'export TARGET_PORT=\"{TARGET_PORT}\"')
+    print(f'export SOURCE_PORT=\"{SOURCE_PORT}\"')
+    print(f'export EGRESS_INTERFACE=\"{EGRESS_INTERFACE}\"')
+    print(f'export BRIDGE_INTERFACE=\"{BRIDGE_INTERFACE}\"')
+    print(f'export INTERFACE=\"{INTERFACE}\"')
+    print(f'export TARGET_INTERFACE=\"{TARGET_INTERFACE}\"')
+    print(f'export MIN_DISK_SPACE_GB=\"{MIN_DISK_SPACE_GB}\"')
+    print(f'export MIN_KERNEL_VERSION=\"{MIN_KERNEL_VERSION}\"')
+    print(f'export SOURCE_DIR=\"{SOURCE_DIR}\"')
+    print(f'export TEMP_DIR=\"{TEMP_DIR}\"')
+    print(f'export COMPILER_JOBS=\"{COMPILER_JOBS}\"')
+    print(f'export USER_BIN_DIR=\"{USER_BIN_DIR}\"')
+    
+except Exception as e:
+    print(f'echo \"Error loading config: {e}\"', file=sys.stderr)
+    sys.exit(1)
+"
+    
+    # Execute Python script and source the output
+    local config_output
+    config_output=$(python3 -c "$config_script" 2>/dev/null)
+    
+    if [ $? -eq 0 ] && [ -n "$config_output" ]; then
+        eval "$config_output"
+        log "Configuration loaded successfully"
+        return 0
+    else
+        warn "Failed to load configuration from $config_file"
+        return 1
+    fi
+}
+
+# ============================================================================
+# STEP 6: NETWORK CONFIGURATION  
 # ============================================================================
 
 configure_network() {
     section "Configuring Network Routing for XDP Pipeline"
     
-    # Target configuration from .env or defaults
-    local TARGET_IP="172.30.82.95"
-    local TARGET_PORT="8081"
-    local BRIDGE_INTERFACE="br0"
-    local EGRESS_INTERFACE="ens6"
+    # Load configuration from YAML files
+    local config_loaded=false
     
-    # Source .env if it exists for custom configuration
-    if [ -f ".env" ]; then
-        source .env
-        TARGET_IP="${TARGET_IP:-172.30.82.95}"
-        info "Using configuration from .env file"
+    if [ -f "config.yaml" ]; then
+        if load_config_values "config.yaml"; then
+            config_loaded=true
+        fi
+    fi
+    
+    # Set defaults if configuration loading failed
+    if [ "$config_loaded" = false ]; then
+        info "Using hardcoded default values"
+        export TARGET_IP="172.30.82.95"
+        export TARGET_PORT="8081"
+        export BRIDGE_INTERFACE="br0"
+        export EGRESS_INTERFACE="ens6"
     fi
     
     info "Target: $TARGET_IP:$TARGET_PORT"
@@ -913,7 +1074,7 @@ show_status() {
     log "Environment is ready!"
     
     # Check if global CLI is available
-    local global_cli_status="Restart shell or run: export PATH=\"\$HOME/.local/bin:\$PATH\""
+    local global_cli_status="Run: source setup-path.sh (or restart shell)"
     if command -v xdp-manager >/dev/null 2>&1; then
         global_cli_status="Available now"
     fi
@@ -925,6 +1086,15 @@ show_status() {
     echo "  With uv:             uv run xdp-manager --help"
     echo "  Activate environment: source activate-xdp.sh"
     echo ""
+    
+    # Show immediate activation instructions if needed
+    if ! command -v xdp-manager >/dev/null 2>&1; then
+        info "⚡ To activate global CLI immediately:"
+        echo "  source setup-path.sh        # Add to current session"
+        echo "  # OR"
+        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\"  # Manual export"
+        echo ""
+    fi
     info "📋 Quick Commands:"
     echo "  xdp-manager status              # Check pipeline status"
     echo "  xdp-manager config show         # View configuration"
@@ -939,8 +1109,8 @@ show_status() {
     echo ""
     info "📁 Key files:"
     echo "  - CLI Package:      pyproject.toml, xdp_manager/"
-    echo "  - Configuration:    .env, xdp_config.yaml"
-    echo "  - Activation:       activate-xdp.sh"
+    echo "  - Configuration:    config.yaml"
+    echo "  - Activation:       activate-xdp.sh, setup-path.sh"
     echo "  - Source code:      src/"
     echo ""
 }

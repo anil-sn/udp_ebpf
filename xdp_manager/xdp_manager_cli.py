@@ -363,7 +363,19 @@ Examples:
             interfaces = self.network_manager.list_interfaces()
             return [iface.name for iface in interfaces if iface.name.startswith(prefix)]
         except Exception:
-            return ['eth0', 'eth1', 'ens5', 'ens6']  # Common fallbacks
+            # Load from configuration if available
+            try:
+                from .config import ConfigManager
+                config_mgr = ConfigManager()
+                if config_mgr.load_config():
+                    interfaces = [
+                        config_mgr.pipeline_config.interface,
+                        config_mgr.pipeline_config.target_interface
+                    ]
+                    return [iface for iface in interfaces if iface and iface.startswith(prefix)]
+            except:
+                pass
+            return ['ens5', 'ens6']  # Configured defaults
     
     def _program_completer(self, prefix, parsed_args, **kwargs):
         """Autocomplete BPF program files"""

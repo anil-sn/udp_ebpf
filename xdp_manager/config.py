@@ -12,7 +12,7 @@ from .models import ValidationResult
 @dataclass
 class PipelineConfig:
     """Main pipeline configuration"""
-    interface: str = "ens5"
+    interface: str = "ens5"  # Default ingress interface for VXLAN
     src_directory: str = "src"
     bpf_program: str = "vxlan_pipeline.bpf.c"
     allowlist_file: str = "ip_allowlist.json"
@@ -20,6 +20,7 @@ class PipelineConfig:
     log_level: str = "info"
     auto_reload: bool = False
     performance_mode: bool = True
+    target_interface: str = "ens6"  # Default egress interface
     
 @dataclass
 class CompilerConfig:
@@ -45,7 +46,7 @@ class MonitoringConfig:
 class ConfigManager:
     """Configuration management with validation and persistence"""
     
-    DEFAULT_CONFIG_FILE = "xdp_config.yaml"
+    DEFAULT_CONFIG_FILE = "config.yaml"
     
     def __init__(self, config_file: Optional[str] = None):
         self.config_file = Path(config_file) if config_file else Path(self.DEFAULT_CONFIG_FILE)
