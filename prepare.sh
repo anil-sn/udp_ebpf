@@ -151,7 +151,6 @@ echo ""
 echo -e "${GREEN}✨ After completion, you'll have:${NC}"
 echo "  • Global 'xdp-manager' command available anywhere"
 echo "  • Professional CLI with help, monitoring, and diagnostics"
-echo "  • Legacy './xdp.sh' script for compatibility"
 echo ""
 echo -e "${GREEN}Running in non-interactive mode - no user input required${NC}"
 echo ""
@@ -933,21 +932,16 @@ show_status() {
     echo "  xdp-manager start --interface eth0  # Start pipeline"
     echo "  xdp-manager monitor             # Real-time monitoring"
     echo ""
-    info "🔧 Legacy Usage (still available):"
-    echo "  ./xdp.sh start                  # Start using legacy script"
-    echo "  ./xdp.sh monitor                # Monitor using legacy script"
+    info "🎯 Next steps:"
+    echo "  1. Edit configuration: xdp-manager config edit"
+    echo "  2. Check status: xdp-manager status"
+    echo "  3. Start pipeline: xdp-manager start --interface <interface>"
     echo ""
     info "📁 Key files:"
     echo "  - CLI Package:      pyproject.toml, xdp_manager/"
     echo "  - Configuration:    .env, xdp_config.yaml"
     echo "  - Activation:       activate-xdp.sh"
-    echo "  - Legacy control:   ./xdp.sh"
     echo "  - Source code:      src/"
-    echo ""
-    info "🎯 Next steps:"
-    echo "  1. Edit configuration: xdp-manager config edit"
-    echo "  2. Check status: xdp-manager status"
-    echo "  3. Start pipeline: xdp-manager start --interface <interface>"
     echo ""
 }
 
@@ -965,9 +959,9 @@ main() {
     echo ""
     
     # Verify we're in the right directory
-    if [ ! -f "xdp.sh" ] || [ ! -d "src" ]; then
+    if [ ! -d "src" ] || [ ! -f "pyproject.toml" ]; then
         error "Please run this script from the project root directory"
-        error "(directory containing xdp.sh and src/)"
+        error "(directory containing pyproject.toml and src/)"
         exit 1
     fi
     
