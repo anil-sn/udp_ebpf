@@ -51,7 +51,7 @@ class XDPManagerCLI:
         
         # Initialize managers
         self.config_manager = ConfigManager()
-        self.network_manager = NetworkManager(self.logger)
+        self.network_manager = NetworkManager(logger=self.logger)
         self.bpf_maps = BPFMapManager(logger=self.logger)
         self.allowlist_manager = AllowlistManager(logger=self.logger)
         self.display_manager = DisplayManager(logger=self.logger)
