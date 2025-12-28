@@ -54,9 +54,13 @@ class ConfigManager:
         self.compiler_config = CompilerConfig()
         self.monitoring_config = MonitoringConfig()
         
-    def load_config(self) -> bool:
+    def load_config(self, config_file: Optional[str] = None) -> bool:
         """Load configuration from file"""
         try:
+            # Update config file path if provided
+            if config_file:
+                self.config_file = Path(config_file)
+                
             if not self.config_file.exists():
                 self.save_config()  # Create default config
                 return True
@@ -93,6 +97,10 @@ class ConfigManager:
         except Exception as e:
             print(f"Error loading config: {e}")
             return False
+    
+    def get_config(self):
+        """Get the config manager instance (for compatibility)"""
+        return self
     
     def save_config(self) -> bool:
         """Save configuration to file"""

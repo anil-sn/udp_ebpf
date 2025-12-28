@@ -281,13 +281,15 @@ Examples:
         else:
             self.logger.set_level('INFO')
         
-        # Load configuration if specified
-        if args.config:
-            try:
+        # Load configuration 
+        try:
+            if args.config:
                 self.config_manager.load_config(args.config)
-            except Exception as e:
-                self._error(f"Failed to load configuration: {e}")
-                return 1
+            else:
+                self.config_manager.load_config()  # Load default config.yaml
+        except Exception as e:
+            self._error(f"Failed to load configuration: {e}")
+            return 1
         
         # Set output format
         if hasattr(args, 'format') and args.format:
@@ -327,17 +329,23 @@ Examples:
         try:
             # Try to get from config first
             config = self.config_manager.get_config()
+            self.logger.info(f"Config loaded: pipeline_config exists: {hasattr(config, 'pipeline_config')}")
+            
             if hasattr(config, 'pipeline_config') and config.pipeline_config.ingress_interface:
+                self.logger.info(f"Using configured ingress interface: {config.pipeline_config.ingress_interface}")
                 return config.pipeline_config.ingress_interface
             
             # Auto-detect primary interface
+            self.logger.info("No configured interface found, auto-detecting...")
             interfaces = self.network_manager.list_interfaces()
             for iface in interfaces:
                 if iface.state == 'UP' and not iface.name.startswith(('lo', 'docker', 'br-')):
+                    self.logger.info(f"Auto-detected interface: {iface.name}")
                     return iface.name
             
             return None
-        except Exception:
+        except Exception as e:
+            self.logger.error(f"Error getting default interface: {e}")
             return None
     
     def _get_default_program(self) -> Optional[str]:
