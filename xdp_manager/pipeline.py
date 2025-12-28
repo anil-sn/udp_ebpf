@@ -200,9 +200,25 @@ class XDPPipeline:
         """Get current pipeline operational status"""
         try:
             # Check if BPF program exists
-            bpf_path = self.config.get_bpf_path()
-            if not bpf_path.exists():
-                self.logger.debug(f"BPF program not found at {bpf_path}")
+            config = self.config.get_config()
+            if hasattr(config, 'pipeline_config'):
+                # Construct BPF path from config
+                program_path = config.pipeline_config.program_path
+                if program_path.endswith('.c'):
+                    program_path = program_path.replace('.c', '.o')
+                
+                # Check in src directory if not absolute path
+                from pathlib import Path
+                if not Path(program_path).is_absolute():
+                    bpf_path = Path(config.pipeline_config.src_directory) / program_path
+                else:
+                    bpf_path = Path(program_path)
+                
+                if not bpf_path.exists():
+                    self.logger.debug(f"BPF program not found at {bpf_path}")
+                    return PipelineStatus.ERROR
+            else:
+                self.logger.error("No pipeline config available")
                 return PipelineStatus.ERROR
             
             # Check if XDP is loaded
