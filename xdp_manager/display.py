@@ -26,12 +26,22 @@ class DisplayManager:
     
     def __init__(self, logger: Optional[Logger] = None, use_color: bool = None):
         self.logger = logger or Logger("display")
+        self.output_format = "table"  # Default format
         
         if use_color is None:
             use_color = RICH_AVAILABLE
             
         self.console = Console(force_terminal=use_color) if RICH_AVAILABLE and use_color else None
         self.use_color = use_color and RICH_AVAILABLE
+    
+    def set_format(self, format_type: str):
+        """Set output format (json, yaml, table, plain)"""
+        valid_formats = ['json', 'yaml', 'table', 'plain']
+        if format_type in valid_formats:
+            self.output_format = format_type
+        else:
+            self.logger.warning(f"Unknown format '{format_type}', using 'table'")
+            self.output_format = "table"
     
     def print_status(self, message: str, level: str = "info"):
         """Print formatted status message"""
