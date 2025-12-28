@@ -2013,9 +2013,13 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     /* Start the pipeline at the classifier stage */
     bpf_tail_call(ctx, &pipeline_programs, STAGE_CLASSIFIER);
     
-    /* If tail call fails, provide minimal fallback processing */
+    /* If tail call fails, provide fallback processing with IP allowlist enforcement */
     void *data_end = (void *)(long)ctx->data_end;
     void *data = (void *)(long)ctx->data;
+    struct ethhdr *eth_hdr;
+    struct iphdr *ip_hdr;
+    struct udphdr *udp_hdr;
+    int result;
     
     /* Basic validation */
     if (data + sizeof(struct ethhdr) > data_end) {
@@ -2024,9 +2028,32 @@ int vxlan_pipeline_main(struct xdp_md *ctx)
     }
     
     update_stat(STAT_TOTAL_PACKETS, 1);
-    /* Note: Only increment errors on actual tail call failures, not successful processing */
     
-    /* If tail call failed, pass all traffic to avoid drops */
+    /* CRITICAL FIX: Add IP allowlist enforcement in fallback path */
+    result = parse_outer_headers(data, data_end, &eth_hdr, &ip_hdr, &udp_hdr);
+    if (result == 0) {  /* VXLAN packet found */
+        update_stat(STAT_VXLAN_PACKETS, 1);
+        
+        /* Parse inner packet for IP allowlist check */
+        struct ethhdr *inner_eth;
+        struct iphdr *inner_ip;
+        struct udphdr *inner_udp;
+        
+        result = parse_inner_packet(data, data_end, udp_hdr, &inner_eth, &inner_ip, &inner_udp);
+        if (result == 0 && inner_ip) {
+            /* ENFORCE IP ALLOWLIST: This was missing in the fallback path */
+            if (!is_ip_allowed(inner_ip)) {
+                update_stat(STAT_DROPPED, 1);
+                return XDP_DROP;  /* Block unauthorized IPs */
+            }
+            
+            /* IP allowed - continue processing */
+            update_stat(STAT_INNER_PACKETS, 1);
+            return XDP_PASS;
+        }
+    }
+    
+    /* Non-VXLAN or parsing failed - pass through */
     return XDP_PASS;
 }
 
