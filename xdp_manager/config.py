@@ -16,6 +16,7 @@ class PipelineConfig:
     egress_interface: str = "ens6"   # Packet egress interface for processed packets
     src_directory: str = "src"
     program_path: str = "vxlan_pipeline.bpf.c"  # BPF program file path
+    mode: str = "xdp"  # XDP attachment mode: xdp, xdpgeneric, xdpdrv, xdpoffload
     allowlist_file: str = "ip_allowlist.json"
     max_entries: int = 10000
     log_level: str = "info"

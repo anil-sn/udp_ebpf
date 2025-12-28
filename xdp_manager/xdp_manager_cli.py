@@ -412,10 +412,14 @@ Examples:
             # Get program from args or config  
             program = args.program or self._get_default_program()
             
+            # Update config if custom program specified
+            if args.program:
+                self.config_manager.pipeline_config.program_path = args.program
+            if args.mode:
+                self.config_manager.pipeline_config.mode = args.mode
+            
             result = self.pipeline.start(
                 interface=interface,
-                program_path=program,
-                mode=args.mode,
                 force=args.force
             )
             
