@@ -289,8 +289,11 @@ class DisplayManager:
             self.print_status(f"Export failed: {e}", "error")
             return None
     
-    def _create_performance_panel(self, stats: PipelineStats) -> Panel:
+    def _create_performance_panel(self, stats: PipelineStats):
         """Create performance indicator panel"""
+        if not RICH_AVAILABLE:
+            return None
+            
         # Determine performance level
         if stats.drop_rate > 5.0:
             perf_level = "[red]Poor[/red]"
@@ -308,8 +311,11 @@ class DisplayManager:
         
         return Panel(content, title="Performance Indicators", border_style=perf_color)
     
-    def _create_stats_table(self, stats: PipelineStats) -> Table:
+    def _create_stats_table(self, stats: PipelineStats):
         """Create statistics table for live display"""
+        if not RICH_AVAILABLE:
+            return None
+            
         table = Table(title=f"Live Statistics - {datetime.now().strftime('%H:%M:%S')}")
         table.add_column("Metric", style="cyan")
         table.add_column("Value", justify="right", style="green")
