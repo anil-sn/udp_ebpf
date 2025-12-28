@@ -607,47 +607,76 @@ show_bpf_maps() {
     if ! sudo bpftool map show name nat_map >/dev/null 2>&1; then
         printf "│      -      │        -        │      -       │ Map Not Found   │\n"
     else
-        local nat_raw=$(sudo bpftool map dump name nat_map 2>/dev/null)
+        local nat_json=$(sudo bpftool map dump name nat_map --json 2>/dev/null)
         
-        if [ -n "$nat_raw" ]; then
-            local found_entries=false
-            # Parse NAT entries from raw output
-            echo "$nat_raw" | grep -A1 "key:" | while read -r line; do
-                if echo "$line" | grep -q "key:"; then
-                    # Extract source port from key (assuming first 2 bytes)
-                    local src_port_hex=$(echo "$line" | sed -n 's/.*key: *\([0-9a-f][0-9a-f]\) *\([0-9a-f][0-9a-f]\).*/\2\1/p')
-                    if [ -n "$src_port_hex" ]; then
-                        local src_port=$((0x$src_port_hex))
-                        # Read next line for value
-                        read -r value_line
-                        if echo "$value_line" | grep -q "value:"; then
-                            # Extract target IP and port from value
-                            local values=$(echo "$value_line" | sed 's/.*value: *//')
-                            # Parse IP (first 4 bytes) and port (next 2 bytes)
-                            local ip_bytes=$(echo "$values" | awk '{print $1" "$2" "$3" "$4}')
-                            local port_bytes=$(echo "$values" | awk '{print $5$6}')
-                            
-                            if [ -n "$ip_bytes" ] && [ -n "$port_bytes" ]; then
-                                # Convert hex bytes to IP
-                                local ip_addr=$(echo "$ip_bytes" | awk '{
-                                    printf "%d.%d.%d.%d", 
-                                    strtonum("0x"$1), strtonum("0x"$2), 
-                                    strtonum("0x"$3), strtonum("0x"$4)
-                                }')
-                                local target_port=$((0x$port_bytes))
+        if [ -n "$nat_json" ] && command -v jq >/dev/null 2>&1; then
+            # Parse using jq for reliable JSON processing
+            local nat_entries=$(echo "$nat_json" | jq -r 'length' 2>/dev/null || echo "0")
+            
+            if [ "$nat_entries" -gt 0 ]; then
+                echo "$nat_json" | jq -r '.[] | "\(.formatted.key.src_port):\(.formatted.value.target_ip):\(.formatted.value.target_port)"' 2>/dev/null | while IFS=':' read -r src_port target_ip_int target_port; do
+                    if [ -n "$src_port" ] && [ -n "$target_ip_int" ] && [ -n "$target_port" ]; then
+                        # Convert integer IP to dotted decimal (network byte order)
+                        local a=$(( (target_ip_int >> 24) & 0xFF ))
+                        local b=$(( (target_ip_int >> 16) & 0xFF ))
+                        local c=$(( (target_ip_int >> 8) & 0xFF ))
+                        local d=$(( target_ip_int & 0xFF ))
+                        local target_ip="$a.$b.$c.$d"
+                        
+                        printf "│    %5d    │ %15s │    %6d    │     Active      │\n" \
+                            "$src_port" "$target_ip" "$target_port"
+                    fi
+                done
+            else
+                printf "│      -      │        -        │      -       │   No Rules      │\n"
+            fi
+        else
+            # Fallback: parse raw hex if jq not available
+            local nat_raw=$(sudo bpftool map dump name nat_map 2>/dev/null)
+            if [ -n "$nat_raw" ]; then
+                local found_entries=false
+                # Parse NAT entries from raw output
+                echo "$nat_raw" | grep -A1 "key:" | while read -r line; do
+                    if echo "$line" | grep -q "key:"; then
+                        # Extract source port from key (2 bytes, little endian)
+                        local src_port_hex=$(echo "$line" | sed -n 's/.*key: *\([0-9a-f][0-9a-f]\) *\([0-9a-f][0-9a-f]\).*/\2\1/p')
+                        if [ -n "$src_port_hex" ]; then
+                            local src_port=$((0x$src_port_hex))
+                            # Read next line for value
+                            read -r value_line
+                            if echo "$value_line" | grep -q "value:"; then
+                                # Extract target IP and port from value
+                                local values=$(echo "$value_line" | sed 's/.*value: *//')
+                                # Parse IP (first 4 bytes) and port (next 2 bytes)
+                                local ip_bytes=$(echo "$values" | awk '{print $1" "$2" "$3" "$4}')
+                                local port_bytes=$(echo "$values" | awk '{print $5$6}')
                                 
-                                printf "│    %5d    │ %15s │    %6d    │     Active      │\n" \
-                                    "$src_port" "$ip_addr" "$target_port"
-                                found_entries=true
+                                if [ -n "$ip_bytes" ] && [ -n "$port_bytes" ]; then
+                                    # Convert hex bytes to IP
+                                    local ip_addr=$(echo "$ip_bytes" | awk '{
+                                        printf "%d.%d.%d.%d", 
+                                        strtonum("0x"$1), strtonum("0x"$2), 
+                                        strtonum("0x"$3), strtonum("0x"$4)
+                                    }')
+                                    local target_port=$((0x$port_bytes))
+                                    
+                                    printf "│    %5d    │ %15s │    %6d    │     Active      │\n" \
+                                        "$src_port" "$ip_addr" "$target_port"
+                                    found_entries=true
+                                fi
                             fi
                         fi
                     fi
+                done
+                
+                if [ "$found_entries" = "false" ]; then
+                    printf "│      -      │        -        │      -       │   No Rules      │\n"
                 fi
-            done
-            
-            if [ "$found_entries" = "false" ]; then
-                printf "│      -      │        -        │      -       │   No Rules      │\n"
+            else
+                printf "│      -      │        -        │      -       │   Map Empty     │\n"
             fi
+        fi
+    fi
         else
             printf "│      -      │        -        │      -       │   Map Empty     │\n"
         fi
