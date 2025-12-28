@@ -458,7 +458,7 @@ class DisplayManager:
     def show_analytics(self, analysis: Dict[str, Any]) -> None:
         """Show comprehensive analytics"""
         self.print_status("Analytics Report", "info")
-        if self.format == "json":
+        if self.output_format == "json":
             print(json.dumps(analysis, indent=2, default=str))
         else:
             for key, value in analysis.items():
@@ -467,7 +467,7 @@ class DisplayManager:
     def show_error_analysis(self, error_analysis: Dict[str, Any]) -> None:
         """Show error analysis"""
         self.print_status(f"Error Analysis - {error_analysis.get('total_errors', 0)} total errors", "warning")
-        if self.format == "json":
+        if self.output_format == "json":
             print(json.dumps(error_analysis, indent=2))
         else:
             for key, value in error_analysis.items():
@@ -476,7 +476,7 @@ class DisplayManager:
     def show_performance_metrics(self, metrics: Dict[str, Any]) -> None:
         """Show performance metrics"""
         self.print_status("Performance Metrics", "info")
-        if self.format == "json":
+        if self.output_format == "json":
             print(json.dumps(metrics, indent=2))
         else:
             for key, value in metrics.items():
@@ -501,7 +501,7 @@ class DisplayManager:
     def show_diagnostics(self, diagnostics: Dict[str, Any]) -> None:
         """Show network diagnostics"""
         self.print_status("Network Diagnostics", "info")
-        if self.format == "json":
+        if self.output_format == "json":
             print(json.dumps(diagnostics, indent=2, default=str))
         else:
             for key, value in diagnostics.items():
@@ -513,7 +513,7 @@ class DisplayManager:
     def show_connectivity_results(self, results: Dict[str, Any]) -> None:
         """Show connectivity test results"""
         self.print_status("Connectivity Test Results", "info")
-        if self.format == "json":
+        if self.output_format == "json":
             print(json.dumps(results, indent=2, default=str))
         else:
             for target, result in results.get('connectivity_results', {}).items():
@@ -538,7 +538,7 @@ class DisplayManager:
     def show_monitoring_results(self, samples: List[Dict[str, Any]]) -> None:
         """Show monitoring results"""
         self.print_status(f"Monitoring Results - {len(samples)} samples", "info")
-        if self.format == "json":
+        if self.output_format == "json":
             print(json.dumps(samples, indent=2, default=str))
         else:
             print(f"Collected {len(samples)} monitoring samples")
@@ -548,7 +548,7 @@ class DisplayManager:
     def show_config(self, config: Dict[str, Any]) -> None:
         """Show configuration"""
         self.print_status("Configuration", "info")
-        if self.format == "json":
+        if self.output_format == "json":
             print(json.dumps(config, indent=2, default=str))
         else:
             for key, value in config.items():
@@ -581,6 +581,146 @@ class DisplayManager:
                     item['xdp']
                 )
             return table
+    
+    # Missing methods that the CLI expects
+    def show_raw_stats(self, raw_stats: Dict[str, Any]) -> None:
+        """Display raw BPF map statistics"""
+        self.print_status("Raw Statistics", "info")
+        if self.output_format == "json":
+            print(json.dumps(raw_stats, indent=2))
+        else:
+            for map_name, data in raw_stats.items():
+                print(f"Map: {map_name}")
+                if isinstance(data, dict):
+                    for key, value in data.items():
+                        print(f"  {key}: {value}")
+
+    def show_pipeline_stats(self, stats: PipelineStats) -> None:
+        """Display pipeline statistics (alias for show_statistics)"""
+        self.show_statistics(stats)
+
+    def show_comprehensive_analytics(self, analysis: Dict[str, Any]) -> None:
+        """Display comprehensive analytics (alias for show_analytics)"""
+        self.show_analytics(analysis)
+
+    def show_diagnostics(self, diagnostics: Dict[str, Any]) -> None:
+        """Display network diagnostics"""
+        self.print_status("Network Diagnostics", "info")
+        if self.output_format == "json":
+            print(json.dumps(diagnostics, indent=2))
+        else:
+            for section, data in diagnostics.items():
+                print(f"\n{section.replace('_', ' ').title()}:")
+                if isinstance(data, dict):
+                    for key, value in data.items():
+                        print(f"  {key}: {value}")
+                elif isinstance(data, list):
+                    for item in data:
+                        print(f"  - {item}")
+                else:
+                    print(f"  {data}")
+
+    def show_connectivity_results(self, results: Dict[str, Any]) -> None:
+        """Display connectivity test results"""
+        self.print_status("Connectivity Results", "info")
+        if self.output_format == "json":
+            print(json.dumps(results, indent=2))
+        else:
+            for target, result in results.items():
+                status = "✓" if result.get('success', False) else "✗"
+                print(f"  {status} {target}: {result.get('message', 'No details')}")
+
+    def show_packet_flow(self, flow_info: Dict[str, Any]) -> None:
+        """Display packet flow information"""
+        self.print_status("Packet Flow Analysis", "info")
+        if self.output_format == "json":
+            print(json.dumps(flow_info, indent=2))
+        else:
+            print(f"  Interface: {flow_info.get('interface', 'Unknown')}")
+            print(f"  Packets analyzed: {flow_info.get('packet_count', 0)}")
+            print(f"  Duration: {flow_info.get('duration', 0)}s")
+
+    def show_vxlan_analysis(self, vxlan_analysis: Dict[str, Any]) -> None:
+        """Display VXLAN traffic analysis"""
+        self.print_status("VXLAN Analysis", "info")
+        if self.output_format == "json":
+            print(json.dumps(vxlan_analysis, indent=2))
+        else:
+            print(f"  VXLAN packets: {vxlan_analysis.get('vxlan_packets', 0)}")
+            print(f"  VNI distribution: {vxlan_analysis.get('vni_stats', {})}")
+
+    def show_debug_info(self, flow_info: Dict[str, Any]) -> None:
+        """Display debug information"""
+        self.print_status("Debug Information", "info")
+        if self.output_format == "json":
+            print(json.dumps(flow_info, indent=2))
+        else:
+            print(f"  Timestamp: {flow_info.get('timestamp', 'Unknown')}")
+            for key, value in flow_info.items():
+                if key != 'timestamp':
+                    print(f"  {key}: {value}")
+
+    def show_monitoring_results(self, samples: List[Dict[str, Any]]) -> None:
+        """Display monitoring results"""
+        self.print_status("Monitoring Results", "info")
+        if self.output_format == "json":
+            print(json.dumps(samples, indent=2))
+        else:
+            print(f"  Total samples: {len(samples)}")
+            if samples:
+                latest = samples[-1]
+                print(f"  Latest sample: {latest}")
+
+    def show_config(self, config: Any) -> None:
+        """Show configuration"""
+        self.print_status("Configuration", "info")
+        if hasattr(config, '__dict__'):
+            config_dict = config.__dict__
+        else:
+            config_dict = config
+        
+        if self.output_format == "json":
+            print(json.dumps(config_dict, indent=2, default=str))
+        else:
+            for key, value in config_dict.items():
+                print(f"  {key}: {value}")
+
+    def create_status_display(self, status: Any):
+        """Create status display for live updates"""
+        if self.console:
+            return Panel(f"Status: {status}", title="XDP Pipeline Status")
+        else:
+            return f"Status: {status}"
+
+    def create_top_display(self, stats_data: List[Dict[str, Any]], sort_by: str):
+        """Create top-like display"""
+        if self.console:
+            table = Table(title=f"XDP Interface Statistics (sorted by {sort_by})")
+            table.add_column("Interface")
+            table.add_column("RX PPS")
+            table.add_column("TX PPS") 
+            table.add_column("XDP")
+            
+            for stat in stats_data[:10]:  # Show top 10
+                table.add_row(
+                    stat.get('interface', ''),
+                    str(stat.get('rx_pps', 0)),
+                    str(stat.get('tx_pps', 0)),
+                    stat.get('xdp', '[NO]')
+                )
+            return table
+        else:
+            lines = ["Interface Statistics:"]
+            for stat in stats_data[:10]:
+                lines.append(f"  {stat.get('interface', '')}: RX={stat.get('rx_pps', 0)} TX={stat.get('tx_pps', 0)}")
+            return "\n".join(lines)
+
+    def create_debug_display(self, debug_info: Dict[str, Any]):
+        """Create debug display"""
+        if self.console:
+            return Panel(str(debug_info), title="Debug Information")
+        else:
+            return f"Debug: {debug_info}"
         return f"XDP Top - {len(stats_data)} interfaces"
     
     def create_debug_display(self, debug_info: Dict[str, Any]) -> Any:

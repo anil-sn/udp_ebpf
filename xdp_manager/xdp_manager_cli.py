@@ -290,7 +290,7 @@ Examples:
                 return 1
         
         # Set output format
-        if hasattr(args, 'format'):
+        if hasattr(args, 'format') and args.format:
             self.display_manager.set_format(args.format)
         
         # Disable colors if requested
@@ -486,7 +486,7 @@ Examples:
             if args.live:
                 return self._show_live_status(args)
             else:
-                status = self.pipeline.get_status(args.interface)
+                status = self.pipeline.get_status()
                 self.display_manager.show_pipeline_status(status)
                 return 0
                 
@@ -842,7 +842,7 @@ Examples:
             
             with Live(console=self.console, refresh_per_second=1/args.refresh) as live:
                 while True:
-                    status = self.pipeline.get_status(args.interface)
+                    status = self.pipeline.get_status()
                     display = self.display_manager.create_status_display(status)
                     live.update(display)
                     
