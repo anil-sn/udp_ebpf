@@ -86,7 +86,7 @@ class XDPPipeline:
             
             # Build vxlan_loader command (matches bash implementation exactly)
             cmd = [
-                'sudo', './vxlan_loader',  # Note: in current dir, not src/
+                'sudo', 'src/vxlan_loader',  # Binary is in src/ directory
                 '-i', target_interface,
                 '-t', pipeline_cfg.egress_interface,
                 '-a', str(getattr(pipeline_cfg, 'nat_target_ip', '172.30.82.95')),
