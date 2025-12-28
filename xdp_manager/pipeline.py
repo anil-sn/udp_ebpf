@@ -92,17 +92,17 @@ class XDPPipeline:
             
             # Log configuration being used
             self.logger.info(f"Configuration: ingress={target_interface}, egress={pipeline_cfg.egress_interface}")
-            self.logger.info(f"NAT target: {getattr(config.network, 'nat_ip', '172.30.82.50')}:{getattr(config.network, 'nat_port', 8081)}")
+            self.logger.info(f"NAT target: {getattr(pipeline_cfg, 'nat_target_ip', '172.30.82.50')}:{getattr(pipeline_cfg, 'nat_target_port', 8081)}")
             
             # Change to the main directory (matches bash: cd "$SCRIPT_DIR")
             import os
             original_cwd = os.getcwd()
             
             # Build vxlan_loader command (matches bash implementation exactly)
-            nat_ip = getattr(config.network, 'nat_ip', '172.30.82.50')
-            nat_port = getattr(config.network, 'nat_port', 8081)
-            source_port = getattr(config.network, 'source_port', 31765)
-            stats_interval = getattr(config.network, 'statistics_interval', 5)
+            nat_ip = getattr(pipeline_cfg, 'nat_target_ip', '172.30.82.50')
+            nat_port = getattr(pipeline_cfg, 'nat_target_port', 8081)
+            source_port = getattr(pipeline_cfg, 'source_port', 31765)
+            stats_interval = getattr(pipeline_cfg, 'statistics_interval', 5)
             
             cmd = [
                 'sudo', 'src/vxlan_loader',  # Binary is in src/ directory

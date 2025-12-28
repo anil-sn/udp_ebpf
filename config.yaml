@@ -16,19 +16,11 @@ pipeline:
   # XDP attachment mode: xdp, xdpgeneric, xdpdrv, xdpoffload
   mode: "xdp"
   
-  # Apply system performance tuning by default
-  apply_system_tuning: true
-  
-  # Enable high-performance optimizations
-  performance_mode: true
-
-# Network configuration
-network:
   # NAT configuration - target IP for DNAT
-  nat_ip: "172.30.82.50"       # Gateway IP (reliable target)
-  nat_port: 8081
+  nat_target_ip: "172.30.82.50"    # Working target IP that responds to ARP
+  nat_target_port: 8081
   
-  # Source port matching - matches inner destination port
+  # Source port matching - matches inner destination port  
   source_port: 31765
   
   # Statistics collection interval
