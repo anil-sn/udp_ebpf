@@ -514,8 +514,206 @@ def clear_all_ips():
             print(f"Error accessing BPF map: {e.stderr}")
     except Exception as e:
         print(f"Error clearing IPs: {e}")
+def sync_ips_with_json(json_file='ip_allowlist.json', dry_run=False):
+    """
+    Synchronize eBPF map with JSON file using mark and sweep approach.
+    Adds new IPs and removes orphaned ones.
+    """
+    print(f"Synchronizing IP allowlist with {json_file}...")
+    
+    # Load target IPs from JSON
+    target_ips = set()
+    try:
+        with open(json_file, 'r') as f:
+            data = json.load(f)
+        
+        if 'flat_ip_list' in data:
+            target_ips = set(data['flat_ip_list'])
+        else:
+            for org in data.get('organizations', []):
+                target_ips.update(org.get('ips', []))
+    except Exception as e:
+        print(f"Error loading JSON file: {e}")
+        return False
+    
+    # Get currently loaded IPs from eBPF map
+    current_ips = set()
+    try:
+        cmd = ['bpftool', 'map', 'dump', 'name', 'ip_allowlist', '--json']
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        
+        json_data = json.loads(result.stdout)
+        for entry in json_data:
+            if 'formatted' in entry and 'key' in entry['formatted']:
+                key_val = entry['formatted']['key']
+                if isinstance(key_val, int):
+                    ip_str = f"{key_val & 0xFF}.{(key_val >> 8) & 0xFF}.{(key_val >> 16) & 0xFF}.{(key_val >> 24) & 0xFF}"
+                    current_ips.add(ip_str)
+    except Exception as e:
+        print(f"Error reading current eBPF map: {e}")
+        return False
+    
+    # Calculate differences
+    ips_to_add = target_ips - current_ips
+    ips_to_remove = current_ips - target_ips
+    
+    print(f"Current state:")
+    print(f"  - IPs in JSON: {len(target_ips)}")
+    print(f"  - IPs in eBPF map: {len(current_ips)}")
+    print(f"  - IPs to add: {len(ips_to_add)}")
+    print(f"  - IPs to remove: {len(ips_to_remove)}")
+    
+    if dry_run:
+        if ips_to_add:
+            print(f"\\nWould ADD {len(ips_to_add)} IPs:")
+            for ip in sorted(ips_to_add)[:10]:  # Show first 10
+                print(f"  + {ip}")
+            if len(ips_to_add) > 10:
+                print(f"  ... and {len(ips_to_add) - 10} more")
+        
+        if ips_to_remove:
+            print(f"\\nWould REMOVE {len(ips_to_remove)} IPs:")
+            for ip in sorted(ips_to_remove)[:10]:  # Show first 10
+                print(f"  - {ip}")
+            if len(ips_to_remove) > 10:
+                print(f"  ... and {len(ips_to_remove) - 10} more")
+        
+        return True
+    
+    # Perform actual sync
+    success_count = 0
+    fail_count = 0
+    
+    # Add new IPs
+    if ips_to_add:
+        print(f"\\nAdding {len(ips_to_add)} new IPs...")
+        for ip in ips_to_add:
+            if add_single_ip(ip):
+                success_count += 1
+                print(f"  + Added: {ip}")
+            else:
+                fail_count += 1
+                print(f"  × Failed to add: {ip}")
+    
+    # Remove orphaned IPs (mark and sweep)
+    if ips_to_remove:
+        print(f"\\nRemoving {len(ips_to_remove)} orphaned IPs...")
+        for ip in ips_to_remove:
+            if remove_single_ip(ip):
+                success_count += 1
+                print(f"  - Removed: {ip}")
+            else:
+                fail_count += 1
+                print(f"  × Failed to remove: {ip}")
+    
+    print(f"\\nSync complete: {success_count} operations successful, {fail_count} failed")
+    return fail_count == 0
+
+def add_single_ip(ip_str):
+    """Add a single IP to the eBPF map"""
+    hex_key = ip_to_hex_key(ip_str)
+    if not hex_key:
+        return False
+    
+    cmd = ['bpftool', 'map', 'update', 'name', 'ip_allowlist', 
+           'key', 'hex'] + hex_key.split() + ['value', 'hex', '01']
+    
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+def remove_single_ip(ip_str):
+    """Remove a single IP from the eBPF map"""
+    hex_key = ip_to_hex_key(ip_str)
+    if not hex_key:
+        return False
+    
+    cmd = ['bpftool', 'map', 'delete', 'name', 'ip_allowlist', 
+           'key', 'hex'] + hex_key.split()
+    
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+def watch_json_and_sync(json_file='ip_allowlist.json', interval=30):
+    """
+    Watch JSON file for changes and automatically sync with eBPF map
+    """
+    import hashlib
+    import os
+    
+    print(f"Watching {json_file} for changes (checking every {interval} seconds)...")
+    print("Press Ctrl+C to stop watching")
+    
+    last_hash = None
+    
+    try:
+        while True:
+            # Calculate file hash to detect changes
+            if os.path.exists(json_file):
+                with open(json_file, 'rb') as f:
+                    current_hash = hashlib.md5(f.read()).hexdigest()
+                
+                if last_hash is None:
+                    # First run - do initial sync
+                    print(f"Initial sync with {json_file}")
+                    sync_ips_with_json(json_file)
+                    last_hash = current_hash
+                elif current_hash != last_hash:
+                    # File changed - resync
+                    print(f"\\n{json_file} changed, resyncing...")
+                    sync_ips_with_json(json_file)
+                    last_hash = current_hash
+            else:
+                print(f"Warning: {json_file} not found")
+            
+            time.sleep(interval)
+            
+    except KeyboardInterrupt:
+        print(f"\\nStopped watching {json_file}")
+
+def bulk_add_ips(ip_list):
+    """Add multiple IPs efficiently"""
+    print(f"Adding {len(ip_list)} IPs to allowlist...")
+    
+    success_count = 0
+    fail_count = 0
+    
+    for ip in ip_list:
+        if add_single_ip(ip.strip()):
+            success_count += 1
+            if success_count % 50 == 0:
+                print(f"Added {success_count} IPs...")
+        else:
+            fail_count += 1
+    
+    print(f"Bulk add complete: {success_count} added, {fail_count} failed")
+    return success_count, fail_count
+
+def bulk_remove_ips(ip_list):
+    """Remove multiple IPs efficiently"""
+    print(f"Removing {len(ip_list)} IPs from allowlist...")
+    
+    success_count = 0
+    fail_count = 0
+    
+    for ip in ip_list:
+        if remove_single_ip(ip.strip()):
+            success_count += 1
+            if success_count % 50 == 0:
+                print(f"Removed {success_count} IPs...")
+        else:
+            fail_count += 1
+    
+    print(f"Bulk remove complete: {success_count} removed, {fail_count} failed")
+    return success_count, fail_count
+
 def main():
-    parser = argparse.ArgumentParser(description='Manage IP allowlist for XDP program')
+    parser = argparse.ArgumentParser(description='Manage IP allowlist for XDP program with runtime add/delete')
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('json_file', nargs='?', help='JSON file to load IPs from')
     group.add_argument('--display', action='store_true', help='Display currently loaded IPs')
@@ -524,22 +722,69 @@ def main():
     group.add_argument('--reload', action='store_true', help='Reload IPs from JSON file (clears and reloads)')
     group.add_argument('--show-orphaned', action='store_true', help='Show IPs in map but not in JSON file')
     
+    # New runtime management options
+    group.add_argument('--sync', metavar='JSON_FILE', help='Sync eBPF map with JSON file (mark and sweep)')
+    group.add_argument('--sync-dry-run', metavar='JSON_FILE', help='Show what would be synced without making changes')
+    group.add_argument('--add-ip', metavar='IP', help='Add a single IP to the allowlist')
+    group.add_argument('--remove-ip', metavar='IP', help='Remove a single IP from the allowlist')
+    group.add_argument('--add-ips', metavar='IP_LIST', help='Add comma-separated list of IPs')
+    group.add_argument('--remove-ips', metavar='IP_LIST', help='Remove comma-separated list of IPs')
+    group.add_argument('--watch', metavar='JSON_FILE', help='Watch JSON file for changes and auto-sync')
+    
+    # Optional arguments
+    parser.add_argument('--interval', type=int, default=30, help='Watch interval in seconds (default: 30)')
+    
     args = parser.parse_args()
     
-    if args.display:
-        display_loaded_ips()
-    elif args.clear:
-        clear_all_ips()
-    elif args.check_status:
-        check_ip_status()
-    elif args.reload:
-        reload_ips_from_json()
-    elif args.show_orphaned:
-        show_orphaned_ips()
-    elif args.json_file:
-        load_from_json(args.json_file)
-    else:
-        parser.print_help()
+    try:
+        if args.display:
+            display_loaded_ips()
+        elif args.clear:
+            clear_all_ips()
+        elif args.check_status:
+            check_ip_status()
+        elif args.reload:
+            reload_ips_from_json()
+        elif args.show_orphaned:
+            show_orphaned_ips()
+        elif args.sync:
+            success = sync_ips_with_json(args.sync)
+            sys.exit(0 if success else 1)
+        elif args.sync_dry_run:
+            sync_ips_with_json(args.sync_dry_run, dry_run=True)
+        elif args.add_ip:
+            if add_single_ip(args.add_ip):
+                print(f"Successfully added {args.add_ip}")
+            else:
+                print(f"Failed to add {args.add_ip}")
+                sys.exit(1)
+        elif args.remove_ip:
+            if remove_single_ip(args.remove_ip):
+                print(f"Successfully removed {args.remove_ip}")
+            else:
+                print(f"Failed to remove {args.remove_ip}")
+                sys.exit(1)
+        elif args.add_ips:
+            ip_list = [ip.strip() for ip in args.add_ips.split(',')]
+            success_count, fail_count = bulk_add_ips(ip_list)
+            sys.exit(0 if fail_count == 0 else 1)
+        elif args.remove_ips:
+            ip_list = [ip.strip() for ip in args.remove_ips.split(',')]
+            success_count, fail_count = bulk_remove_ips(ip_list)
+            sys.exit(0 if fail_count == 0 else 1)
+        elif args.watch:
+            watch_json_and_sync(args.watch, args.interval)
+        elif args.json_file:
+            load_from_json(args.json_file)
+        else:
+            parser.print_help()
+            
+    except KeyboardInterrupt:
+        print("\\nOperation interrupted by user")
+        sys.exit(130)
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

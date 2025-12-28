@@ -525,8 +525,8 @@ show_bpf_maps() {
     if ! sudo bpftool map show name stats_map >/dev/null 2>&1; then
         printf "│  -   │ %-23s │ %-15s │ %-12s │\n" "Map not found" "-" "-"
     else
-        # Get current statistics using raw dump
-        local stats_raw=$(sudo bpftool map dump name stats_map 2>/dev/null)
+        # Get current statistics using JSON format for reliable parsing
+        local stats_json=$(sudo bpftool map dump name stats_map --json 2>/dev/null)
         
         # Map of statistic names
         declare -A stat_names=(
@@ -551,12 +551,18 @@ show_bpf_maps() {
             [18]="Total Dropped"
         )
         
-        if [ -n "$stats_raw" ]; then
-            # Parse each key-value pair from raw output
+        if [ -n "$stats_json" ] && command -v jq >/dev/null 2>&1; then
+            # Parse using jq for reliable JSON processing
             local found_entries=false
             for key in {0..18}; do
-                # Look for this key in the raw output and sum all CPU values
-                local total_value=$(echo "$stats_raw" | grep -A1 "key: 0*$key " | grep "value:" | awk '{sum += $2} END {print sum+0}')
+                # Sum values across all CPUs for this key
+                local total_value=$(echo "$stats_json" | jq -r "
+                    map(select(.formatted.key == $key)) | 
+                    if length > 0 then 
+                        .[0].formatted.values | map(.value) | add 
+                    else 
+                        0 
+                    end" 2>/dev/null || echo "0")
                 
                 if [ "$total_value" -gt 0 ]; then
                     local name="${stat_names[$key]:-Unknown ($key)}"
@@ -570,7 +576,23 @@ show_bpf_maps() {
                 printf "│  -   │ %-23s │ %-15s │ %-12s │\n" "No active counters" "0" "-"
             fi
         else
-            printf "│  -   │ %-23s │ %-15s │ %-12s │\n" "Map is empty" "-" "-"
+            # Fallback: try basic parsing if jq is not available
+            local found_entries=false
+            for key in {0..15}; do
+                # Look for entries with this key in formatted output
+                local total_value=$(echo "$stats_json" | grep -A10 "\"formatted\":{\"key\":$key," | grep -o '"value":[0-9]*' | sed 's/"value"://' | awk '{sum += $1} END {print sum+0}' 2>/dev/null || echo "0")
+                
+                if [ "$total_value" -gt 0 ]; then
+                    local name="${stat_names[$key]:-Unknown ($key)}"
+                    printf "│ %4d │ %-23s │ %15s │ %12s │\n" \
+                        "$key" "$name" "$(format_number "$total_value")" "-"
+                    found_entries=true
+                fi
+            done
+            
+            if [ "$found_entries" = "false" ]; then
+                printf "│  -   │ %-23s │ %-15s │ %-12s │\n" "No active counters" "0" "-"
+            fi
         fi
     fi
     echo "└──────┴─────────────────────────┴─────────────────┴──────────────┘"
