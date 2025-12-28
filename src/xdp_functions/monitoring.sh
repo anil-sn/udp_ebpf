@@ -521,9 +521,13 @@ show_bpf_maps() {
     echo "│ Key  │     Statistic Name      │   Total Value   │   Per Second │"
     echo "├──────┼─────────────────────────┼─────────────────┼──────────────┤"
     
-    # Get current statistics for rate calculation
-    local stats_json=$(sudo bpftool map dump name stats_map --json 2>/dev/null)
-    if [ -n "$stats_json" ]; then
+    # Check if stats map exists
+    if ! sudo bpftool map show name stats_map >/dev/null 2>&1; then
+        printf "│  -   │ %-23s │ %-15s │ %-12s │\n" "Map not found" "-" "-"
+    else
+        # Get current statistics using raw dump
+        local stats_raw=$(sudo bpftool map dump name stats_map 2>/dev/null)
+        
         # Map of statistic names
         declare -A stat_names=(
             [0]="Total Packets"
@@ -547,25 +551,27 @@ show_bpf_maps() {
             [18]="Total Dropped"
         )
         
-        # Get previous values for rate calculation (simple approach)
-        sleep 1
-        local stats_json_prev="$stats_json"
-        sleep 2
-        stats_json=$(sudo bpftool map dump name stats_map --json 2>/dev/null)
-        
-        for key in {0..15}; do
-            local current_value=$(echo "$stats_json" | jq -r "[.[] | select(.key == $key) | .values[].value] | add // 0")
-            local prev_value=$(echo "$stats_json_prev" | jq -r "[.[] | select(.key == $key) | .values[].value] | add // 0")
-            local rate=$(( (current_value - prev_value) / 2 ))  # 2 second interval
+        if [ -n "$stats_raw" ]; then
+            # Parse each key-value pair from raw output
+            local found_entries=false
+            for key in {0..18}; do
+                # Look for this key in the raw output and sum all CPU values
+                local total_value=$(echo "$stats_raw" | grep -A1 "key: 0*$key " | grep "value:" | awk '{sum += $2} END {print sum+0}')
+                
+                if [ "$total_value" -gt 0 ]; then
+                    local name="${stat_names[$key]:-Unknown ($key)}"
+                    printf "│ %4d │ %-23s │ %15s │ %12s │\n" \
+                        "$key" "$name" "$(format_number "$total_value")" "-"
+                    found_entries=true
+                fi
+            done
             
-            if [ "$current_value" -gt 0 ] || [ "$rate" -gt 0 ]; then
-                local name="${stat_names[$key]:-Unknown ($key)}"
-                printf "│ %4d │ %-23s │ %15s │ %12s │\n" \
-                    "$key" "$name" "$(format_number "$current_value")" "$(format_number "$rate")/s"
+            if [ "$found_entries" = "false" ]; then
+                printf "│  -   │ %-23s │ %-15s │ %-12s │\n" "No active counters" "0" "-"
             fi
-        done
-    else
-        printf "│  -   │ %-23s │ %-15s │ %-12s │\n" "No data available" "-" "-"
+        else
+            printf "│  -   │ %-23s │ %-15s │ %-12s │\n" "Map is empty" "-" "-"
+        fi
     fi
     echo "└──────┴─────────────────────────┴─────────────────┴──────────────┘"
     
@@ -575,80 +581,160 @@ show_bpf_maps() {
     echo "│ Source Port │   Target IP     │ Target Port  │     Status      │"
     echo "├─────────────┼─────────────────┼──────────────┼─────────────────┤"
     
-    local nat_json=$(sudo bpftool map dump name nat_map --json 2>/dev/null)
-    if [ -n "$nat_json" ]; then
-        local nat_entries=$(echo "$nat_json" | jq -r 'length')
-        if [ "$nat_entries" -gt 0 ]; then
-            # Parse NAT entries
-            echo "$nat_json" | jq -r '.[] | "\(.key[0]):\(.value[0]):\(.value[1])"' 2>/dev/null | while IFS=':' read -r src_port target_ip_int target_port; do
-                if [ -n "$src_port" ] && [ -n "$target_ip_int" ] && [ -n "$target_port" ]; then
-                    local target_ip=$(int_to_ip "$target_ip_int")
-                    printf "│    %5d    │ %15s │    %6d    │     Active      │\n" \
-                        "$src_port" "$target_ip" "$target_port"
+    # Check if NAT map exists
+    if ! sudo bpftool map show name nat_map >/dev/null 2>&1; then
+        printf "│      -      │        -        │      -       │ Map Not Found   │\n"
+    else
+        local nat_raw=$(sudo bpftool map dump name nat_map 2>/dev/null)
+        
+        if [ -n "$nat_raw" ]; then
+            local found_entries=false
+            # Parse NAT entries from raw output
+            echo "$nat_raw" | grep -A1 "key:" | while read -r line; do
+                if echo "$line" | grep -q "key:"; then
+                    # Extract source port from key (assuming first 2 bytes)
+                    local src_port_hex=$(echo "$line" | sed -n 's/.*key: *\([0-9a-f][0-9a-f]\) *\([0-9a-f][0-9a-f]\).*/\2\1/p')
+                    if [ -n "$src_port_hex" ]; then
+                        local src_port=$((0x$src_port_hex))
+                        # Read next line for value
+                        read -r value_line
+                        if echo "$value_line" | grep -q "value:"; then
+                            # Extract target IP and port from value
+                            local values=$(echo "$value_line" | sed 's/.*value: *//')
+                            # Parse IP (first 4 bytes) and port (next 2 bytes)
+                            local ip_bytes=$(echo "$values" | awk '{print $1" "$2" "$3" "$4}')
+                            local port_bytes=$(echo "$values" | awk '{print $5$6}')
+                            
+                            if [ -n "$ip_bytes" ] && [ -n "$port_bytes" ]; then
+                                # Convert hex bytes to IP
+                                local ip_addr=$(echo "$ip_bytes" | awk '{
+                                    printf "%d.%d.%d.%d", 
+                                    strtonum("0x"$1), strtonum("0x"$2), 
+                                    strtonum("0x"$3), strtonum("0x"$4)
+                                }')
+                                local target_port=$((0x$port_bytes))
+                                
+                                printf "│    %5d    │ %15s │    %6d    │     Active      │\n" \
+                                    "$src_port" "$ip_addr" "$target_port"
+                                found_entries=true
+                            fi
+                        fi
+                    fi
                 fi
             done
+            
+            if [ "$found_entries" = "false" ]; then
+                printf "│      -      │        -        │      -       │   No Rules      │\n"
+            fi
         else
-            printf "│      -      │        -        │      -       │   No Rules      │\n"
+            printf "│      -      │        -        │      -       │   Map Empty     │\n"
         fi
-    else
-        printf "│      -      │        -        │      -       │ Map Not Found   │\n"
     fi
     echo "└─────────────┴─────────────────┴──────────────┴─────────────────┘"
     
     echo ""
     print_color "cyan" "IP ALLOWLIST MAP (ip_allowlist)"
+    
+    # First check if the map exists
+    if ! sudo bpftool map show name ip_allowlist >/dev/null 2>&1; then
+        echo "ERROR: IP allowlist map not found"
+        return
+    fi
+    
+    # Get raw dump output (both JSON and plain text for debugging)
+    local ip_raw=$(sudo bpftool map dump name ip_allowlist 2>/dev/null)
     local ip_json=$(sudo bpftool map dump name ip_allowlist --json 2>/dev/null)
-    if [ -n "$ip_json" ]; then
-        local ip_count=$(echo "$ip_json" | jq -r '[.[].elements // [] | length] | add // 0' 2>/dev/null || echo "0")
+    
+    if [ -z "$ip_raw" ]; then
+        echo "Total allowed IPs: 0"
+        echo "Map exists but is empty"
+    else
+        # Count entries using simple line counting (more reliable)
+        local ip_count=$(echo "$ip_raw" | grep -c "key:" 2>/dev/null || echo "0")
         echo "Total allowed IPs: $ip_count"
         
-        if [ "$ip_count" -gt 0 ] && [ "$ip_count" -le 20 ]; then
+        if [ "$ip_count" -gt 0 ]; then
             echo "┌─────────────────┬─────────────────────────────────────────────┐"
             echo "│   IP Address    │                  Status                     │"
             echo "├─────────────────┼─────────────────────────────────────────────┤"
             
-            echo "$ip_json" | jq -r '.[].elements[]?.key // empty' 2>/dev/null | head -20 | while read -r ip_int; do
-                if [ -n "$ip_int" ] && [[ "$ip_int" =~ ^[0-9]+$ ]]; then
-                    local ip_addr=$(int_to_ip "$ip_int")
+            # Parse using more robust method - extract hex keys and convert
+            echo "$ip_raw" | grep "key:" | head -20 | while read -r line; do
+                # Extract hex key (4 bytes for IPv4)
+                local hex_key=$(echo "$line" | sed -n 's/.*key:\s*\([0-9a-f][0-9a-f]\s[0-9a-f][0-9a-f]\s[0-9a-f][0-9a-f]\s[0-9a-f][0-9a-f]\).*/\1/p')
+                if [ -n "$hex_key" ]; then
+                    # Convert hex to IP (assuming network byte order)
+                    local ip_addr=$(echo "$hex_key" | awk '{
+                        gsub(/\s/, "");
+                        a=strtonum("0x"substr($0,1,2));
+                        b=strtonum("0x"substr($0,3,2));
+                        c=strtonum("0x"substr($0,5,2));
+                        d=strtonum("0x"substr($0,7,2));
+                        printf "%d.%d.%d.%d", a,b,c,d
+                    }')
                     printf "│ %15s │                 Allowed                     │\n" "$ip_addr"
                 fi
             done
+            
+            if [ "$ip_count" -gt 20 ]; then
+                printf "│       ...       │         (showing first 20 of %d)           │\n" "$ip_count"
+            fi
+            
             echo "└─────────────────┴─────────────────────────────────────────────┘"
-        elif [ "$ip_count" -gt 20 ]; then
-            echo "Showing first 5 of $ip_count entries:"
-            echo "$ip_json" | jq -r '.[].elements[]?.key // empty' 2>/dev/null | head -5 | while read -r ip_int; do
-                if [ -n "$ip_int" ] && [[ "$ip_int" =~ ^[0-9]+$ ]]; then
-                    local ip_addr=$(int_to_ip "$ip_int")
-                    echo "  - $ip_addr"
-                fi
-            done
+            
+            # Show raw dump for debugging if needed
+            if [ "$ip_count" -le 5 ]; then
+                echo ""
+                print_color "yellow" "Raw map dump (for debugging):"
+                echo "$ip_raw"
+            fi
         fi
-    else
-        echo "ERROR: IP allowlist map not found or empty"
     fi
     
     echo ""
     print_color "cyan" "REDIRECT MAP (redirect_map)"
-    local redirect_json=$(sudo bpftool map dump name redirect_map --json 2>/dev/null)
-    if [ -n "$redirect_json" ]; then
+    
+    # Check if redirect map exists
+    if ! sudo bpftool map show name redirect_map >/dev/null 2>&1; then
+        echo "ERROR: Redirect map not found"
+    else
         echo "┌─────────┬─────────────────┬─────────────────────────────────────┐"
         echo "│   Key   │ Interface Index │              Status                 │"
         echo "├─────────┼─────────────────┼─────────────────────────────────────┤"
         
-        local redirect_entries=$(echo "$redirect_json" | jq -r 'length')
-        if [ "$redirect_entries" -gt 0 ]; then
-            echo "$redirect_json" | jq -r '.[] | "\(.key[0]):\(.value[0])"' 2>/dev/null | while IFS=':' read -r key ifindex; do
-                if [ -n "$key" ] && [ -n "$ifindex" ]; then
-                    local iface_name=$(ip link show | grep "^$ifindex:" | cut -d':' -f2 | awk '{print $1}' || echo "unknown")
-                    printf "│   %3d   │      %5d      │ Active → %-20s │\n" "$key" "$ifindex" "$iface_name"
+        local redirect_raw=$(sudo bpftool map dump name redirect_map 2>/dev/null)
+        
+        if [ -n "$redirect_raw" ]; then
+            local found_entries=false
+            # Parse redirect entries from raw output
+            echo "$redirect_raw" | grep -A1 "key:" | while read -r line; do
+                if echo "$line" | grep -q "key:"; then
+                    # Extract key (should be a simple integer)
+                    local key=$(echo "$line" | sed -n 's/.*key: *\([0-9][0-9]*\).*/\1/p')
+                    if [ -n "$key" ]; then
+                        # Read next line for value (interface index)
+                        read -r value_line
+                        if echo "$value_line" | grep -q "value:"; then
+                            local ifindex=$(echo "$value_line" | sed -n 's/.*value: *\([0-9][0-9]*\).*/\1/p')
+                            if [ -n "$ifindex" ]; then
+                                # Get interface name
+                                local iface_name=$(ip link show | grep "^$ifindex:" | cut -d':' -f2 | awk '{print $1}' 2>/dev/null || echo "unknown")
+                                printf "│   %3d   │      %5d      │ Active → %-20s │\n" "$key" "$ifindex" "$iface_name"
+                                found_entries=true
+                            fi
+                        fi
+                    fi
                 fi
             done
+            
+            if [ "$found_entries" = "false" ]; then
+                printf "│    -    │        -        │           No Redirects              │\n"
+            fi
         else
-            printf "│    -    │        -        │           No Redirects              │\n"
+            printf "│    -    │        -        │           Map Empty                 │\n"
         fi
+        
         echo "└─────────┴─────────────────┴─────────────────────────────────────┘"
-    else
-        echo "ERROR: Redirect map not found"
     fi
     
     echo ""
