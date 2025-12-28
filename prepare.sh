@@ -868,18 +868,16 @@ try:
     with open('$config_file', 'r') as f:
         config = yaml.safe_load(f)
     
+    # Pipeline configuration
+    pipeline = config.get('pipeline', {})
+    INGRESS_INTERFACE = pipeline.get('ingress_interface', 'ens5')
+    EGRESS_INTERFACE = pipeline.get('egress_interface', 'ens6')
+    
     # Network configuration
     network = config.get('network', {})
     TARGET_IP = network.get('nat_ip', '172.30.82.95')
     TARGET_PORT = network.get('nat_port', '8081')
     SOURCE_PORT = network.get('source_port', '31765')
-    EGRESS_INTERFACE = network.get('egress_interface', 'ens6')
-    
-    # Pipeline configuration
-    pipeline = config.get('pipeline', {})
-    BRIDGE_INTERFACE = pipeline.get('bridge_interface', 'br0')
-    INTERFACE = pipeline.get('interface', 'eth0')
-    TARGET_INTERFACE = pipeline.get('target_interface', 'eth1')
     
     # System configuration
     system = config.get('system', {})
@@ -900,10 +898,8 @@ try:
     print(f'export TARGET_IP=\"{TARGET_IP}\"')
     print(f'export TARGET_PORT=\"{TARGET_PORT}\"')
     print(f'export SOURCE_PORT=\"{SOURCE_PORT}\"')
+    print(f'export INGRESS_INTERFACE=\"{INGRESS_INTERFACE}\"')
     print(f'export EGRESS_INTERFACE=\"{EGRESS_INTERFACE}\"')
-    print(f'export BRIDGE_INTERFACE=\"{BRIDGE_INTERFACE}\"')
-    print(f'export INTERFACE=\"{INTERFACE}\"')
-    print(f'export TARGET_INTERFACE=\"{TARGET_INTERFACE}\"')
     print(f'export MIN_DISK_SPACE_GB=\"{MIN_DISK_SPACE_GB}\"')
     print(f'export MIN_KERNEL_VERSION=\"{MIN_KERNEL_VERSION}\"')
     print(f'export SOURCE_DIR=\"{SOURCE_DIR}\"')
@@ -951,21 +947,13 @@ configure_network() {
         info "Using hardcoded default values"
         export TARGET_IP="172.30.82.95"
         export TARGET_PORT="8081"
-        export BRIDGE_INTERFACE="br0"
         export EGRESS_INTERFACE="ens6"
     fi
     
     info "Target: $TARGET_IP:$TARGET_PORT"
-    info "Bridge interface: $BRIDGE_INTERFACE"
     info "Egress interface: $EGRESS_INTERFACE"
     
-    # Check if interfaces exist
-    if ! ip link show "$BRIDGE_INTERFACE" >/dev/null 2>&1; then
-        warn "Bridge interface $BRIDGE_INTERFACE not found"
-        warn "Skipping network configuration (will configure manually later)"
-        return 0
-    fi
-    
+    # Check if egress interface exists
     if ! ip link show "$EGRESS_INTERFACE" >/dev/null 2>&1; then
         warn "Egress interface $EGRESS_INTERFACE not found"
         warn "Skipping network configuration (will configure manually later)"
@@ -976,14 +964,16 @@ configure_network() {
     echo ""
     info "=== Discovering MAC address for $TARGET_IP ==="
     
-    # Method 1: arping (most reliable)
+    # Method 1: arping (most reliable for MAC discovery)
     if command -v arping >/dev/null 2>&1; then
         info "Trying arping discovery..."
-        if sudo arping -c 2 -I "$BRIDGE_INTERFACE" "$TARGET_IP" >/dev/null 2>&1; then
+        if sudo arping -c 2 -I "$EGRESS_INTERFACE" "$TARGET_IP" >/dev/null 2>&1; then
             log "ARP ping successful"
         else
             warn "arping failed, trying alternatives"
         fi
+    else
+        warn "arping not available, trying alternative methods"
     fi
     
     # Method 2: netcat connection attempt
@@ -995,7 +985,7 @@ configure_network() {
     # Method 3: Manual ARP probe if needed
     if ! ip neighbor show "$TARGET_IP" | grep -q "lladdr"; then
         info "Trying manual ARP probe..."
-        sudo ip neighbor add "$TARGET_IP" dev "$BRIDGE_INTERFACE" nud incomplete >/dev/null 2>&1 || true
+        sudo ip neighbor add "$TARGET_IP" dev "$EGRESS_INTERFACE" nud incomplete >/dev/null 2>&1 || true
         sleep 2
     fi
     
@@ -1053,7 +1043,7 @@ configure_network() {
         warn "You may need to configure network routing manually:"
         echo ""
         echo "  # Discover MAC address:"
-        echo "  sudo arping -c 2 -I $BRIDGE_INTERFACE $TARGET_IP"
+        echo "  sudo arping -c 2 -I $EGRESS_INTERFACE $TARGET_IP"
         echo "  TARGET_MAC=\$(ip neighbor show $TARGET_IP | awk '{print \$5}' | head -1)"
         echo ""
         echo "  # Configure routing:"

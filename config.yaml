@@ -4,29 +4,26 @@
 
 # Pipeline configuration
 pipeline:
-  # Default network interface (ens5 for VXLAN ingress)
-  interface: "ens5"
+  # VXLAN ingress interface (where XDP program attaches)
+  ingress_interface: "ens5"
+  
+  # Packet egress interface (where processed packets are sent)
+  egress_interface: "ens6"
   
   # Default BPF program path
   program_path: "src/vxlan_pipeline.bpf.o"
   
   # XDP attachment mode: xdp, xdpgeneric, xdpdrv, xdpoffload
   mode: "xdp"
-  
-  # Target interface for forwarding (ens6 for egress)
-  target_interface: "ens6"
 
 # Network configuration
 network:
   # NAT configuration - target IP for DNAT
-  nat_ip: "172.30.82.95"
+  nat_ip: "172.30.82.137"
   nat_port: 8081
   
   # Source port matching - matches inner destination port
   source_port: 31765
-  
-  # Network interfaces for setup and operations
-  egress_interface: "ens6"
   
   # Connectivity test hosts
   connectivity_test_hosts:

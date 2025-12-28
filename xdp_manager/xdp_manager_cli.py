@@ -327,8 +327,8 @@ Examples:
         try:
             # Try to get from config first
             config = self.config_manager.get_config()
-            if hasattr(config, 'pipeline_config') and config.pipeline_config.interface:
-                return config.pipeline_config.interface
+            if hasattr(config, 'pipeline_config') and config.pipeline_config.ingress_interface:
+                return config.pipeline_config.ingress_interface
             
             # Auto-detect primary interface
             interfaces = self.network_manager.list_interfaces()
@@ -369,8 +369,8 @@ Examples:
                 config_mgr = ConfigManager()
                 if config_mgr.load_config():
                     interfaces = [
-                        config_mgr.pipeline_config.interface,
-                        config_mgr.pipeline_config.target_interface
+                        config_mgr.pipeline_config.ingress_interface,
+                        config_mgr.pipeline_config.egress_interface
                     ]
                     return [iface for iface in interfaces if iface and iface.startswith(prefix)]
             except:
@@ -414,10 +414,10 @@ Examples:
             if result:
                 if args.optimize:
                     self.pipeline.optimize_performance()
-                self._success(f"XDP pipeline started successfully on {args.interface}")
+                self._success(f"XDP pipeline started successfully on {interface}")
                 return 0
             else:
-                self._error(f"Failed to start XDP pipeline on {args.interface}")
+                self._error(f"Failed to start XDP pipeline on {interface}")
                 return 1
                 
         except Exception as e:
@@ -470,10 +470,10 @@ Examples:
             )
             
             if result:
-                self._success(f"XDP pipeline restarted on {args.interface}")
+                self._success(f"XDP pipeline restarted on {interface}")
                 return 0
             else:
-                self._error(f"Failed to restart XDP pipeline on {args.interface}")
+                self._error(f"Failed to restart XDP pipeline on {interface}")
                 return 1
                 
         except Exception as e:
@@ -512,10 +512,10 @@ Examples:
             result = self.pipeline.reload_program(interface, program)
             
             if result:
-                self._success(f"BPF program reloaded on {args.interface}")
+                self._success(f"BPF program reloaded on {interface}")
                 return 0
             else:
-                self._error(f"Failed to reload BPF program on {args.interface}")
+                self._error(f"Failed to reload BPF program on {interface}")
                 return 1
                 
         except Exception as e:

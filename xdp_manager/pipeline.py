@@ -45,7 +45,7 @@ class XDPPipeline:
                     return False
                 
                 # Determine target interface
-                target_interface = interface or self.config.pipeline_config.interface
+                target_interface = interface or self.config.pipeline_config.ingress_interface
                 if not target_interface:
                     target_interface = self.network.get_recommended_interface()
                     if not target_interface:
@@ -153,7 +153,7 @@ class XDPPipeline:
         status = {
             'pipeline_status': self.get_status(),
             'configuration': {
-                'interface': self.config.pipeline_config.interface,
+                'interface': self.config.pipeline_config.ingress_interface,
                 'src_directory': str(self.config.get_src_path()),
                 'bpf_program': str(self.config.get_bpf_path()),
                 'allowlist_file': str(self.config.get_allowlist_path())
@@ -205,8 +205,8 @@ class XDPPipeline:
                 # CPU scaling governor
                 ['sudo', 'bash', '-c', 'echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor'],
                 # Network interface optimization
-                ['sudo', 'ethtool', '-K', self.config.pipeline_config.interface, 'gro', 'off'],
-                ['sudo', 'ethtool', '-K', self.config.pipeline_config.interface, 'lro', 'off'],
+                ['sudo', 'ethtool', '-K', self.config.pipeline_config.ingress_interface, 'gro', 'off'],
+                ['sudo', 'ethtool', '-K', self.config.pipeline_config.ingress_interface, 'lro', 'off'],
                 # Kernel network buffers
                 ['sudo', 'sysctl', '-w', 'net.core.rmem_max=134217728'],
                 ['sudo', 'sysctl', '-w', 'net.core.wmem_max=134217728'],

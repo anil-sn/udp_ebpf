@@ -12,15 +12,15 @@ from .models import ValidationResult
 @dataclass
 class PipelineConfig:
     """Main pipeline configuration"""
-    interface: str = "ens5"  # Default ingress interface for VXLAN
+    ingress_interface: str = "ens5"  # VXLAN ingress interface where XDP attaches
+    egress_interface: str = "ens6"   # Packet egress interface for processed packets
     src_directory: str = "src"
-    bpf_program: str = "vxlan_pipeline.bpf.c"
+    program_path: str = "vxlan_pipeline.bpf.c"  # BPF program file path
     allowlist_file: str = "ip_allowlist.json"
     max_entries: int = 10000
     log_level: str = "info"
     auto_reload: bool = False
     performance_mode: bool = True
-    target_interface: str = "ens6"  # Default egress interface
     
 @dataclass
 class CompilerConfig:
@@ -120,8 +120,11 @@ class ConfigManager:
         result = ValidationResult(valid=True)
         
         # Validate interface
-        if not self.pipeline_config.interface:
-            result.add_error("Interface name cannot be empty")
+        if not self.pipeline_config.ingress_interface:
+            result.add_error("Ingress interface name cannot be empty")
+        
+        if not self.pipeline_config.egress_interface:
+            result.add_error("Egress interface name cannot be empty")
         
         # Validate source directory
         src_path = Path(self.pipeline_config.src_directory)
@@ -129,7 +132,7 @@ class ConfigManager:
             result.add_error(f"Source directory does not exist: {src_path}")
         
         # Validate BPF program
-        bpf_path = src_path / self.pipeline_config.bpf_program
+        bpf_path = src_path / self.pipeline_config.program_path
         if not bpf_path.exists():
             result.add_error(f"BPF program not found: {bpf_path}")
         
@@ -166,7 +169,7 @@ class ConfigManager:
     
     def get_bpf_path(self) -> Path:
         """Get BPF program path"""
-        return self.get_src_path() / self.pipeline_config.bpf_program
+        return self.get_src_path() / self.pipeline_config.program_path
     
     def get_allowlist_path(self) -> Path:
         """Get allowlist file path"""
@@ -178,7 +181,7 @@ class ConfigManager:
     
     def update_interface(self, interface: str) -> bool:
         """Update interface configuration"""
-        self.pipeline_config.interface = interface
+        self.pipeline_config.ingress_interface = interface
         return self.save_config()
     
     def enable_debug(self) -> bool:
