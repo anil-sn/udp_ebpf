@@ -10,8 +10,8 @@ pipeline:
   # Packet egress interface (where processed packets are sent)
   egress_interface: "ens6"
   
-  # Default BPF program path
-  program_path: "src/vxlan_pipeline.bpf.o"
+  # Default BPF program path (relative to src directory)
+  program_path: "vxlan_pipeline.bpf.o"
   
   # XDP attachment mode: xdp, xdpgeneric, xdpdrv, xdpoffload
   mode: "xdp"
