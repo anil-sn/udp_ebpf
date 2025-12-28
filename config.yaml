@@ -11,7 +11,7 @@ pipeline:
   egress_interface: "ens6"
   
   # Default BPF program path (relative to src directory)
-  program_path: "vxlan_pipeline.bpf.o"
+  program_path: "vxlan_pipeline.bpf.c"
   
   # XDP attachment mode: xdp, xdpgeneric, xdpdrv, xdpoffload
   mode: "xdp"
