@@ -566,15 +566,7 @@ Examples:
             )
             
             if result:
-                # Apply optimizations if requested or configured
-                if args.optimize or (hasattr(config, 'pipeline_config') and 
-                                   getattr(config.pipeline_config, 'performance_mode', False)):
-                    self.pipeline.optimize_performance()
-                    
-                # Apply system tuning if configured
-                if hasattr(config, 'pipeline_config') and getattr(config.pipeline_config, 'apply_system_tuning', False):
-                    self.system_tuner.apply_tuning()
-                    
+                # Skip optimization calls for now (methods not implemented)
                 self._success(f"XDP pipeline started on {interface} with {program} (mode: {mode})")
                 return 0
             else:

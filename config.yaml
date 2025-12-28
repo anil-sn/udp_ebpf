@@ -25,7 +25,7 @@ pipeline:
 # Network configuration
 network:
   # NAT configuration - target IP for DNAT
-  nat_ip: "172.30.82.95"      # Professional default (updated from config_professional.yaml)
+  nat_ip: "172.30.82.50"       # Gateway IP (reliable target)
   nat_port: 8081
   
   # Source port matching - matches inner destination port
