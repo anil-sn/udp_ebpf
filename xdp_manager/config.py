@@ -206,8 +206,44 @@ class ConfigManager:
         return self.save_config()
     
     def get_compiler_flags(self) -> List[str]:
-        """Get compiler flags based on configuration"""
+        """Get compiler flags based on configuration - includes all necessary kernel headers"""
+        import os
+        import subprocess
+        
         flags = []
+        
+        # Get kernel release for dynamic header paths
+        try:
+            kernel_rel = subprocess.check_output(['uname', '-r'], text=True).strip()
+            kernel_src = f"/lib/modules/{kernel_rel}/build"
+        except:
+            kernel_rel = "generic"
+            kernel_src = "/lib/modules/$(uname -r)/build"
+        
+        # Essential kernel include paths (from working Makefile)
+        kernel_includes = [
+            f"-I{kernel_src}/arch/x86/include",
+            f"-I{kernel_src}/arch/x86/include/generated", 
+            f"-I{kernel_src}/include",
+            f"-I{kernel_src}/arch/x86/include/uapi",
+            f"-I{kernel_src}/arch/x86/include/generated/uapi",
+            f"-I{kernel_src}/include/uapi",
+            f"-I{kernel_src}/include/generated/uapi",
+            "-I/usr/include/x86_64-linux-gnu"
+        ]
+        flags.extend(kernel_includes)
+        
+        # Warning suppression flags (from working Makefile)
+        warning_flags = [
+            "-Wno-unused-value",
+            "-Wno-pointer-sign",
+            "-Wno-compare-distinct-pointer-types", 
+            "-Wno-gnu-variable-sized-type-not-at-end",
+            "-Wno-address-of-packed-member",
+            "-Wno-tautological-compare",
+            "-Wno-unknown-warning-option"
+        ]
+        flags.extend(warning_flags)
         
         # Optimization
         flags.append(f"-{self.compiler_config.optimization_level}")
@@ -220,9 +256,9 @@ class ConfigManager:
         if self.compiler_config.warnings_as_errors:
             flags.append("-Werror")
         
-        # Performance mode
+        # Performance mode - but remove march=native for BPF (not compatible)
         if self.pipeline_config.performance_mode:
-            flags.extend(["-DPERFORMANCE_MODE", "-march=native"])
+            flags.extend(["-DPERFORMANCE_MODE"])
         
         # Additional flags
         flags.extend(self.compiler_config.additional_flags)

@@ -254,7 +254,7 @@ class XDPPipeline:
         return True
     
     def _compile_bpf_program(self, force: bool = False) -> CompilationResult:
-        """Compile BPF program with optimization flags"""
+        """Compile BPF program using the working Makefile"""
         result = CompilationResult(success=False)
         
         try:
@@ -266,33 +266,39 @@ class XDPPipeline:
                 if not force and output_file.exists() and output_file.stat().st_mtime > bpf_source.stat().st_mtime:
                     result.success = True
                     result.output_file = str(output_file)
+                    self.logger.info("BPF program is up to date, skipping compilation")
                     return result
                 
-                # Compile with optimizations
-                compile_cmd = [
-                    'clang',
-                    '-target', 'bpf',
-                    '-Wall',
-                    '-O2',
-                    '-g',
-                    '-c', str(bpf_source),
-                    '-o', str(output_file)
-                ]
-                
-                # Add configuration-based flags
-                compile_cmd.extend(self.config.get_compiler_flags())
-                
-                # Change to source directory
+                # Use Makefile for compilation (proven working solution)
+                src_path = self.config.get_src_path()
                 original_cwd = os.getcwd()
-                os.chdir(self.config.get_src_path())
                 
                 try:
-                    compile_result = self.runner.run(compile_cmd, capture=True)
-                    result.success = True
-                    result.output_file = str(output_file)
+                    # Change to source directory where Makefile is located
+                    os.chdir(src_path)
                     
-                    if compile_result.stderr:
-                        result.warnings = compile_result.stderr.split('\n')
+                    # Clean any existing object files first
+                    clean_cmd = ['make', 'clean']
+                    self.logger.info("Cleaning previous build artifacts...")
+                    self.runner.run(clean_cmd, capture=True)
+                    
+                    # Compile BPF program using Makefile
+                    compile_cmd = ['make', str(output_file.name)]
+                    self.logger.info(f"Compiling BPF program using Makefile: {' '.join(compile_cmd)}")
+                    
+                    compile_result = self.runner.run(compile_cmd, capture=True)
+                    
+                    # Check if output file was created
+                    if output_file.exists():
+                        result.success = True
+                        result.output_file = str(output_file)
+                        self.logger.info(f"BPF program compiled successfully: {output_file}")
+                        
+                        if compile_result.stderr:
+                            result.warnings = [line for line in compile_result.stderr.split('\n') if line.strip()]
+                    else:
+                        result.error_message = f"Compilation did not produce output file: {output_file}"
+                        self.logger.error(result.error_message)
                         
                 finally:
                     os.chdir(original_cwd)
