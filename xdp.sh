@@ -48,7 +48,14 @@ COMMANDS:
                    'ips' or 'ips show'     - Show all IPs from eBPF map with organization info
                    'ips status'            - Check JSON vs eBPF map status for each IP
                    'ips reload'            - Reload all IPs from JSON file (clear + load)
+                   'ips sync'              - Sync eBPF map with JSON (mark and sweep)
+                   'ips sync-dry-run'      - Show what would be synced without changes
                    'ips orphaned'          - Show IPs in map but not in JSON file
+                   'ips add <IP>'          - Add single IP to allowlist at runtime
+                   'ips remove <IP>'       - Remove single IP from allowlist at runtime
+                   'ips add-bulk <IP,IP>'  - Add comma-separated list of IPs
+                   'ips remove-bulk <IP,IP>' - Remove comma-separated list of IPs
+                   'ips watch [interval]'  - Watch JSON file for changes and auto-sync
                    Shows all currently loaded allowed IPs from the BPF map
     logs            Show recent pipeline log entries
                    Usage: logs [count] [filter]
@@ -165,14 +172,114 @@ case "$CMD" in
                     print_color "yellow" "Expected locations: ./src/load_ip_allowlist.py or ./load_ip_allowlist.py"
                 fi
                 ;;
+            "sync")
+                print_color "blue" "Synchronizing eBPF map with JSON file (mark and sweep)..."
+                if [ -f "src/load_ip_allowlist.py" ]; then
+                    cd src && sudo python3 load_ip_allowlist.py --sync ip_allowlist.json
+                elif [ -f "load_ip_allowlist.py" ]; then
+                    sudo python3 load_ip_allowlist.py --sync ip_allowlist.json
+                else
+                    print_color "red" "ERROR: load_ip_allowlist.py not found"
+                fi
+                ;;
+            "sync-dry-run")
+                print_color "blue" "Dry run: showing what would be synced..."
+                if [ -f "src/load_ip_allowlist.py" ]; then
+                    cd src && sudo python3 load_ip_allowlist.py --sync-dry-run ip_allowlist.json
+                elif [ -f "load_ip_allowlist.py" ]; then
+                    sudo python3 load_ip_allowlist.py --sync-dry-run ip_allowlist.json
+                else
+                    print_color "red" "ERROR: load_ip_allowlist.py not found"
+                fi
+                ;;
+            "add")
+                IP_TO_ADD="$2"
+                if [ -z "$IP_TO_ADD" ]; then
+                    print_color "red" "ERROR: No IP specified"
+                    echo "Usage: ./xdp.sh ips add <IP_ADDRESS>"
+                    exit 1
+                fi
+                print_color "blue" "Adding IP $IP_TO_ADD to allowlist..."
+                if [ -f "src/load_ip_allowlist.py" ]; then
+                    cd src && sudo python3 load_ip_allowlist.py --add-ip "$IP_TO_ADD"
+                elif [ -f "load_ip_allowlist.py" ]; then
+                    sudo python3 load_ip_allowlist.py --add-ip "$IP_TO_ADD"
+                else
+                    print_color "red" "ERROR: load_ip_allowlist.py not found"
+                fi
+                ;;
+            "remove")
+                IP_TO_REMOVE="$2"
+                if [ -z "$IP_TO_REMOVE" ]; then
+                    print_color "red" "ERROR: No IP specified"
+                    echo "Usage: ./xdp.sh ips remove <IP_ADDRESS>"
+                    exit 1
+                fi
+                print_color "blue" "Removing IP $IP_TO_REMOVE from allowlist..."
+                if [ -f "src/load_ip_allowlist.py" ]; then
+                    cd src && sudo python3 load_ip_allowlist.py --remove-ip "$IP_TO_REMOVE"
+                elif [ -f "load_ip_allowlist.py" ]; then
+                    sudo python3 load_ip_allowlist.py --remove-ip "$IP_TO_REMOVE"
+                else
+                    print_color "red" "ERROR: load_ip_allowlist.py not found"
+                fi
+                ;;
+            "add-bulk")
+                IP_LIST="$2"
+                if [ -z "$IP_LIST" ]; then
+                    print_color "red" "ERROR: No IP list specified"
+                    echo "Usage: ./xdp.sh ips add-bulk <IP1,IP2,IP3>"
+                    exit 1
+                fi
+                print_color "blue" "Adding multiple IPs to allowlist..."
+                if [ -f "src/load_ip_allowlist.py" ]; then
+                    cd src && sudo python3 load_ip_allowlist.py --add-ips "$IP_LIST"
+                elif [ -f "load_ip_allowlist.py" ]; then
+                    sudo python3 load_ip_allowlist.py --add-ips "$IP_LIST"
+                else
+                    print_color "red" "ERROR: load_ip_allowlist.py not found"
+                fi
+                ;;
+            "remove-bulk")
+                IP_LIST="$2"
+                if [ -z "$IP_LIST" ]; then
+                    print_color "red" "ERROR: No IP list specified"
+                    echo "Usage: ./xdp.sh ips remove-bulk <IP1,IP2,IP3>"
+                    exit 1
+                fi
+                print_color "blue" "Removing multiple IPs from allowlist..."
+                if [ -f "src/load_ip_allowlist.py" ]; then
+                    cd src && sudo python3 load_ip_allowlist.py --remove-ips "$IP_LIST"
+                elif [ -f "load_ip_allowlist.py" ]; then
+                    sudo python3 load_ip_allowlist.py --remove-ips "$IP_LIST"
+                else
+                    print_color "red" "ERROR: load_ip_allowlist.py not found"
+                fi
+                ;;
+            "watch")
+                INTERVAL="${2:-30}"
+                print_color "blue" "Watching JSON file for changes (checking every ${INTERVAL}s)..."
+                print_color "yellow" "Press Ctrl+C to stop watching"
+                if [ -f "src/load_ip_allowlist.py" ]; then
+                    cd src && sudo python3 load_ip_allowlist.py --watch ip_allowlist.json --interval "$INTERVAL"
+                elif [ -f "load_ip_allowlist.py" ]; then
+                    sudo python3 load_ip_allowlist.py --watch ip_allowlist.json --interval "$INTERVAL"
+                else
+                    print_color "red" "ERROR: load_ip_allowlist.py not found"
+                fi
+                ;;
             *)
                 print_color "red" "ERROR: Invalid ips command option: $IPS_ACTION"
-                echo "Valid options: show, status, reload, orphaned"
+                echo "Valid options: show, status, reload, sync, sync-dry-run, orphaned, add, remove, add-bulk, remove-bulk, watch"
                 echo "Usage examples:"
-                echo "  ./xdp.sh ips show      # Display current IPs in eBPF map"
-                echo "  ./xdp.sh ips status    # Check JSON vs eBPF map status"  
-                echo "  ./xdp.sh ips reload    # Clear and reload from JSON"
-                echo "  ./xdp.sh ips orphaned  # Show orphaned IPs"
+                echo "  ./xdp.sh ips show              # Display current IPs in eBPF map"
+                echo "  ./xdp.sh ips status            # Check JSON vs eBPF map status"  
+                echo "  ./xdp.sh ips sync              # Sync eBPF map with JSON (mark and sweep)"
+                echo "  ./xdp.sh ips sync-dry-run      # Show what would be synced"
+                echo "  ./xdp.sh ips add 1.2.3.4       # Add single IP at runtime"
+                echo "  ./xdp.sh ips remove 1.2.3.4    # Remove single IP at runtime"
+                echo "  ./xdp.sh ips add-bulk 1.1.1.1,2.2.2.2  # Add multiple IPs"
+                echo "  ./xdp.sh ips watch 60          # Watch for JSON changes every 60s"
                 exit 1
                 ;;
         esac
