@@ -105,7 +105,7 @@ class XDPPipeline:
             stats_interval = getattr(pipeline_cfg, 'statistics_interval', 5)
             
             cmd = [
-                'sudo', 'src/vxlan_loader',  # Binary is in src/ directory
+                'sudo', './vxlan_loader',  # Binary is in current directory (src/)
                 '-i', target_interface,
                 '-t', pipeline_cfg.egress_interface,
                 '-a', str(nat_ip),
@@ -129,7 +129,7 @@ class XDPPipeline:
                         stdin=devnull,
                         stdout=f,
                         stderr=subprocess.STDOUT,
-                        cwd=original_cwd,  # Run from main directory
+                        cwd="src",  # Run from src directory where .bpf.o file is located
                         start_new_session=True  # Equivalent to nohup
                     )
             
@@ -201,7 +201,7 @@ class XDPPipeline:
                     self.logger.error(f"Could not read log file: {e}")
                 
                 # Additional debugging - check if binary exists and is executable
-                binary_path = "src/vxlan_loader"
+                binary_path = "src/vxlan_loader"  # Path from main directory
                 import os
                 if not os.path.exists(binary_path):
                     self.logger.error(f"Binary not found: {binary_path}")
@@ -209,6 +209,12 @@ class XDPPipeline:
                     self.logger.error(f"Binary not executable: {binary_path}")
                 else:
                     self.logger.error(f"Binary exists and is executable: {binary_path}")
+                    # Also check if BPF object file exists in src directory
+                    bpf_path = "src/vxlan_pipeline.bpf.o"
+                    if not os.path.exists(bpf_path):
+                        self.logger.error(f"BPF object file not found: {bpf_path}")
+                    else:
+                        self.logger.info(f"BPF object file exists: {bpf_path}")
                 
                 return False
                 
