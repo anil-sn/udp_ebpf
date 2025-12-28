@@ -56,12 +56,34 @@ class NetworkManager:
     
     def get_interface(self, name: str) -> Optional[NetworkInterface]:
         """Get specific interface information"""
-        interfaces = self.get_interfaces()
-        return next((iface for iface in interfaces if iface.name == name), None)
+        try:
+            # Query specific interface directly
+            result = self.runner.run(['ip', 'link', 'show', name], capture=True, check=False)
+            if result.returncode != 0:
+                self.logger.debug(f"Interface {name} not found")
+                return None
+                
+            # Parse the specific interface output
+            interface = self._parse_interface_block(result.stdout.strip())
+            if interface:
+                # Get IP addresses for this interface
+                interface.ip_addresses = self._get_interface_ips(interface.name)
+                # Check XDP attachment
+                interface.xdp_attached = self._check_xdp_attached(interface.name)
+                
+            return interface
+            
+        except Exception as e:
+            self.logger.error(f"Error getting interface {name}: {e}")
+            return None
     
     def interface_exists(self, name: str) -> bool:
         """Check if interface exists"""
-        return name in self.get_interface_names()
+        try:
+            result = self.runner.run(['ip', 'link', 'show', name], capture=True, check=False)
+            return result.returncode == 0
+        except Exception:
+            return False
     
     def is_interface_up(self, name: str) -> bool:
         """Check if interface is up"""
@@ -201,18 +223,27 @@ class NetworkManager:
         """Parse individual interface block"""
         lines = block.split('\n')
         if not lines:
+            self.logger.warning("Empty interface block")
             return None
         
         # Parse first line for basic info
         first_line = lines[0]
+        self.logger.debug(f"Parsing first line: '{first_line}'")
         match = re.match(r'^\d+:\s+(\S+):\s+<([^>]*)>.*state\s+(\w+).*mtu\s+(\d+)', first_line)
         if not match:
+            self.logger.warning(f"Failed to match regex on line: '{first_line}'")
+            # Try a simpler regex for debugging
+            simple_match = re.match(r'^(\d+):\s+(\S+):', first_line)
+            if simple_match:
+                self.logger.debug(f"Simple regex matched: index={simple_match.group(1)}, name={simple_match.group(2)}")
             return None
         
         name = match.group(1).split('@')[0]  # Remove @if suffix
         flags = match.group(2).split(',')
         state = match.group(3)
         mtu = int(match.group(4))
+        
+        self.logger.debug(f"Parsed interface: name={name}, state={state}, mtu={mtu}")
         
         # Parse MAC address from second line
         mac_address = ""
