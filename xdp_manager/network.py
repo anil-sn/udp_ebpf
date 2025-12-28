@@ -229,7 +229,8 @@ class NetworkManager:
         # Parse first line for basic info
         first_line = lines[0]
         self.logger.debug(f"Parsing first line: '{first_line}'")
-        match = re.match(r'^\d+:\s+(\S+):\s+<([^>]*)>.*state\s+(\w+).*mtu\s+(\d+)', first_line)
+        # Updated regex to match actual format: mtu comes before state
+        match = re.match(r'^\d+:\s+(\S+):\s+<([^>]*)>.*mtu\s+(\d+).*state\s+(\w+)', first_line)
         if not match:
             self.logger.warning(f"Failed to match regex on line: '{first_line}'")
             # Try a simpler regex for debugging
@@ -240,8 +241,8 @@ class NetworkManager:
         
         name = match.group(1).split('@')[0]  # Remove @if suffix
         flags = match.group(2).split(',')
-        state = match.group(3)
-        mtu = int(match.group(4))
+        mtu = int(match.group(3))
+        state = match.group(4)
         
         self.logger.debug(f"Parsed interface: name={name}, state={state}, mtu={mtu}")
         
