@@ -56,6 +56,7 @@ class XDPPipeline:
             
             # Check for existing processes first (matches bash implementation exactly)
             import subprocess
+            self.logger.info(f"Checking for existing vxlan_loader processes on {target_interface}...")
             result = subprocess.run(
                 ['pgrep', '-f', f'vxlan_loader.*-i.*{target_interface}'],
                 capture_output=True, text=True
@@ -66,34 +67,55 @@ class XDPPipeline:
                 self.logger.error(f"Pipeline already running on {target_interface} (PID: {pids[0]})")
                 self.logger.info("Use --force to restart or stop first")
                 return False
+            elif result.returncode == 0 and force:
+                pids = result.stdout.strip().split('\n')
+                self.logger.info(f"Force restart requested, existing process PID: {pids[0]}")
+            else:
+                self.logger.info("No existing vxlan_loader processes found")
             
             # Force cleanup existing XDP programs (matches bash approach exactly)
             self.logger.info("Cleaning any orphaned XDP programs...")
             try:
-                subprocess.run([
+                cleanup_result = subprocess.run([
                     'sudo', 'ip', 'link', 'set', target_interface, 'xdp', 'off'
-                ], capture_output=True, check=False)
-            except:
-                pass  # May not exist
+                ], capture_output=True, text=True)
+                if cleanup_result.returncode == 0:
+                    self.logger.debug(f"XDP cleanup successful on {target_interface}")
+                else:
+                    self.logger.debug(f"XDP cleanup: {cleanup_result.stderr.strip()}")
+            except Exception as e:
+                self.logger.debug(f"XDP cleanup failed: {e}")
             
             # Get config for vxlan_loader parameters
             config = self.config.get_config()
             pipeline_cfg = config.pipeline_config
+            
+            # Log configuration being used
+            self.logger.info(f"Configuration: ingress={target_interface}, egress={pipeline_cfg.egress_interface}")
+            self.logger.info(f"NAT target: {getattr(config.network, 'nat_ip', '172.30.82.50')}:{getattr(config.network, 'nat_port', 8081)}")
             
             # Change to the main directory (matches bash: cd "$SCRIPT_DIR")
             import os
             original_cwd = os.getcwd()
             
             # Build vxlan_loader command (matches bash implementation exactly)
+            nat_ip = getattr(config.network, 'nat_ip', '172.30.82.50')
+            nat_port = getattr(config.network, 'nat_port', 8081)
+            source_port = getattr(config.network, 'source_port', 31765)
+            stats_interval = getattr(config.network, 'statistics_interval', 5)
+            
             cmd = [
                 'sudo', 'src/vxlan_loader',  # Binary is in src/ directory
                 '-i', target_interface,
                 '-t', pipeline_cfg.egress_interface,
-                '-a', str(getattr(pipeline_cfg, 'nat_target_ip', '172.30.82.95')),
-                '-p', str(getattr(pipeline_cfg, 'nat_target_port', 8081)),
-                '-s', str(getattr(pipeline_cfg, 'source_port', 31765)),
-                '-I', str(getattr(pipeline_cfg, 'statistics_interval', 5))
+                '-a', str(nat_ip),
+                '-p', str(nat_port), 
+                '-s', str(source_port),
+                '-I', str(stats_interval)
             ]
+            
+            # Log the exact command being executed
+            self.logger.info(f"Executing command: {' '.join(cmd)}")
             
             # Start vxlan_loader with nohup (matches bash exactly)
             log_file = f"pipeline_{target_interface}.log"
@@ -113,9 +135,11 @@ class XDPPipeline:
             
             # Give time for startup (matches bash sleep 3 exactly)
             import time
+            self.logger.info("Waiting 3 seconds for vxlan_loader startup...")
             time.sleep(3)
             
             # Verify startup with specific pattern match (matches bash exactly)
+            self.logger.info(f"Verifying vxlan_loader startup on {target_interface}...")
             result = subprocess.run(
                 ['pgrep', '-f', f'vxlan_loader.*-i.*{target_interface}'],
                 capture_output=True, text=True
@@ -125,6 +149,16 @@ class XDPPipeline:
                 new_pid = result.stdout.strip().split('\n')[0]
                 self.logger.info(f"SUCCESS: Pipeline started (PID: {new_pid})")
                 self.logger.info(f"Log file: {log_file}")
+                
+                # Check if process is actually running properly
+                ps_result = subprocess.run(
+                    ['ps', '-p', new_pid, '-o', 'pid,ppid,cmd'],
+                    capture_output=True, text=True
+                )
+                if ps_result.returncode == 0:
+                    self.logger.debug(f"Process details: {ps_result.stdout.strip()}")
+                else:
+                    self.logger.warning(f"Could not get process details for PID {new_pid}")
                 
                 # Load IP allowlist after successful pipeline start (matches bash)
                 self.logger.info("Loading IP allowlist...")
@@ -153,6 +187,29 @@ class XDPPipeline:
                 return True
             else:
                 self.logger.error("Failed to start vxlan_loader process")
+                # Check if log file has error details
+                try:
+                    with open(log_file, 'r') as f:
+                        log_contents = f.read().strip()
+                        if log_contents:
+                            self.logger.error(f"vxlan_loader error output: {log_contents}")
+                        else:
+                            self.logger.error("No output in log file - process may have failed to start")
+                except FileNotFoundError:
+                    self.logger.error(f"Log file {log_file} not found")
+                except Exception as e:
+                    self.logger.error(f"Could not read log file: {e}")
+                
+                # Additional debugging - check if binary exists and is executable
+                binary_path = "src/vxlan_loader"
+                import os
+                if not os.path.exists(binary_path):
+                    self.logger.error(f"Binary not found: {binary_path}")
+                elif not os.access(binary_path, os.X_OK):
+                    self.logger.error(f"Binary not executable: {binary_path}")
+                else:
+                    self.logger.error(f"Binary exists and is executable: {binary_path}")
+                
                 return False
                 
         except Exception as e:
