@@ -35,6 +35,13 @@ try:
 except ImportError:
     RICH_AVAILABLE = False
 
+# Argcomplete imports with fallback
+try:
+    import argcomplete
+    ARGCOMPLETE_AVAILABLE = True
+except ImportError:
+    ARGCOMPLETE_AVAILABLE = False
+
 class XDPManagerCLI:
     """Main CLI class for XDP pipeline management"""
     
