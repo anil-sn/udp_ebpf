@@ -9,6 +9,9 @@ export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a  # Restart services automatically
 export UCF_FORCE_CONFFNEW=1  # Use new config files without prompting
 
+# Add uv to PATH if installed locally
+export PATH="$HOME/.local/bin:$PATH"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
@@ -1171,6 +1174,13 @@ main() {
     
     log "Step 8/8: Finalizing..."
     show_status
+    
+    # Activate virtual environment for current session
+    if [ -f ".venv/bin/activate" ]; then
+        log "Activating virtual environment..."
+        source .venv/bin/activate
+        info "Virtual environment activated. Use 'source .venv/bin/activate' in new terminals."
+    fi
     
     local end_time
     end_time=$(date +%s)

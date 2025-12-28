@@ -5,16 +5,34 @@ Integrates with the professional CLI framework for enhanced user experience
 """
 
 import sys
+import argparse
 from pathlib import Path
 
 # Add the parent directory to the path so we can import our modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# from xdp_manager.professional_cli import main  # Module not found
-from xdp_manager.monitoring import RealTimeMonitor
-# BPFMapInspector functionality is now part of BPFMapManager in bpf.py
+# Core imports
+from xdp_manager.utils import Logger
+from xdp_manager.config import ConfigManager
+from xdp_manager.models import PipelineStatus, BPFMapInfo, AllowlistEntry
+from xdp_manager.display import DisplayManager
+from xdp_manager.network import NetworkManager
+from xdp_manager.pipeline import XDPPipeline
+from xdp_manager.allowlist import AllowlistManager
+from xdp_manager.analyze_stats import StatisticsAnalyzer
+from xdp_manager.diagnostics import NetworkDiagnostics
+from xdp_manager.system_tuning import SystemTuner
+
+# BPF and monitoring imports
+from xdp_manager.monitoring import RealTimeMonitor, AdvancedMonitor
 from xdp_manager.bpf import BPFMapManager
-# from xdp_manager.interface_manager import InterfaceManager  # Module removed
+
+# Rich console imports with fallback
+try:
+    from rich.console import Console
+    RICH_AVAILABLE = True
+except ImportError:
+    RICH_AVAILABLE = False
 
 class XDPManagerCLI:
     """Main CLI class for XDP pipeline management"""
@@ -40,18 +58,8 @@ class XDPManagerCLI:
         # System tuning
         self.system_tuner = SystemTuner(logger=self.logger)
         
-        # Advanced monitoring and management
-        self.advanced_monitor = AdvancedMonitor(logger=self.logger)
-        self.bpf_maps_enhanced = BPFMapManager(logger=self.logger)
-        self.interface_manager = InterfaceManager(logger=self.logger)
-        self.log_monitor = LogMonitor(logger=self.logger)
-        
-        # Real-time monitoring and BPF inspection
+        # Real-time monitoring
         self.realtime_monitor = RealTimeMonitor(logger=self.logger)
-        # BPF inspector functionality is now part of BPFMapManager
-        # self.bpf_inspector = BPFMapInspector(logger=self.logger)
-        self.bpf_maps = BPFMapManager(logger=self.logger)
-        self.interface_manager = InterfaceManager(logger=self.logger)
         
     def create_parser(self) -> argparse.ArgumentParser:
         """Create and configure argument parser with autocompletion"""
