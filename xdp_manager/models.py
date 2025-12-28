@@ -90,13 +90,41 @@ class NetworkInterface:
 
 @dataclass
 class PipelineStats:
-    """Pipeline performance statistics"""
-    packets_processed: int = 0
-    packets_dropped: int = 0
-    allowlist_hits: int = 0
-    allowlist_misses: int = 0
-    vxlan_packets: int = 0
-    errors: int = 0
+    """Pipeline performance statistics - matches working solution format with filter stats"""
+    # Core packet counters (from working vxlan_loader)
+    packets_processed: int = 0  # STAT_TOTAL_PACKETS
+    vxlan_packets: int = 0      # STAT_VXLAN_PACKETS  
+    inner_packets: int = 0      # STAT_INNER_PACKETS
+    nat_applied: int = 0        # STAT_NAT_APPLIED
+    df_cleared: int = 0         # STAT_DF_CLEARED
+    forwarded: int = 0          # STAT_FORWARDED
+    redirected: int = 0         # STAT_REDIRECTED
+    errors: int = 0             # STAT_ERRORS
+    bytes_processed: int = 0    # STAT_BYTES_PROCESSED
+    ip_len_updated: int = 0     # STAT_IP_LEN_UPDATED
+    
+    # Additional working solution stats
+    udp_len_updated: int = 0         # STAT_UDP_LEN_UPDATED
+    ip_checksum_updated: int = 0     # STAT_IP_CHECKSUM_UPDATED
+    bounds_check_failed: int = 0     # STAT_BOUNDS_CHECK_FAILED
+    ringbuf_submitted: int = 0       # STAT_RINGBUF_SUBMITTED
+    packet_size_debug: int = 0       # STAT_PACKET_SIZE_DEBUG
+    length_corrections: int = 0      # STAT_LENGTH_CORRECTIONS
+    
+    # Filter statistics (IP Allowlist)
+    allowlist_hits: int = 0          # STAT_IP_ALLOWLIST_HITS - packets allowed
+    allowlist_misses: int = 0        # STAT_IP_ALLOWLIST_MISSES - packets blocked
+    packets_dropped: int = 0         # STAT_DROPPED - total drops
+    
+    # Derived statistics
+    error_rate: float = 0.0
+    drop_rate: float = 0.0           # Drop percentage
+    allowlist_hit_rate: float = 0.0  # Filter success rate
+    throughput_pps: float = 0.0      # Packets per second
+    throughput_mbps: float = 0.0     # Megabits per second
+    
+    # Timestamps and duration
+    timestamp: int = 0
     uptime_seconds: int = 0
     last_updated: datetime = field(default_factory=datetime.now)
     
@@ -118,8 +146,8 @@ class PipelineStats:
 @dataclass
 class SystemInfo:
     """System information"""
-    kernel_version: str
-    bpf_jit_enabled: bool
+    kernel_version: str = "unknown"
+    bpf_jit_enabled: bool = False
     available_interfaces: List[str] = field(default_factory=list)
     cpu_count: int = 0
     memory_mb: int = 0

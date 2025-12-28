@@ -10,9 +10,11 @@ from .models import PipelineStatus, CompilationResult, SystemInfo
 from .utils import CommandRunner, Logger, PerformanceMonitor
 from .config import ConfigManager
 from .network import NetworkManager
-from .bpf_maps import BPFMapManager
+from .bpf import BPFMapManager
 from .allowlist import AllowlistManager
 from .display import DisplayManager
+from .system_tuning import SystemTuner
+from .interface_management import InterfaceManager
 
 class XDPPipeline:
     """Main XDP pipeline orchestrator with advanced management capabilities"""
@@ -30,6 +32,11 @@ class XDPPipeline:
         )
         self.display = DisplayManager(self.logger)
         self.perf_monitor = PerformanceMonitor()
+        self.system_tuner = SystemTuner(self.runner, self.logger)
+        self.interface_manager = InterfaceManager(self.runner, self.logger)
+        
+        # Pipeline process tracking (for vxlan_loader)
+        self._pipeline_process = None
         
         # Load configuration
         self.config.load_config()
@@ -40,17 +47,21 @@ class XDPPipeline:
             self.logger.info("Starting XDP pipeline deployment...")
             
             with self.perf_monitor.measure("pipeline_start"):
-                # Pre-deployment validation
-                if not self._pre_deployment_checks(interface, force):
-                    return False
-                
-                # Determine target interface
+                # Determine target interface first 
                 target_interface = interface or self.config.pipeline_config.ingress_interface
                 if not target_interface:
                     target_interface = self.network.get_recommended_interface()
                     if not target_interface:
                         self.logger.error("No suitable network interface found")
                         return False
+                
+                # Check for existing processes first (like bash version)
+                if not self._check_running_processes(target_interface, force):
+                    return False
+                
+                # Pre-deployment validation
+                if not self._pre_deployment_checks(target_interface, force):
+                    return False
                 
                 # Validate interface
                 validation = self.network.validate_interface(target_interface)
@@ -60,17 +71,42 @@ class XDPPipeline:
                     if not force:
                         return False
                 
+                # Configure interface for optimal XDP performance
+                self.logger.info(f"Configuring interface {target_interface} for XDP...")
+                if not self.interface_manager.configure_interface_for_xdp(target_interface):
+                    self.logger.warning("Interface configuration failed, but continuing")
+                
+                # Configure interface for XDP with advanced optimization
+                if not self.interface_manager.configure_interface_for_xdp(target_interface):
+                    self.logger.error(f"Failed to configure interface {target_interface}")
+                    if not force:
+                        return False
+                
+                # Pre-populate ARP table for better MAC resolution
+                if hasattr(self.config, 'network') and self.config.network.nat_ip:
+                    egress_interface = self.config.pipeline_config.egress_interface or target_interface
+                    self.logger.info("Pre-resolving MAC address for NAT target...")
+                    self.interface_manager.populate_arp_table(
+                        self.config.network.nat_ip, 
+                        egress_interface
+                    )
+                
                 # Compilation
                 compilation_result = self._compile_bpf_program()
                 if not compilation_result.success:
                     self.logger.error(f"BPF compilation failed: {compilation_result.error_message}")
                     return False
                 
-                # Deploy to interface
-                if not self._deploy_to_interface(target_interface, compilation_result.output_file):
+                # Deploy to interface (vxlan_loader handles everything like working solution)
+                success = self._deploy_to_interface(target_interface, compilation_result.output_file)
+                if not success:
                     return False
                 
-                # Load allowlist
+                # vxlan_loader handles all map initialization, so we just wait for it to be ready
+                import time
+                time.sleep(5)  # Give vxlan_loader time to fully initialize everything
+                
+                # Load allowlist ONLY (maps are already configured by vxlan_loader)
                 if self.config.get_allowlist_path().exists():
                     self._load_allowlist()
                 
@@ -81,6 +117,12 @@ class XDPPipeline:
                 # Update configuration
                 self.config.update_interface(target_interface)
                 
+                # Pre-populate ARP table for better MAC resolution
+                nat_ip = self.config.pipeline_config.nat_target_ip
+                egress_iface = self.config.pipeline_config.egress_interface
+                self.logger.info(f"Pre-populating ARP table for {nat_ip}...")
+                self.interface_manager.populate_arp_table(nat_ip, egress_iface)
+                
             duration = self.perf_monitor.end_timer("pipeline_start")
             self.logger.info(f"Pipeline started successfully in {duration:.2f}s on {target_interface}")
             return True
@@ -89,10 +131,36 @@ class XDPPipeline:
             self.logger.error(f"Pipeline start failed: {e}")
             return False
     
-    def stop(self, cleanup: bool = True) -> bool:
+    def stop(self, interface: Optional[str] = None, force: bool = False, cleanup: bool = True) -> bool:
         """Stop XDP pipeline with optional cleanup"""
         try:
             self.logger.info("Stopping XDP pipeline...")
+            
+            # Check for running processes first (like bash version)
+            if not self._check_running_processes(interface, force):
+                self.logger.info("No running pipeline processes found")
+                return True
+            
+            # Stop vxlan_loader process if running (matching working solution cleanup)
+            if hasattr(self, '_pipeline_process') and self._pipeline_process:
+                try:
+                    self.logger.info("Terminating vxlan_loader process...")
+                    self._pipeline_process.terminate()
+                    
+                    # Give it time to cleanup gracefully
+                    import time
+                    time.sleep(2)
+                    
+                    # Force kill if still running
+                    if self._pipeline_process.poll() is None:
+                        self.logger.warning("Force killing vxlan_loader process...")
+                        self._pipeline_process.kill()
+                    
+                    self._pipeline_process = None
+                    self.logger.info("vxlan_loader process stopped")
+                    
+                except Exception as e:
+                    self.logger.error(f"Error stopping vxlan_loader process: {e}")
             
             # Detach from all interfaces
             detached_interfaces = self.network.detach_all_xdp()
@@ -147,6 +215,20 @@ class XDPPipeline:
                 
         except Exception:
             return PipelineStatus.UNKNOWN
+    
+    def is_running(self) -> bool:
+        """Check if pipeline is currently running"""
+        try:
+            # Check if vxlan_loader process is running
+            if hasattr(self, '_pipeline_process') and self._pipeline_process:
+                if self._pipeline_process.poll() is None:
+                    return True
+            
+            # Fallback: check XDP attachment status
+            return self.get_status() == PipelineStatus.RUNNING
+            
+        except Exception:
+            return False
     
     def get_detailed_status(self) -> Dict[str, Any]:
         """Get comprehensive status information"""
@@ -313,28 +395,94 @@ class XDPPipeline:
         return result
     
     def _deploy_to_interface(self, interface: str, program_file: str) -> bool:
-        """Deploy compiled BPF program to network interface"""
+        """Deploy compiled BPF program to network interface using the working vxlan_loader method"""
         try:
             self.logger.info(f"Deploying BPF program to interface {interface}")
             
-            # Attach XDP program
-            success = self.network.attach_xdp(interface, program_file)
+            # Check if we have the compiled vxlan_loader (working solution)
+            from pathlib import Path
+            src_path = Path(program_file).parent
+            vxlan_loader = src_path / "vxlan_loader"
             
-            if success:
-                # Verify attachment
-                time.sleep(0.5)  # Brief delay for attachment
-                attached = self.network.get_interface(interface)
-                if attached and attached.xdp_attached:
-                    self.logger.info(f"XDP program successfully attached to {interface}")
-                    return True
-                else:
-                    self.logger.error(f"XDP attachment verification failed for {interface}")
-                    return False
+            if vxlan_loader.exists():
+                self.logger.info("Using compiled vxlan_loader for deployment (matches working solution)")
+                
+                # Get target interface from config
+                target_interface = self.config.pipeline_config.egress_interface or "ens6"
+                
+                # Use the working vxlan_loader approach
+                import os
+                original_cwd = os.getcwd()
+                
+                try:
+                    # Change to src directory where vxlan_loader expects to find files
+                    os.chdir(src_path)
+                    
+                    # Run vxlan_loader with the same parameters as working solution
+                    deploy_cmd = [
+                        'sudo', './vxlan_loader',
+                        '-i', interface,                              # ingress interface
+                        '-t', target_interface,                       # target interface
+                        '-a', self.config.pipeline_config.nat_target_ip,      # NAT target IP
+                        '-p', str(self.config.pipeline_config.nat_target_port), # NAT target port
+                        '-s', str(self.config.pipeline_config.source_port),     # NAT source port
+                        '-I', str(self.config.pipeline_config.statistics_interval), # stats interval
+                        '-v'  # verbose mode
+                    ]
+                    
+                    self.logger.info(f"Deploying with command: {' '.join(deploy_cmd)}")
+                    
+                    # Start vxlan_loader in background (as per working solution)
+                    import subprocess
+                    process = subprocess.Popen(
+                        deploy_cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True
+                    )
+                    
+                    # Give it time to initialize
+                    import time
+                    time.sleep(2)
+                    
+                    # Check if process started successfully
+                    if process.poll() is None:
+                        # Process is running - success
+                        self.logger.info(f"XDP pipeline deployed successfully on {interface}")
+                        
+                        # Store process handle for cleanup
+                        self._pipeline_process = process
+                        
+                        # Verify XDP attachment
+                        time.sleep(1)
+                        attached = self.network.get_interface(interface)
+                        if attached and getattr(attached, 'xdp_attached', False):
+                            self.logger.info(f"Verified: XDP program is attached to {interface}")
+                            return True
+                        else:
+                            self.logger.warning(f"XDP program may not be properly attached to {interface}")
+                            return True  # Continue anyway, as process started successfully
+                    
+                    else:
+                        # Process exited immediately - error
+                        stdout, stderr = process.communicate()
+                        self.logger.error(f"vxlan_loader failed to start:")
+                        if stdout:
+                            self.logger.error(f"stdout: {stdout}")
+                        if stderr:
+                            self.logger.error(f"stderr: {stderr}")
+                        return False
+                        
+                finally:
+                    os.chdir(original_cwd)
             
-            return False
-            
+            else:
+                # Fallback to bpftool if vxlan_loader not available
+                self.logger.warning("vxlan_loader not found, using bpftool fallback")
+                return self.network.attach_xdp(interface, program_file)
+                
         except Exception as e:
-            self.logger.error(f"Deployment to {interface} failed: {e}")
+            self.logger.error(f"Failed to deploy BPF program: {e}")
             return False
     
     def _load_allowlist(self) -> bool:
@@ -403,6 +551,33 @@ class XDPPipeline:
         except Exception as e:
             self.logger.error(f"Map verification failed: {e}")
             return False
+    
+    def _check_running_processes(self, interface: Optional[str], force: bool) -> bool:
+        """Check for running vxlan_loader processes (matches bash behavior)"""
+        try:
+            import subprocess
+            target_interface = interface or self.config.pipeline_config.ingress_interface
+            
+            # Check for existing vxlan_loader process
+            result = subprocess.run(
+                ['pgrep', '-f', f'vxlan_loader.*-i.*{target_interface}'],
+                capture_output=True, text=True
+            )
+            
+            if result.returncode == 0:  # Process found
+                pids = result.stdout.strip().split('\n')
+                if not force:
+                    self.logger.error(f"Pipeline already running on {target_interface} (PID: {pids[0]})")
+                    self.logger.info("Use --force to restart or stop first")
+                    return False
+                else:
+                    self.logger.info(f"Force restart requested, will stop existing process (PID: {pids[0]})")
+                    
+            return True
+            
+        except Exception as e:
+            self.logger.warning(f"Process check failed: {e}")
+            return True  # Continue if check fails
     
     def _get_system_info(self) -> SystemInfo:
         """Gather comprehensive system information"""

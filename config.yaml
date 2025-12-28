@@ -15,15 +15,32 @@ pipeline:
   
   # XDP attachment mode: xdp, xdpgeneric, xdpdrv, xdpoffload
   mode: "xdp"
+  
+  # Apply system performance tuning by default
+  apply_system_tuning: true
+  
+  # Enable high-performance optimizations
+  performance_mode: true
 
 # Network configuration
 network:
   # NAT configuration - target IP for DNAT
-  nat_ip: "172.30.82.137"
+  nat_ip: "172.30.82.95"      # Professional default (updated from config_professional.yaml)
   nat_port: 8081
   
   # Source port matching - matches inner destination port
   source_port: 31765
+  
+  # Statistics collection interval
+  statistics_interval: 5
+  
+  # Advanced network configuration
+  connectivity_test_hosts: 
+    - "8.8.8.8"
+    - "1.1.1.1"                     # Hosts for connectivity testing
+  
+  interface_optimization:
+    mtu_size: 3000                  # Optimal MTU size for XDP
   
   # Connectivity test hosts
   connectivity_test_hosts:
@@ -120,6 +137,46 @@ installation:
     - "$HOME/.bash_profile" 
     - "$HOME/.zshrc"
     - "$HOME/.profile"
+
+# Logging configuration
+logging:
+  level: "info"                     # Log level: debug, info, warning, error, critical
+  format: "detailed"                # Log format: simple, detailed, json
+  
+  rotation:
+    max_size_mb: 100                # Maximum log file size before rotation
+    backup_count: 5                 # Number of backup log files to keep
+    rotate_on_startup: false        # Rotate logs on application startup
+
+# File paths configuration
+paths:
+  allowlist_file: "xdp_manager/config/ip_allowlist.json"
+  allowlist_prod_file: "xdp_manager/config/ip_allowlist_prod.json"
+  bpf_programs_dir: "src"
+  temp_dir: "/tmp"
+  log_dir: "/var/log"
+
+# Professional features configuration
+professional:
+  error_handling:
+    enable_recovery: true           # Enable automatic error recovery
+    max_retry_attempts: 3           # Maximum retry attempts for operations
+    recovery_timeout: 30            # Timeout for recovery operations (seconds)
+  
+  monitoring:
+    enable_alerting: true           # Enable performance alerting
+    alert_webhook_url: ""           # Webhook URL for alerts (optional)
+    metrics_retention_days: 7       # How long to keep metrics data
+    alert_thresholds:
+      min_pps: 50000               # Minimum PPS threshold for alerts
+      max_error_rate: 5.0          # Maximum error rate percentage
+      max_cpu_usage: 90.0          # Maximum CPU usage percentage
+      max_memory_usage: 85.0       # Maximum memory usage percentage
+  
+  security:
+    validate_interfaces: true       # Validate interface security settings
+    require_sudo: true              # Require sudo for privileged operations
+    audit_logging: false            # Enable security audit logging
 
 #
 # VXLAN Pipeline Translation Details:

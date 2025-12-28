@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""
+XDP Manager - High-Performance eBPF/XDP Pipeline Management
+Professional-grade CLI tool with full bash compatibility and advanced features
+"""
+
+import sys
+import os
+from pathlib import Path
+
+# Add the project root to Python path
+project_root = Path(__file__).parent
+sys.path.insert(0, str(project_root))
+
+try:
+    # Import and run the main CLI
+    from xdp_manager.xdp_manager_cli import main
+    
+    if __name__ == '__main__':
+        try:
+            sys.exit(main())
+        except KeyboardInterrupt:
+            print("\n👋 Operation interrupted by user")
+            sys.exit(130)
+        except Exception as e:
+            print(f"❌ Unexpected error: {e}")
+            sys.exit(1)
+            
+except ImportError as e:
+    print(f"❌ Failed to import XDP Manager: {e}")
+    print(f"📁 Project directory: {project_root}")
+    print("💡 Make sure you're in the correct directory and dependencies are installed")
+    print("🔧 Try: pip install -r requirements.txt")
+    sys.exit(1)

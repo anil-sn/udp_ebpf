@@ -8,6 +8,10 @@ import json
 import subprocess
 import sys
 from typing import Dict, List, Tuple
+from datetime import datetime
+from .models import PipelineStats
+from .utils import CommandRunner, Logger
+from .bpf import BPFMapManager
 
 # Statistics map indices
 STATS_MAP = {
@@ -175,6 +179,212 @@ ERROR_MARKERS = {
     # VXLAN Parse Specific (Legacy)
     LEGACY_ERR_VNI_VALIDATION_FAILURE: "VNI validation failure in parse_vxlan"
 }
+
+class StatisticsAnalyzer:
+    """Advanced statistics analysis with error pattern detection - unified analytics interface"""
+    
+    # Statistics map indices (matches analytics.py interface)
+    STATS_MAP = {
+        0x00: "TOTAL_PACKETS",
+        0x01: "VXLAN_PACKETS", 
+        0x02: "INNER_PACKETS",
+        0x03: "NAT_APPLIED",
+        0x04: "DF_CLEARED",
+        0x05: "FORWARDED",
+        0x06: "REDIRECTED",
+        0x07: "ERRORS",
+        0x08: "BYTES_PROCESSED",
+        0x09: "IP_LEN_UPDATED",
+        0x0a: "UDP_LEN_UPDATED",
+        0x0b: "IP_CHECKSUM_UPDATED",
+        0x0c: "BOUNDS_CHECK_FAILED",
+        0x0d: "RINGBUF_SUBMITTED",
+        0x0e: "PACKET_SIZE_DEBUG",
+        0x0f: "LENGTH_CORRECTIONS",
+        0x10: "IP_ALLOWLIST_HITS",
+        0x11: "IP_ALLOWLIST_MISSES"
+    }
+    
+    # Error marker definitions (professional error codes)
+    ERROR_MARKERS = ERROR_MARKERS
+    
+    def __init__(self, bpf_maps: BPFMapManager = None, logger: Logger = None):
+        self.bpf_maps = bpf_maps or BPFMapManager()
+        self.logger = logger or Logger("stats_analyzer")
+        self.runner = CommandRunner(self.logger)
+        
+    def analyze_comprehensive_stats(self) -> Dict[str, any]:
+        """Comprehensive statistics analysis with error pattern detection"""
+        try:
+            # Get raw statistics
+            raw_stats = self._get_raw_statistics()
+            pipeline_stats = self.bpf_maps.get_pipeline_stats()
+            
+            # Analyze error patterns
+            error_analysis = self._analyze_error_patterns(raw_stats)
+            
+            # Performance analysis
+            performance_analysis = self._analyze_performance(pipeline_stats, raw_stats)
+            
+            # Trend analysis
+            trend_analysis = self._analyze_trends(raw_stats)
+            
+            return {
+                'timestamp': datetime.now().isoformat(),
+                'raw_statistics': raw_stats,
+                'pipeline_stats': pipeline_stats,
+                'error_analysis': error_analysis,
+                'performance_analysis': performance_analysis,
+                'trend_analysis': trend_analysis,
+                'recommendations': self._generate_recommendations(error_analysis, performance_analysis)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Statistics analysis failed: {e}")
+            return {}
+    
+    def analyze_error_markers(self) -> Dict[str, any]:
+        """Analyze error markers for systematic error detection"""
+        try:
+            # Use existing function but return structured data
+            markers = analyze_error_markers(get_bpf_stats())
+            
+            error_summary = {
+                'total_errors': len(markers),
+                'error_breakdown': {},
+                'critical_errors': [],
+                'error_patterns': {}
+            }
+            
+            for desc, val in markers:
+                error_category = self._categorize_error(val)
+                if error_category not in error_summary['error_breakdown']:
+                    error_summary['error_breakdown'][error_category] = []
+                
+                error_summary['error_breakdown'][error_category].append({
+                    'description': desc,
+                    'value': val,
+                    'hex': f"0x{val:x}"
+                })
+                
+                # Mark critical errors
+                if 'systematic error source' in desc.lower():
+                    error_summary['critical_errors'].append({
+                        'description': desc,
+                        'value': val,
+                        'severity': 'critical'
+                    })
+            
+            return error_summary
+            
+        except Exception as e:
+            self.logger.error(f"Error marker analysis failed: {e}")
+            return {}
+    
+    def _get_raw_statistics(self) -> Dict[str, int]:
+        """Get raw statistics from BPF maps"""
+        return get_bpf_stats()
+    
+    def _analyze_error_patterns(self, raw_stats: Dict[str, int]) -> Dict[str, any]:
+        """Analyze error patterns from raw statistics"""
+        patterns = {}
+        
+        total_packets = raw_stats.get(0x00, 0)
+        vxlan_packets = raw_stats.get(0x01, 0)
+        errors = raw_stats.get(0x07, 0)
+        
+        if total_packets > 0 and vxlan_packets > 0:
+            error_rate = (errors / total_packets) * 100
+            error_to_vxlan_ratio = errors / vxlan_packets if vxlan_packets > 0 else 0
+            
+            patterns['error_rate'] = error_rate
+            patterns['error_to_vxlan_ratio'] = error_to_vxlan_ratio
+            patterns['is_systematic'] = 0.99 <= error_to_vxlan_ratio <= 1.01
+            
+            if patterns['is_systematic']:
+                patterns['severity'] = 'critical'
+                patterns['description'] = 'Systematic 1:1 error pattern detected'
+            elif error_rate > 10:
+                patterns['severity'] = 'high'
+                patterns['description'] = 'High error rate detected'
+            else:
+                patterns['severity'] = 'normal'
+                patterns['description'] = 'Error rate within acceptable range'
+        
+        return patterns
+    
+    def _analyze_performance(self, stats: PipelineStats, raw_stats: Dict[str, int]) -> Dict[str, any]:
+        """Analyze performance metrics"""
+        performance = {}
+        
+        total_packets = raw_stats.get(0x00, 0)
+        vxlan_packets = raw_stats.get(0x01, 0)
+        bytes_processed = raw_stats.get(0x08, 0)
+        ringbuf_submitted = raw_stats.get(0x0d, 0)
+        
+        if total_packets > 0:
+            performance['vxlan_detection_rate'] = (vxlan_packets / total_packets) * 100
+            performance['avg_packet_size'] = bytes_processed / total_packets if total_packets > 0 else 0
+            performance['throughput_mbps'] = (bytes_processed * 8) / (1024 * 1024 * 5)  # Approximate over 5 seconds
+            
+        if vxlan_packets > 0:
+            performance['ringbuf_success_rate'] = (ringbuf_submitted / vxlan_packets) * 100
+        
+        # Performance classification
+        if performance.get('ringbuf_success_rate', 0) > 85:
+            performance['performance_level'] = 'excellent'
+        elif performance.get('ringbuf_success_rate', 0) > 70:
+            performance['performance_level'] = 'good'
+        else:
+            performance['performance_level'] = 'needs_improvement'
+        
+        return performance
+    
+    def _analyze_trends(self, raw_stats: Dict[str, int]) -> Dict[str, any]:
+        """Analyze trends (placeholder for future implementation)"""
+        return {
+            'trend_available': False,
+            'reason': 'Trend analysis requires historical data collection'
+        }
+    
+    def _generate_recommendations(self, error_analysis: Dict, performance_analysis: Dict) -> List[str]:
+        """Generate actionable recommendations"""
+        recommendations = []
+        
+        if error_analysis.get('is_systematic', False):
+            recommendations.append("CRITICAL: Address systematic 1:1 error pattern immediately")
+            recommendations.append("Focus debugging on error markers with highest counts")
+            recommendations.append("Review statistics increment logic in BPF program")
+        
+        if error_analysis.get('error_rate', 0) > 10:
+            recommendations.append("High error rate detected - investigate error sources")
+        
+        perf_level = performance_analysis.get('performance_level', 'unknown')
+        if perf_level == 'needs_improvement':
+            recommendations.append("Ring buffer performance needs optimization")
+            recommendations.append("Consider increasing RINGBUF_SIZE_BYTES")
+        
+        if performance_analysis.get('vxlan_detection_rate', 0) < 50:
+            recommendations.append("Low VXLAN detection rate - verify network traffic")
+        
+        return recommendations
+    
+    def _categorize_error(self, error_code: int) -> str:
+        """Categorize error based on error code"""
+        if 0xE0020010 <= error_code <= 0xE002001F:
+            return "processing_failures"
+        elif 0xE0020020 <= error_code <= 0xE0020060:
+            return "stage_failures"
+        elif 0xE0020040 <= error_code <= 0xE002004F:
+            return "buffer_failures"
+        elif 0xE0020100 <= error_code <= 0xE002010F:
+            return "validation_failures"
+        elif 0xBAD00000 <= error_code <= 0xBAD0000F:
+            return "configuration_failures"
+        elif 0xDEAD0000 <= error_code <= 0xDEAD0FFF:
+            return "legacy_failures"
+        else:
+            return "unknown_failures"
 
 def get_comprehensive_stats() -> Dict[str, any]:
     """Get comprehensive statistics from all BPF maps."""

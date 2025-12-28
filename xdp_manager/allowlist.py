@@ -10,7 +10,7 @@ from datetime import datetime
 from .models import AllowlistEntry, ValidationResult, SyncResult
 from .utils import CommandRunner, Logger, FileOperations
 from .network import IPAddressValidator
-from .bpf_maps import BPFMapManager
+from .bpf import BPFMapManager
 
 class AllowlistManager:
     """Advanced IP allowlist management with validation and sync"""

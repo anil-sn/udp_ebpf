@@ -143,7 +143,7 @@ class NetworkManager:
         return candidates[0].name if candidates else None
     
     def attach_xdp(self, interface: str, program_path: str) -> bool:
-        """Attach XDP program to interface using proper section specification"""
+        """Attach XDP program to interface using bpftool (handles multiple sections)"""
         try:
             self.logger.info(f"Attaching XDP program to {interface}")
             
@@ -158,72 +158,77 @@ class NetworkManager:
             for warning in validation.warnings:
                 self.logger.warning(warning)
             
-            # Method 1: Try with section specification first (for multiple XDP sections)
+            # Use bpftool approach (works better with multiple XDP sections)
+            from pathlib import Path
+            program_name = Path(program_path).stem  # e.g., "vxlan_pipeline.bpf"
+            pin_path = f"/sys/fs/bpf/{program_name}"
+            
             try:
+                # Step 1: Clean up any existing pinned program
+                self.logger.debug(f"Cleaning up existing pinned program at {pin_path}")
+                self.runner.run(['sudo', 'rm', '-f', pin_path], capture=True)
+                
+                # Step 2: Load and pin the BPF program using bpftool 
+                self.logger.info(f"Loading BPF program {program_path}")
                 self.runner.run([
-                    'sudo', 'ip', 'link', 'set', 'dev', interface, 
-                    'xdp', 'obj', program_path, 'sec', 'xdp'
-                ])
-                self.logger.info(f"Successfully attached XDP to {interface} using section 'xdp'")
-                return True
-            except Exception as e1:
-                self.logger.debug(f"Section-specific attachment failed: {e1}")
-                
-                # Method 2: Fallback to using the working vxlan_loader if available
-                from pathlib import Path
-                src_path = Path(program_path).parent
-                vxlan_loader = src_path / "vxlan_loader" 
-                
-                if vxlan_loader.exists():
-                    self.logger.info("Using compiled vxlan_loader for XDP attachment...")
-                    # Run vxlan_loader in background mode
-                    import subprocess
-                    import os
-                    
-                    # Change to src directory where vxlan_loader expects to find files
-                    original_cwd = os.getcwd()
-                    try:
-                        os.chdir(src_path)
-                        
-                        # Use vxlan_loader to attach XDP program properly
-                        result = subprocess.run([
-                            'sudo', './vxlan_loader', '-i', interface, 
-                            '--attach-only'  # If such option exists, otherwise we'll modify
-                        ], capture_output=True, text=True, timeout=10)
-                        
-                        if result.returncode == 0:
-                            self.logger.info(f"Successfully attached XDP using vxlan_loader")
-                            return True
-                        else:
-                            self.logger.error(f"vxlan_loader failed: {result.stderr}")
-                    finally:
-                        os.chdir(original_cwd)
-                
-                # Method 3: Fallback to basic attachment without section (original method)
-                self.logger.info("Trying basic XDP attachment...")
-                self.runner.run([
-                    'sudo', 'ip', 'link', 'set', 'dev', interface, 
-                    'xdp', 'obj', program_path
+                    'sudo', 'bpftool', 'prog', 'load', 
+                    program_path, pin_path, 'type', 'xdp'
                 ])
                 
-                self.logger.info(f"Successfully attached XDP to {interface}")
+                # Step 3: Attach the pinned program to interface
+                self.logger.info(f"Attaching pinned program to {interface}")
+                self.runner.run([
+                    'sudo', 'bpftool', 'net', 'attach', 'xdp', 
+                    'pinned', pin_path, 'dev', interface
+                ])
+                
+                self.logger.info(f"Successfully attached XDP program to {interface} using bpftool")
                 return True
+                
+            except Exception as bpftool_error:
+                self.logger.warning(f"bpftool attachment failed: {bpftool_error}")
+                
+                # Fallback: Try with section specification
+                try:
+                    self.logger.info("Trying fallback with section specification...")
+                    self.runner.run([
+                        'sudo', 'ip', 'link', 'set', 'dev', interface, 
+                        'xdp', 'obj', program_path, 'sec', 'xdp'
+                    ])
+                    self.logger.info(f"Successfully attached XDP to {interface} using ip with section")
+                    return True
+                except Exception as ip_error:
+                    self.logger.error(f"Both bpftool and ip attachment methods failed")
+                    self.logger.error(f"bpftool error: {bpftool_error}")
+                    self.logger.error(f"ip error: {ip_error}")
+                    raise ip_error
             
         except Exception as e:
             self.logger.error(f"Failed to attach XDP to {interface}: {e}")
             return False
     
     def detach_xdp(self, interface: str) -> bool:
-        """Detach XDP program from interface"""
+        """Detach XDP program from interface (handles both bpftool and ip attached programs)"""
         try:
             self.logger.info(f"Detaching XDP program from {interface}")
             
-            self.runner.run([
-                'sudo', 'ip', 'link', 'set', 'dev', interface, 'xdp', 'off'
-            ])
-            
-            self.logger.info(f"Successfully detached XDP from {interface}")
-            return True
+            # Method 1: Try bpftool detach first
+            try:
+                self.runner.run([
+                    'sudo', 'bpftool', 'net', 'detach', 'xdp', 'dev', interface
+                ])
+                self.logger.info(f"Successfully detached XDP from {interface} using bpftool")
+                return True
+            except Exception as bpftool_error:
+                self.logger.debug(f"bpftool detach failed: {bpftool_error}")
+                
+                # Method 2: Fallback to ip command
+                self.runner.run([
+                    'sudo', 'ip', 'link', 'set', 'dev', interface, 'xdp', 'off'
+                ])
+                
+                self.logger.info(f"Successfully detached XDP from {interface} using ip")
+                return True
             
         except Exception as e:
             self.logger.error(f"Failed to detach XDP from {interface}: {e}")

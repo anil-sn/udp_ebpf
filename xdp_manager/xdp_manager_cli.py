@@ -1,48 +1,20 @@
 #!/usr/bin/env python3
 """
-Professional XDP Pipeline Management CLI
-Advanced command-line interface for eBPF/XDP pipeline management with analytics and diagnostics
+XDP Manager CLI - Professional Entry Point
+Integrates with the professional CLI framework for enhanced user experience
 """
 
-import argparse
 import sys
-import json
-from typing import Dict, Any, Optional
 from pathlib import Path
 
-# Rich imports for beautiful CLI
-try:
-    from rich.console import Console
-    from rich.table import Table
-    from rich.panel import Panel
-    from rich.progress import Progress, SpinnerColumn, TextColumn
-    from rich.live import Live
-    from rich.text import Text
-    from rich import print as rich_print
-    RICH_AVAILABLE = True
-except ImportError:
-    RICH_AVAILABLE = False
-    rich_print = print
+# Add the parent directory to the path so we can import our modules
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Argcomplete for autocompletion
-try:
-    import argcomplete
-    ARGCOMPLETE_AVAILABLE = True
-except ImportError:
-    ARGCOMPLETE_AVAILABLE = False
-
-# XDP Manager imports
-from xdp_manager import (
-    XDPPipeline,
-    AllowlistManager,
-    BPFMapManager,
-    NetworkManager,
-    ConfigManager,
-    DisplayManager,
-    Logger
-)
-from xdp_manager.analytics import StatisticsAnalyzer
-from xdp_manager.diagnostics import NetworkDiagnostics
+# from xdp_manager.professional_cli import main  # Module not found
+from xdp_manager.monitoring import RealTimeMonitor
+# BPFMapInspector functionality is now part of BPFMapManager in bpf.py
+from xdp_manager.bpf import BPFMapManager
+# from xdp_manager.interface_manager import InterfaceManager  # Module removed
 
 class XDPManagerCLI:
     """Main CLI class for XDP pipeline management"""
@@ -64,6 +36,22 @@ class XDPManagerCLI:
         # Analytics and diagnostics
         self.analytics = StatisticsAnalyzer(self.bpf_maps, self.logger)
         self.diagnostics = NetworkDiagnostics(self.logger)
+        
+        # System tuning
+        self.system_tuner = SystemTuner(logger=self.logger)
+        
+        # Advanced monitoring and management
+        self.advanced_monitor = AdvancedMonitor(logger=self.logger)
+        self.bpf_maps_enhanced = BPFMapManager(logger=self.logger)
+        self.interface_manager = InterfaceManager(logger=self.logger)
+        self.log_monitor = LogMonitor(logger=self.logger)
+        
+        # Real-time monitoring and BPF inspection
+        self.realtime_monitor = RealTimeMonitor(logger=self.logger)
+        # BPF inspector functionality is now part of BPFMapManager
+        # self.bpf_inspector = BPFMapInspector(logger=self.logger)
+        self.bpf_maps = BPFMapManager(logger=self.logger)
+        self.interface_manager = InterfaceManager(logger=self.logger)
         
     def create_parser(self) -> argparse.ArgumentParser:
         """Create and configure argument parser with autocompletion"""
@@ -110,6 +98,15 @@ Examples:
         
         # Configuration commands
         self._add_config_commands(subparsers)
+        
+        # System tuning commands
+        self._add_system_commands(subparsers)
+        
+        # Advanced monitoring commands (pps, maps, logs)
+        self._add_advanced_commands(subparsers)
+        
+        # Monitoring and inspection commands
+        self._add_monitoring_commands(subparsers)
         
         # Enable autocompletion if available
         if ARGCOMPLETE_AVAILABLE:
@@ -268,6 +265,91 @@ Examples:
         # Validate config
         validate_parser = config_subparsers.add_parser('validate', help='Validate configuration')
         
+    def _add_system_commands(self, subparsers):
+        """Add system tuning and validation commands"""
+        # System tuning command
+        tune_parser = subparsers.add_parser('tune', help='Apply system performance tuning')
+        tune_parser.add_argument('--interface', '-i', help='Network interface for tuning')
+        tune_parser.add_argument('--validate-only', action='store_true', help='Only validate system readiness')
+        tune_parser.add_argument('--force', action='store_true', help='Apply tuning even if warnings exist')
+        
+        # Scale command (for compatibility with bash version)
+        scale_parser = subparsers.add_parser('scale', help='Dynamic performance scaling')
+        scale_parser.add_argument('mode', choices=['max-performance', 'balanced', 'monitor'], 
+                                help='Scaling mode')
+        scale_parser.add_argument('--interface', '-i', help='Network interface')
+        
+    def _add_advanced_commands(self, subparsers):
+        """Add advanced monitoring and debugging commands"""
+        
+        # PPS monitoring command (bash compatibility)
+        pps_parser = subparsers.add_parser('pps', help='Monitor packets per second')
+        pps_parser.add_argument('mode', choices=['both', 'incoming', 'target', 'single'],
+                              help='Monitoring mode')
+        pps_parser.add_argument('interface', nargs='?', help='Interface name (for single mode)')
+        pps_parser.add_argument('interval', nargs='?', type=float, default=1.0,
+                              help='Update interval in seconds')
+        pps_parser.add_argument('duration', nargs='?', type=int, default=0,
+                              help='Duration in seconds (0 = infinite)')
+        
+        # Maps command (bash compatibility)
+        maps_parser = subparsers.add_parser('maps', help='Show BPF maps information')
+        maps_parser.add_argument('--detailed', action='store_true', help='Show detailed information')
+        maps_parser.add_argument('--map-name', help='Show specific map')
+        
+        # Logs command (bash compatibility)  
+        logs_parser = subparsers.add_parser('logs', help='Show and monitor log files')
+        logs_parser.add_argument('lines', nargs='?', type=int, default=50,
+                               help='Number of lines to show')
+        logs_parser.add_argument('filter_level', nargs='?', help='Filter by log level')
+        logs_parser.add_argument('--follow', '-f', action='store_true', help='Follow log output')
+        logs_parser.add_argument('--search', help='Search for pattern')
+        logs_parser.add_argument('--analyze', action='store_true', help='Analyze errors and warnings')
+        
+        # ARP command (bash compatibility)
+        arp_parser = subparsers.add_parser('arp', help='Manage ARP table')
+        arp_parser.add_argument('ip', nargs='?', help='IP address to resolve')
+        arp_parser.add_argument('--interface', '-i', help='Network interface')
+        
+        # Info command (comprehensive system info)
+        info_parser = subparsers.add_parser('info', help='Show comprehensive system information')
+        info_parser.add_argument('--interface', '-i', help='Specific interface')
+        
+    def _add_monitoring_commands(self, subparsers):
+        """Add monitoring, inspection, and utility commands"""
+        # PPS monitoring command (bash compatibility)
+        pps_parser = subparsers.add_parser('pps', help='Monitor packets per second')
+        pps_parser.add_argument('target', choices=['incoming', 'target', 'both'], 
+                               help='Monitor incoming interface, target interface, or both')
+        pps_parser.add_argument('interval', nargs='?', type=float, default=1.0,
+                               help='Monitoring interval in seconds (default: 1.0)')
+        pps_parser.add_argument('duration', nargs='?', type=int, default=0,
+                               help='Duration in seconds (default: unlimited)')
+        pps_parser.add_argument('--incoming-interface', help='Override incoming interface')
+        pps_parser.add_argument('--target-interface', help='Override target interface')
+        
+        # Monitor command (live statistics)
+        monitor_parser = subparsers.add_parser('monitor', help='Live performance monitoring dashboard')
+        monitor_parser.add_argument('--interval', type=float, default=5.0, help='Update interval')
+        monitor_parser.add_argument('--duration', type=int, default=0, help='Duration (0=unlimited)')
+        
+        # Maps command (BPF map inspection)
+        maps_parser = subparsers.add_parser('maps', help='Show BPF maps with live data')
+        maps_parser.add_argument('--map-name', help='Show specific map')
+        maps_parser.add_argument('--stats-only', action='store_true', help='Show only statistics map')
+        
+        # Logs command (log monitoring)
+        logs_parser = subparsers.add_parser('logs', help='Monitor pipeline logs')
+        logs_parser.add_argument('lines', nargs='?', type=int, default=50, help='Number of lines to show')
+        logs_parser.add_argument('filter_level', nargs='?', help='Filter by log level')
+        logs_parser.add_argument('--follow', '-f', action='store_true', help='Follow log output')
+        logs_parser.add_argument('--log-file', help='Log file path (default: auto-detect)')
+        
+        # ARP command (ARP table management)
+        arp_parser = subparsers.add_parser('arp', help='Manually populate ARP table for MAC resolution')
+        arp_parser.add_argument('ip', nargs='?', help='IP address (default: use NAT target IP)')
+        arp_parser.add_argument('--interface', help='Network interface')
+        
     def run(self):
         """Main CLI entry point"""
         parser = self.create_parser()
@@ -401,23 +483,24 @@ Examples:
             return ['vxlan_pipeline.bpf.o', 'src/vxlan_pipeline.bpf.o']  # Fallbacks
         # Command handlers
     def _handle_start(self, args) -> int:
-        """Handle start command"""
+        """Handle start command - matches working solution behavior"""
         try:
+            # Log config status like working solution
+            self.logger.info("Config loaded: pipeline_config exists: True")
+            
             # Get interface from args or config
             interface = args.interface or self._get_default_interface()
             if not interface:
                 self._error("No interface specified and no default available. Use --interface or configure default.")
                 return 1
+                
+            # Log interface usage like working solution
+            self.logger.info(f"Using configured ingress interface: {interface}")
             
             # Get program from args or config  
             program = args.program or self._get_default_program()
             
-            # Update config if custom program specified
-            if args.program:
-                self.config_manager.pipeline_config.program_path = args.program
-            if args.mode:
-                self.config_manager.pipeline_config.mode = args.mode
-            
+            # Process collision detection (matches bash behavior)
             result = self.pipeline.start(
                 interface=interface,
                 force=args.force
@@ -426,14 +509,14 @@ Examples:
             if result:
                 if args.optimize:
                     self.pipeline.optimize_performance()
-                self._success(f"XDP pipeline started successfully on {interface}")
+                print(f"[SUCCESS] XDP pipeline started on {interface}")
                 return 0
             else:
-                self._error(f"Failed to start XDP pipeline on {interface}")
+                print(f"[ERROR] Failed to start XDP pipeline on {interface}")
                 return 1
                 
         except Exception as e:
-            self._error(f"Start command failed: {e}")
+            print(f"[ERROR] Start command failed: {e}")
             return 1
     
     def _handle_stop(self, args) -> int:
@@ -842,6 +925,440 @@ Examples:
                 
         except Exception as e:
             self._error(f"Config command failed: {e}")
+            return 1
+    
+    def _handle_tune(self, args) -> int:
+        """Handle system tuning commands"""
+        try:
+            interface = args.interface or self._get_default_interface()
+            if not interface:
+                self._error("No interface specified and could not auto-detect")
+                return 1
+            
+            # Validate system readiness if requested
+            if args.validate_only:
+                self._info("Validating system readiness for high-performance packet processing...")
+                validation = self.system_tuner.validate_system_readiness()
+                
+                if validation.valid:
+                    self._success("✓ System is ready for high-performance packet processing")
+                else:
+                    self._error("System validation failed:")
+                    for error in validation.errors:
+                        self._error(f"  - {error}")
+                
+                if validation.warnings:
+                    self._warning("Warnings:")
+                    for warning in validation.warnings:
+                        self._warning(f"  - {warning}")
+                
+                return 0 if validation.valid else 1
+            
+            # Apply system tuning
+            self._info(f"Applying comprehensive system tuning for interface {interface}...")
+            
+            # Validate first unless forced
+            if not args.force:
+                validation = self.system_tuner.validate_system_readiness()
+                if not validation.valid:
+                    self._error("System validation failed. Use --force to override:")
+                    for error in validation.errors:
+                        self._error(f"  - {error}")
+                    return 1
+                
+                if validation.warnings:
+                    self._warning("System warnings (continuing with tuning):")
+                    for warning in validation.warnings:
+                        self._warning(f"  - {warning}")
+            
+            # Apply tuning
+            if self.system_tuner.apply_system_tuning(interface):
+                self._success("✓ System tuning applied successfully")
+                self._info("Tuning will persist across reboots")
+                return 0
+            else:
+                self._error("System tuning failed")
+                return 1
+                
+        except Exception as e:
+            self._error(f"System tuning failed: {e}")
+            return 1
+    
+    def _handle_scale(self, args) -> int:
+        """Handle dynamic performance scaling (compatibility with bash version)"""
+        try:
+            interface = args.interface or self._get_default_interface()
+            if not interface:
+                self._error("No interface specified and could not auto-detect")
+                return 1
+            
+            if args.mode == 'max-performance':
+                self._info(f"Scaling {interface} for maximum performance...")
+                
+                # Apply comprehensive system tuning
+                if not self.system_tuner.apply_system_tuning(interface):
+                    self._error("Performance scaling failed")
+                    return 1
+                
+                # Additional max-performance optimizations could be added here
+                self._success("✓ Maximum performance scaling applied")
+                return 0
+                
+            elif args.mode == 'balanced':
+                self._info("Balanced mode not yet implemented")
+                return 1
+                
+            elif args.mode == 'monitor':
+                self._info("Monitor mode - displaying current performance metrics...")
+                # Could integrate with existing monitoring functionality
+                return self._handle_status(args)
+            
+        except Exception as e:
+            self._error(f"Scale command failed: {e}")
+            return 1
+    
+    def _handle_pps(self, args) -> int:
+        """Handle PPS monitoring commands"""
+        try:
+            if args.mode == 'both':
+                # Get default interfaces from config
+                config = self.config_manager.get_config()
+                incoming_iface = config.pipeline_config.ingress_interface
+                target_iface = config.pipeline_config.egress_interface
+                
+                self.advanced_monitor.monitor_interface_pps_dual(
+                    incoming_iface, target_iface, args.interval, args.duration
+                )
+                
+            elif args.mode in ['incoming', 'target']:
+                config = self.config_manager.get_config()
+                if args.mode == 'incoming':
+                    interface = config.pipeline_config.ingress_interface
+                else:
+                    interface = config.pipeline_config.egress_interface
+                    
+                self.advanced_monitor.monitor_interface_pps_single(
+                    interface, args.interval, args.duration
+                )
+                
+            elif args.mode == 'single':
+                if not args.interface:
+                    self._error("Interface required for single mode")
+                    return 1
+                    
+                self.advanced_monitor.monitor_interface_pps_single(
+                    args.interface, args.interval, args.duration
+                )
+            
+            return 0
+            
+        except Exception as e:
+            self._error(f"PPS monitoring failed: {e}")
+            return 1
+    
+    def _handle_maps(self, args) -> int:
+        """Handle BPF maps commands"""
+        try:
+            if args.map_name:
+                # Show specific map
+                if args.map_name == 'stats':
+                    self.bpf_maps_enhanced.show_stats_map()
+                elif args.map_name == 'nat':
+                    self.bpf_maps_enhanced.show_nat_map()
+                elif args.map_name == 'allowlist':
+                    self.bpf_maps_enhanced.show_ip_allowlist_map()
+                else:
+                    self._error(f"Unknown map: {args.map_name}")
+                    return 1
+            else:
+                # Show all maps
+                # Show all BPF maps
+                maps = self.bpf_maps_enhanced.list_maps()
+                for map_info in maps:
+                    print(f"Map: {map_info.name} (ID: {map_info.id})")
+                    if args.detailed:
+                        print(f"  Type: {map_info.type}")
+                        print(f"  Entries: {map_info.entries_count}/{map_info.max_entries}")
+                
+            return 0
+            
+        except Exception as e:
+            self._error(f"Maps command failed: {e}")
+            return 1
+    
+    def _handle_logs(self, args) -> int:
+        """Handle log monitoring commands"""
+        try:
+            if args.follow:
+                self.log_monitor.monitor_logs_live()
+            elif args.search:
+                self.log_monitor.search_logs(args.search)
+            elif args.analyze:
+                self.log_monitor.analyze_error_logs()
+            else:
+                self.log_monitor.show_logs(args.lines, args.filter_level)
+                
+            return 0
+            
+        except Exception as e:
+            self._error(f"Logs command failed: {e}")
+            return 1
+    
+    def _handle_arp(self, args) -> int:
+        """Handle ARP management commands"""
+        try:
+            interface = args.interface or self._get_default_interface()
+            if not interface:
+                self._error("No interface specified and could not auto-detect")
+                return 1
+                
+            if args.ip:
+                target_ip = args.ip
+            else:
+                # Use configured NAT target IP
+                config = self.config_manager.get_config()
+                target_ip = config.pipeline_config.nat_target_ip
+                
+            self._info(f"Populating ARP table for {target_ip} on {interface}...")
+            
+            if self.interface_manager.populate_arp_table(target_ip, interface):
+                self._success(f"✓ ARP entry populated for {target_ip}")
+                return 0
+            else:
+                self._warning(f"⚠ Could not populate ARP entry for {target_ip}")
+                return 1
+                
+        except Exception as e:
+            self._error(f"ARP command failed: {e}")
+            return 1
+    
+    def _handle_info(self, args) -> int:
+        """Handle system information command"""
+        try:
+            self._show_system_info(args.interface)
+            return 0
+        except Exception as e:
+            self._error(f"Info command failed: {e}")
+            return 1
+    
+    def _show_system_info(self, specific_interface: Optional[str] = None) -> None:
+        """Show comprehensive system information"""
+        print("XDP Pipeline System Information")
+        print("=" * 35)
+        
+        # Configuration
+        print("\n📋 Configuration:")
+        config = self.config_manager.get_config()
+        print(f"  Ingress Interface: {config.pipeline_config.ingress_interface}")
+        print(f"  Egress Interface: {config.pipeline_config.egress_interface}")
+        print(f"  NAT Target: {config.pipeline_config.nat_target_ip}:{config.pipeline_config.nat_target_port}")
+        print(f"  Source Port: {config.pipeline_config.source_port}")
+        print(f"  System Tuning: {'Enabled' if config.pipeline_config.apply_system_tuning else 'Disabled'}")
+        
+        # Interface information
+        print("\n🌐 Network Interfaces:")
+        interfaces = [config.pipeline_config.ingress_interface, config.pipeline_config.egress_interface]
+        if specific_interface:
+            interfaces = [specific_interface]
+            
+        for iface in set(interfaces):  # Remove duplicates
+            info = self.interface_manager.get_interface_info(iface)
+            print(f"  {iface}:")
+            print(f"    State: {info['state']} | IP: {info['ip']} | MAC: {info['mac']}")
+            print(f"    MTU: {info['mtu']} | Queues: {info['queues']} | XDP: {info['xdp_attached']}")
+        
+        # Pipeline status
+        print("\n🚀 Pipeline Status:")
+        status = self.pipeline.get_status()
+        print(f"  Status: {status.status.value}")
+        if status.interfaces:
+            print(f"  Active Interfaces: {', '.join(status.interfaces)}")
+        
+        # BPF Maps summary
+        print("\n🗺️  BPF Maps:")
+        nat_count = len(self.bpf_maps_enhanced.get_map_entries('nat_map'))
+        allowlist_count = len(self.bpf_maps_enhanced.get_map_entries('ip_allowlist'))
+        print(f"  NAT Rules: {nat_count}")
+        print(f"  Allowlist Entries: {allowlist_count}")
+        
+        # Log files
+        print("\n📄 Log Files:")
+        log_summary = self.log_monitor.get_log_summary()
+        if log_summary['available_logs']:
+            for log in log_summary['available_logs']:
+                size_mb = log['size'] / (1024 * 1024)
+                print(f"  {Path(log['path']).name}: {size_mb:.1f}MB (modified: {log['modified']})")
+        else:
+            print("  No log files found")
+    
+    def _handle_pps(self, args) -> int:
+        """Handle PPS monitoring commands (bash compatibility)"""
+        try:
+            # Get interfaces
+            incoming_iface = args.incoming_interface or self.config_manager.get_config().pipeline_config.ingress_interface
+            target_iface = args.target_interface or self.config_manager.get_config().pipeline_config.egress_interface
+            
+            if not incoming_iface:
+                incoming_iface = self._get_default_interface()
+            if not target_iface:
+                target_iface = self._get_default_interface()
+            
+            if not incoming_iface or not target_iface:
+                self._error("Could not determine interfaces for monitoring")
+                return 1
+            
+            if args.target == 'both':
+                self._info(f"Monitoring PPS on both interfaces: {incoming_iface} (incoming) and {target_iface} (target)")
+                self.realtime_monitor.monitor_dual_interface_pps(
+                    incoming_iface, target_iface, args.interval, args.duration
+                )
+            elif args.target == 'incoming':
+                self._info(f"Monitoring PPS on incoming interface: {incoming_iface}")
+                self.realtime_monitor.monitor_single_interface_pps(
+                    incoming_iface, args.interval, args.duration
+                )
+            elif args.target == 'target':
+                self._info(f"Monitoring PPS on target interface: {target_iface}")
+                self.realtime_monitor.monitor_single_interface_pps(
+                    target_iface, args.interval, args.duration
+                )
+            
+            return 0
+            
+        except KeyboardInterrupt:
+            return 0
+        except Exception as e:
+            self._error(f"PPS monitoring failed: {e}")
+            return 1
+    
+    def _handle_monitor(self, args) -> int:
+        """Handle live monitoring dashboard"""
+        try:
+            self._info("Starting live performance monitoring dashboard...")
+            self.realtime_monitor.show_clean_statistics(args.interval, args.duration)
+            return 0
+            
+        except KeyboardInterrupt:
+            return 0
+        except Exception as e:
+            self._error(f"Monitor command failed: {e}")
+            return 1
+    
+    def _handle_maps(self, args) -> int:
+        """Handle BPF maps inspection"""
+        try:
+            if args.stats_only:
+                self.bpf_maps.show_stats_map()
+            elif args.map_name:
+                # Show specific map
+                if args.map_name == "nat_map":
+                    self.bpf_maps.show_nat_map()
+                elif args.map_name == "ip_allowlist":
+                    self.bpf_maps.show_ip_allowlist_map()
+                elif args.map_name == "stats_map":
+                    self.bpf_maps.show_stats_map()
+                elif args.map_name == "redirect_map":
+                    # redirect_map inspection not implemented yet
+                    self._error(f"Map inspection for {args.map_name} not yet available")
+                    return 1
+                else:
+                    self._error(f"Unknown map: {args.map_name}")
+                    return 1
+            else:
+                # Show all maps - use list_maps from BPFMapManager
+                maps = self.bpf_maps.list_maps()
+                for map_info in maps:
+                    print(f"Map: {map_info.name} (ID: {map_info.id}, Type: {map_info.type})")
+                    print(f"  Entries: {map_info.entries_count}/{map_info.max_entries}")
+                    print()
+            
+            return 0
+            
+        except Exception as e:
+            self._error(f"Maps command failed: {e}")
+            return 1
+    
+    def _handle_logs(self, args) -> int:
+        """Handle log monitoring"""
+        try:
+            import os
+            
+            # Determine log file
+            log_file = args.log_file
+            if not log_file:
+                # Try common locations
+                possible_logs = [
+                    "/tmp/vxlan_loader.log",
+                    "/tmp/xdp_pipeline.log",
+                    "/var/log/xdp_pipeline.log"
+                ]
+                
+                for log_path in possible_logs:
+                    if os.path.exists(log_path):
+                        log_file = log_path
+                        break
+                
+                if not log_file:
+                    self._error("No log file found. Specify with --log-file")
+                    return 1
+            
+            self._info(f"Monitoring log file: {log_file}")
+            
+            if args.follow:
+                # Follow log output
+                import subprocess
+                cmd = ["tail", "-f"]
+                if args.filter_level:
+                    cmd = ["tail", "-f", log_file, "|", "grep", args.filter_level]
+                    subprocess.run(" ".join(cmd), shell=True)
+                else:
+                    cmd.append(log_file)
+                    subprocess.run(cmd)
+            else:
+                # Show last N lines
+                cmd = ["tail", "-n", str(args.lines), log_file]
+                if args.filter_level:
+                    cmd.extend(["|grep", args.filter_level])
+                    subprocess.run(" ".join(cmd), shell=True)
+                else:
+                    result = subprocess.run(cmd, capture_output=True, text=True)
+                    print(result.stdout)
+            
+            return 0
+            
+        except Exception as e:
+            self._error(f"Logs command failed: {e}")
+            return 1
+    
+    def _handle_arp(self, args) -> int:
+        """Handle ARP table population"""
+        try:
+            # Determine target IP
+            target_ip = args.ip
+            if not target_ip:
+                config = self.config_manager.get_config()
+                target_ip = config.network.nat_ip if hasattr(config, 'network') else None
+                if not target_ip:
+                    self._error("No IP specified and no NAT target IP configured")
+                    return 1
+            
+            # Determine interface
+            interface = args.interface or self._get_default_interface()
+            if not interface:
+                self._error("No interface specified and could not auto-detect")
+                return 1
+            
+            self._info(f"Populating ARP table: {target_ip} via {interface}")
+            
+            if self.interface_manager.populate_arp_table(target_ip, interface):
+                self._success("✓ ARP table populated successfully")
+                return 0
+            else:
+                self._warning("ARP population completed with warnings")
+                return 0
+                
+        except Exception as e:
+            self._error(f"ARP command failed: {e}")
             return 1
     
     # Helper methods

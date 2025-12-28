@@ -10,15 +10,23 @@ __description__ = "High-performance VXLAN processing with eBPF/XDP"
 # Core pipeline components
 from .pipeline import XDPPipeline
 from .allowlist import AllowlistManager
-from .bpf_maps import BPFMapManager
+from .bpf import BPFMapManager
 from .network import NetworkManager
 from .config import ConfigManager, PipelineConfig
 from .display import DisplayManager
-from .utils import Logger, CommandRunner, SystemInfo
+from .utils import Logger, CommandRunner
+from .system_tuning import SystemTuner
+from .monitoring import UnifiedMonitor
+from .interface_management import InterfaceManager
 
 # Analytics and diagnostics
-from .analytics import StatisticsAnalyzer
+from .analyze_stats import StatisticsAnalyzer
 from .diagnostics import NetworkDiagnostics
+
+# Monitoring and inspection
+from .monitoring import RealTimeMonitor
+# BPFMapInspector functionality is now part of BPFMapManager in bpf.py
+from .interface_management import InterfaceManager
 
 # Data models
 from .models import (
@@ -26,7 +34,8 @@ from .models import (
     BPFMapInfo, 
     AllowlistEntry,
     NetworkInterface,
-    PipelineStats
+    PipelineStats,
+    SystemInfo
 )
 
 __all__ = [
@@ -39,11 +48,21 @@ __all__ = [
     'DisplayManager',
     'Logger',
     'CommandRunner',
+    'SystemTuner',
+    'AdvancedMonitor',
+    # 'EnhancedBPFMapManager',  # Now part of BPFMapManager
+    'InterfaceManager', 
+    'LogMonitor',
     'SystemInfo',
     
     # Analytics and diagnostics
     'StatisticsAnalyzer',
     'NetworkDiagnostics',
+    
+    # Monitoring and inspection
+    'RealTimeMonitor',
+    # 'BPFMapInspector',  # Now part of BPFMapManager
+    'InterfaceManager',
     
     # Configuration
     'PipelineConfig',
