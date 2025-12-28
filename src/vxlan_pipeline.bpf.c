@@ -157,6 +157,9 @@ enum stats_index {
     STAT_RINGBUF_SUBMITTED = 13, /* Packets successfully submitted to ring buffer */
     STAT_PACKET_SIZE_DEBUG = 14, /* Debug: packet sizes after decapsulation */
     STAT_LENGTH_CORRECTIONS = 15, /* Packets where truncated lengths were corrected */
+    STAT_IP_ALLOWLIST_HITS = 16, /* Packets that matched IP allowlist (allowed) */
+    STAT_IP_ALLOWLIST_MISSES = 17, /* Packets that did NOT match IP allowlist (dropped) */
+    STAT_DROPPED = 18,           /* Total packets dropped for any reason */
 };
 
 /*
@@ -358,6 +361,17 @@ struct {
  * 
  * Check if inner packet source or destination IP is in allowlist.
  * This provides early filtering to reduce processing load for 85K+ PPS.
+ * 
+ * FILTERING LOGIC:
+ * ================
+ * 1. Check destination IP first (most common case for NAT)
+ * 2. If destination not allowed, check source IP as backup
+ * 3. Return 1 if either IP is in allowlist, 0 otherwise
+ * 
+ * PERFORMANCE NOTE:
+ * ================
+ * Hash map lookup is O(1) on average, making this very efficient
+ * for high-throughput packet processing.
  */
 static __always_inline int is_ip_allowed(struct iphdr *iph) {
     if (!iph) return 0;
@@ -365,15 +379,21 @@ static __always_inline int is_ip_allowed(struct iphdr *iph) {
     /* Check destination IP first (most common case for NAT) */
     __u8 *allowed = bpf_map_lookup_elem(&ip_allowlist, &iph->daddr);
     if (allowed && *allowed == IP_ALLOWED) {
+        /* Track successful allowlist hits for monitoring */
+        update_stat(STAT_IP_ALLOWLIST_HITS, 1);
         return 1;
     }
     
     /* Check source IP as backup */
     allowed = bpf_map_lookup_elem(&ip_allowlist, &iph->saddr);
     if (allowed && *allowed == IP_ALLOWED) {
+        /* Track successful allowlist hits for monitoring */
+        update_stat(STAT_IP_ALLOWLIST_HITS, 1);
         return 1;
     }
     
+    /* Track allowlist misses for monitoring */
+    update_stat(STAT_IP_ALLOWLIST_MISSES, 1);
     return 0; /* IP not in allowlist */
 }
 
@@ -1060,14 +1080,12 @@ static __always_inline int parse_inner_packet(void *data, void *data_end,
     update_stat(STAT_INNER_PACKETS, 1);
     update_stat(STAT_BYTES_PROCESSED, bpf_ntohs(ip_hdr->tot_len));
     
-    /* OPTIONAL FILTERING: Check if IP allowlist is configured and enforced */
-    /* For now, skip allowlist filtering to allow all traffic through */
-    /* TODO: Re-enable allowlist filtering when properly configured */
-    /*
+    /* IP ALLOWLIST FILTERING: Check if IP allowlist is configured and enforced */
+    /* This provides early filtering to reduce processing load for unauthorized IPs */
     if (!is_ip_allowed(ip_hdr)) {
+        update_stat(STAT_DROPPED, 1);  /* Track dropped packets */
         return XDP_DROP;
     }
-    */
     
     /* Only process UDP inner packets */
     if (ip_hdr->protocol != IPPROTO_UDP) {

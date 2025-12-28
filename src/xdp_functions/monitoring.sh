@@ -542,6 +542,9 @@ show_bpf_maps() {
             [13]="Ring Buffer Sent"
             [14]="Debug Counter"
             [15]="Length Corrections"
+            [16]="IP Allowlist Hits"
+            [17]="IP Allowlist Misses"
+            [18]="Total Dropped"
         )
         
         # Get previous values for rate calculation (simple approach)
