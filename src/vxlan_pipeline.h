@@ -3,10 +3,10 @@
 
 /*
  * VXLAN Pipeline Configuration Header
- * 
+ *
  * This header file contains all configuration constants, magic numbers,
  * and compile-time parameters for the high-performance VXLAN XDP pipeline.
- * 
+ *
  * Centralizing constants here improves maintainability and makes it easier
  * to tune the pipeline for different environments.
  */

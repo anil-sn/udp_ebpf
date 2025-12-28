@@ -1,6 +1,6 @@
 /*
  * High-Performance Multithreaded Packet Injector - Header File
- * 
+ *
  * This header contains all constants, structures, and type definitions
  * for the packet injection system.
  */
@@ -112,10 +112,10 @@
 struct packet_queue {
     /* Producer side (ring buffer reader) - own cache line */
     volatile uint32_t head __attribute__((aligned(CACHE_LINE_SIZE)));
-    
+
     /* Consumer side (worker threads) - separate cache line */
     volatile uint32_t tail __attribute__((aligned(CACHE_LINE_SIZE)));
-    
+
     /* Packet pointer array - shared read-only after initialization */
     struct packet_buffer *packets[PACKET_QUEUE_SIZE];
 } __attribute__((aligned(CACHE_LINE_SIZE)));
@@ -138,15 +138,15 @@ struct worker_context {
     /* Thread identification and CPU binding */
     int thread_id;                                   /* Worker identifier */
     int cpu_id;                                      /* CPU core this worker is bound to */
-    
+
     /* Network resources per worker */
     int raw_socket;                                  /* Dedicated AF_PACKET socket */
     struct sockaddr_ll target_addr;                  /* Pre-filled target interface address */
-    
+
     /* Work queue and thread handle */
     struct packet_queue *queue;                      /* Pointer to this worker's packet queue */
     pthread_t thread;                                /* POSIX thread handle */
-    
+
     /* Performance statistics (updated atomically) */
     volatile uint64_t packets_sent;                  /* Successfully transmitted packets */
     volatile uint64_t bytes_sent;                    /* Total bytes transmitted */

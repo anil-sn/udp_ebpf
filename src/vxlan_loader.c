@@ -1,12 +1,12 @@
 /*
  * VXLAN Pipeline XDP Program - Userspace Control Plane
- * 
+ *
  * ARCHITECTURE OVERVIEW:
  * =====================
  * This userspace program serves as the control plane for the high-performance
  * XDP VXLAN processing pipeline. It manages the complete lifecycle of the
  * eBPF program and provides real-time monitoring and configuration capabilities.
- * 
+ *
  * CORE RESPONSIBILITIES:
  * =====================
  * 1. eBPF Program Management:
@@ -14,25 +14,25 @@
  *    - Attach XDP program to network interface with optimal mode selection
  *    - Configure eBPF maps with runtime parameters (NAT rules, redirect targets)
  *    - Handle graceful program detachment and cleanup on exit/signals
- * 
+ *
  * 2. Configuration Management:
  *    - Parse command-line arguments for flexible deployment options
  *    - Configure NAT (Network Address Translation) rules via eBPF hash maps
  *    - Set up packet forwarding targets via redirect interface maps
  *    - Validate all configuration parameters before application
- * 
+ *
  * 3. Real-time Performance Monitoring:
  *    - Collect per-CPU statistics from eBPF maps with configurable intervals
  *    - Aggregate counters across all CPU cores for system-wide metrics
  *    - Calculate real-time packet rates, throughput, and error percentages
  *    - Display comprehensive performance dashboard with rate calculations
- * 
+ *
  * 4. System Integration:
  *    - Comprehensive command-line interface for operational flexibility
  *    - Signal handling (SIGINT, SIGTERM) for graceful shutdown
  *    - Automatic resource cleanup on all exit paths
  *    - Error recovery and diagnostic information
- * 
+ *
  * TARGET WORKLOAD:
  * ===============
  * Designed for sustained processing of 85,000+ packets per second from
@@ -123,7 +123,7 @@ struct config {
 
 static struct config cfg = {
     .interface = "ens5",
-    .target_interface = "ens6", 
+    .target_interface = "ens6",
     .nat_target_ip = "172.30.82.95",
     .nat_target_mac = {0},              /* Will be resolved at startup */
     .nat_target_port = 8081,
@@ -148,7 +148,7 @@ static void cleanup()
     /* Flush output streams */
     fflush(stdout);
     fflush(stderr);
-    
+
     if (ifindex > 0 && prog_fd >= 0) {
         if (bpf_set_link_xdp_fd(ifindex, -1, 0) < 0) {
             fprintf(stderr, "Warning: Failed to detach XDP program\n");
@@ -156,12 +156,12 @@ static void cleanup()
             printf("XDP program detached from interface %s\n", cfg.interface);
         }
     }
-    
+
     if (bpf_obj) {
         bpf_object__close(bpf_obj);
         bpf_obj = NULL; /* Prevent double free */
     }
-    
+
     /* Final flush */
     fflush(stdout);
     fflush(stderr);
@@ -170,24 +170,24 @@ static void cleanup()
 /*
  * GET AGGREGATED STATISTICS FROM PER-CPU MAP
  * ==========================================
- * 
+ *
  * eBPF programs use per-CPU maps to avoid contention during high-frequency
  * counter updates. Each CPU core maintains its own copy of statistics counters,
  * which eliminates atomic operations and cache line bouncing that would occur
  * with shared counters.
- * 
+ *
  * PERFORMANCE BENEFITS:
  * - Zero contention: Each CPU updates only its local counters
  * - Cache efficiency: Counters stay in local CPU cache
  * - Atomic-free: No expensive atomic increment operations
  * - Scalability: Performance scales linearly with CPU cores
- * 
+ *
  * AGGREGATION PROCESS:
  * 1. Read per-CPU array containing all CPU-specific counter values
  * 2. Sum values across all active CPU cores for total system count
  * 3. Handle variable CPU counts gracefully (containers, NUMA systems)
  * 4. Protect against reading uninitialized memory locations
- * 
+ *
  * This function is called frequently (every stats_interval seconds) so
  * efficiency is important for maintaining low overhead monitoring.
  */
@@ -196,25 +196,25 @@ static __u64 get_stat_value(int map_fd, __u32 key)
     __u64 values[MAX_CPU_CORES]; /* Per-CPU counter array - one entry per CPU core */
     __u64 total = 0;
     int num_cpus;
-    
+
     /* Initialize array to prevent reading garbage values from unused entries */
     memset(values, 0, sizeof(values));
-    
+
     if (bpf_map_lookup_elem(map_fd, &key, values) != 0) {
         return 0;
     }
-    
+
     /* Get actual CPU count to avoid reading uninitialized memory */
     num_cpus = libbpf_num_possible_cpus();
     if (num_cpus < 0 || num_cpus > MAX_CPU_CORES) {
         num_cpus = MAX_CPU_CORES;
     }
-    
+
     /* Sum across actual CPUs only */
     for (int i = 0; i < num_cpus; i++) {
         total += values[i];
     }
-    
+
     return total;
 }
 
@@ -223,23 +223,23 @@ static void init_stats()
 {
     __u64 zero_values[MAX_CPU_CORES];
     int num_cpus;
-    
+
     /* Get actual CPU count */
     num_cpus = libbpf_num_possible_cpus();
     if (num_cpus < 0 || num_cpus > MAX_CPU_CORES) {
         num_cpus = MAX_CPU_CORES;
     }
-    
+
     /* Initialize array to zeros */
     memset(zero_values, 0, sizeof(zero_values));
-    
+
     /* Initialize all statistics counters to zero */
     for (int stat = 0; stat < STAT_MAX_ENTRIES; stat++) {
         __u32 key = stat;
         /* Note: For per-CPU maps, we initialize with zero array */
         bpf_map_update_elem(stats_map_fd, &key, zero_values, BPF_ANY);
     }
-    
+
     if (cfg.verbose) {
         printf("Statistics counters initialized (%d CPUs)\n", num_cpus);
     }
@@ -248,30 +248,30 @@ static void init_stats()
 /*
  * CONFIGURE NAT RULES IN EBPF MAP
  * ===============================
- * 
+ *
  * This function sets up Network Address Translation (NAT) rules that the XDP program
  * uses to rewrite packet destinations. The NAT implementation is optimized for the
  * specific use case of redirecting AWS Traffic Mirror VXLAN traffic.
- * 
+ *
  * NAT DESIGN PHILOSOPHY:
  * =====================
  * - Source port matching: Identify packets by their destination port (e.g., 31765)
  * - Selective translation: Only packets matching the configured port get NAT'd
  * - Preserve source: Keep original source IP/port for connection tracking
  * - Fast lookup: Hash map provides O(1) lookup performance in XDP context
- * 
+ *
  * PACKET TRANSFORMATION:
  * =====================
  * Input:  [Inner Src IP]:[Inner Src Port] → [Inner Dst IP]:31765
  * Output: [Inner Src IP]:[Inner Src Port] → [NAT_IP]:[NAT_PORT]
- * 
+ *
  * RATIONALE FOR SOURCE PORT AS KEY:
  * ================================
  * - Deterministic matching: Specific port identification (31765)
  * - Performance: Single hash lookup vs multiple field comparisons
  * - Flexibility: Easy to add multiple NAT rules for different ports
  * - AWS Integration: Traffic Mirror often uses specific destination ports
- * 
+ *
  * MAP STRUCTURE:
  * =============
  * Key: Source port in network byte order (uint16_t)
@@ -283,7 +283,7 @@ static int configure_nat_rules()
     struct nat_key key = {
         .src_port = htons(cfg.nat_source_port)  /* Network byte order for eBPF map consistency */
     };
-    
+
     /*
      * PARSE AND VALIDATE TARGET IP ADDRESS
      * ===================================
@@ -294,36 +294,36 @@ static int configure_nat_rules()
         fprintf(stderr, "Invalid target IP address: %s\n", cfg.nat_target_ip);
         return -1;
     }
-    
+
     entry.target_port = cfg.nat_target_port;  /* Store in host byte order, will be converted in eBPF */
     entry.flags = 0;
-    
+
     /* Add NAT rule using source port as key (user's design) */
     if (bpf_map_update_elem(nat_map_fd, &key, &entry, BPF_ANY) != 0) {
         fprintf(stderr, "Failed to add NAT rule: %s\n", strerror(errno));
         return -1;
     }
-    
-    printf("[OK] NAT rule configured: dest_port %d -> %s:%d\n", 
+
+    printf("[OK] NAT rule configured: dest_port %d -> %s:%d\n",
            cfg.nat_source_port, cfg.nat_target_ip, cfg.nat_target_port);
     printf("     (Matches packets TO destination port %d)\n", cfg.nat_source_port);
-    
+
     return 0;
 }
 
 /*
  * RESOLVE MAC ADDRESS FROM IP ADDRESS
  * ===================================
- * 
+ *
  * This function resolves the MAC address for a given IP address using the
  * system's ARP table. This is critical for proper L2 forwarding to ensure
  * packets reach the correct destination.
- * 
+ *
  * RESOLUTION METHODS:
  * 1. Check /proc/net/arp for existing ARP entries
  * 2. If not found, attempt to ping the IP to populate ARP table
  * 3. Re-check ARP table after ping attempt
- * 
+ *
  * PERFORMANCE CONSIDERATIONS:
  * - ARP lookup is done once at startup, not per-packet
  * - Cached result avoids runtime network queries
@@ -335,20 +335,20 @@ static int resolve_ip_to_mac(const char* ip_str, __u8 mac_addr[6])
     char line[256];
     char arp_ip[16], arp_mac[18];
     int found = 0;
-    
+
     /* First, try to find the IP in the ARP table */
     arp_table = fopen("/proc/net/arp", "r");
     if (!arp_table) {
         perror("Failed to open /proc/net/arp");
         return -1;
     }
-    
+
     /* Skip the header line */
     if (fgets(line, sizeof(line), arp_table) == NULL) {
         fclose(arp_table);
         return -1;
     }
-    
+
     /* Search for the target IP in ARP table */
     while (fgets(line, sizeof(line), arp_table)) {
         if (sscanf(line, "%15s %*s %*s %17s", arp_ip, arp_mac) == 2) {
@@ -364,14 +364,14 @@ static int resolve_ip_to_mac(const char* ip_str, __u8 mac_addr[6])
         }
     }
     fclose(arp_table);
-    
+
     if (!found) {
         /* IP not in ARP table, try multiple methods to populate it */
         printf("MAC address for %s not found in ARP table, attempting to resolve via multiple methods...\n", ip_str);
-        
+
         /* Method 1: Try arping (primary method since ping/ICMP often blocked) */
         char arping_cmd[256];
-        snprintf(arping_cmd, sizeof(arping_cmd), "which arping >/dev/null 2>&1 && arping -c 3 -w 3 -I %s %s >/dev/null 2>&1", 
+        snprintf(arping_cmd, sizeof(arping_cmd), "which arping >/dev/null 2>&1 && arping -c 3 -w 3 -I %s %s >/dev/null 2>&1",
                 cfg.target_interface, ip_str);
         printf("Trying arping method (primary)...\n");
         int arping_result = system(arping_cmd);
@@ -380,55 +380,55 @@ static int resolve_ip_to_mac(const char* ip_str, __u8 mac_addr[6])
         } else {
             printf("arping failed for %s (exit code: %d)\n", ip_str, arping_result);
         }
-        
+
         /* Method 2: Use ip neigh to add a probe entry */
         char arp_cmd[256];
-        snprintf(arp_cmd, sizeof(arp_cmd), "ip neigh add %s dev %s nud probe >/dev/null 2>&1 || ip neigh replace %s dev %s nud probe >/dev/null 2>&1", 
+        snprintf(arp_cmd, sizeof(arp_cmd), "ip neigh add %s dev %s nud probe >/dev/null 2>&1 || ip neigh replace %s dev %s nud probe >/dev/null 2>&1",
                 ip_str, cfg.target_interface, ip_str, cfg.target_interface);
         printf("Trying ip neigh probe method...\n");
         int arp_result = system(arp_cmd);
         (void)arp_result; /* Suppress unused variable warning */
-        
+
         /* Method 3: Try connecting to common ports (TCP SYN packets) */
         char connect_cmd[512];
-        snprintf(connect_cmd, sizeof(connect_cmd), 
+        snprintf(connect_cmd, sizeof(connect_cmd),
                 "timeout 2 nc -w 1 %s 80 </dev/null >/dev/null 2>&1 || "
                 "timeout 2 nc -w 1 %s 443 </dev/null >/dev/null 2>&1 || "
                 "timeout 2 nc -w 1 %s 22 </dev/null >/dev/null 2>&1 || "
                 "timeout 2 nc -w 1 %s 8080 </dev/null >/dev/null 2>&1 || "
-                "timeout 2 nc -w 1 %s 8081 </dev/null >/dev/null 2>&1", 
+                "timeout 2 nc -w 1 %s 8081 </dev/null >/dev/null 2>&1",
                 ip_str, ip_str, ip_str, ip_str, ip_str);
         printf("Trying TCP connection method...\n");
         int connect_result = system(connect_cmd);
         (void)connect_result; /* Suppress unused variable warning */
-        
+
         /* Method 4: Try UDP connection to target port */
         if (cfg.nat_target_port > 0) {
             char udp_cmd[256];
-            snprintf(udp_cmd, sizeof(udp_cmd), "timeout 2 nc -u -w 1 %s %d </dev/null >/dev/null 2>&1", 
+            snprintf(udp_cmd, sizeof(udp_cmd), "timeout 2 nc -u -w 1 %s %d </dev/null >/dev/null 2>&1",
                     ip_str, cfg.nat_target_port);
             printf("Trying UDP connection to port %d...\n", cfg.nat_target_port);
             int udp_result = system(udp_cmd);
             (void)udp_result; /* Suppress unused variable warning */
         }
-        
+
         /* Wait for ARP resolution */
         printf("Waiting for ARP resolution...\n");
         usleep(3000000); /* 3 second delay for ARP resolution */
-        
+
         /* Try ARP table lookup again after all attempts */
         arp_table = fopen("/proc/net/arp", "r");
         if (!arp_table) {
             perror("Failed to re-open /proc/net/arp");
             return -1;
         }
-        
+
         /* Skip header */
         if (fgets(line, sizeof(line), arp_table) == NULL) {
             fclose(arp_table);
             return -1;
         }
-        
+
         /* Search again */
         while (fgets(line, sizeof(line), arp_table)) {
             if (sscanf(line, "%15s %*s %*s %17s", arp_ip, arp_mac) == 2) {
@@ -444,7 +444,7 @@ static int resolve_ip_to_mac(const char* ip_str, __u8 mac_addr[6])
         }
         fclose(arp_table);
     }
-    
+
     if (!found) {
         printf("Error: Could not resolve MAC address for IP %s\n", ip_str);
         printf("Please ensure:\n");
@@ -453,36 +453,36 @@ static int resolve_ip_to_mac(const char* ip_str, __u8 mac_addr[6])
         printf("  3. No firewall is blocking ICMP\n");
         return -1;
     }
-    
+
     printf("Resolved MAC address for %s: %02x:%02x:%02x:%02x:%02x:%02x\n",
            ip_str, mac_addr[0], mac_addr[1], mac_addr[2],
            mac_addr[3], mac_addr[4], mac_addr[5]);
-    
+
     return 0;
 }
 
 /*
  * CONFIGURE TARGET INTERFACE FOR PACKET FORWARDING
  * ================================================
- * 
+ *
  * This function sets up the redirect interface configuration that enables
  * the XDP program to forward processed packets to a specific network interface
  * using the high-performance XDP_REDIRECT action.
- * 
+ *
  * REDIRECT MECHANISM:
  * ==================
  * - XDP_REDIRECT: Fastest packet forwarding method in XDP
  * - Bypass kernel stack: Direct interface-to-interface forwarding
  * - Zero-copy: Packet buffers passed directly between interfaces
  * - Wire speed: Minimal CPU overhead for packet forwarding
- * 
+ *
  * INTERFACE CONFIGURATION REQUIREMENTS:
  * ====================================
  * 1. Interface index: Kernel identifier for target interface
  * 2. MAC address: Layer 2 destination for Ethernet frame construction
  * 3. Validation: Ensure interface exists and is accessible
  * 4. Map population: Store configuration in eBPF maps for XDP access
- * 
+ *
  * PERFORMANCE CONSIDERATIONS:
  * ==========================
  * - Interface lookup is done once at startup, not per-packet
@@ -495,7 +495,7 @@ static int configure_redirect_interface()
     if (strlen(cfg.target_interface) == 0) {
         return 0; /* No redirect configured - packets will be passed to kernel */
     }
-    
+
     /*
      * RESOLVE INTERFACE NAME TO KERNEL INDEX
      * ======================================
@@ -507,26 +507,26 @@ static int configure_redirect_interface()
         fprintf(stderr, "Target interface '%s' not found\n", cfg.target_interface);
         return -1;
     }
-    
+
     /* Configure redirect map */
     __u32 key = 0;
     __u32 value = target_ifindex;
-    
+
     if (bpf_map_update_elem(redirect_map_fd, &key, &value, BPF_ANY) != 0) {
         fprintf(stderr, "Failed to configure redirect interface: %s\n", strerror(errno));
         return -1;
     }
-    
+
     /* Get and configure interface MAC address */
     char mac_file[256];
     snprintf(mac_file, sizeof(mac_file), "/sys/class/net/%s/address", cfg.target_interface);
-    
+
     FILE *f = fopen(mac_file, "r");
     if (!f) {
         fprintf(stderr, "Failed to read MAC address for %s\n", cfg.target_interface);
         return -1;
     }
-    
+
     char mac_str[18];
     if (fgets(mac_str, sizeof(mac_str), f) == NULL) {
         fclose(f);
@@ -534,7 +534,7 @@ static int configure_redirect_interface()
         return -1;
     }
     fclose(f);
-    
+
     /* Parse MAC address */
     struct interface_config if_config = {0};
     if (sscanf(mac_str, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
@@ -543,32 +543,32 @@ static int configure_redirect_interface()
         fprintf(stderr, "Failed to parse MAC address: %s\n", mac_str);
         return -1;
     }
-    
+
     if_config.ifindex = target_ifindex;
-    
+
     /* Update interface map */
     if (bpf_map_update_elem(interface_map_fd, &key, &if_config, BPF_ANY) != 0) {
         fprintf(stderr, "Failed to configure interface map: %s\n", strerror(errno));
         return -1;
     }
-    
-    printf("Redirect interface configured: %s (ifindex %d)\n", 
+
+    printf("Redirect interface configured: %s (ifindex %d)\n",
            cfg.target_interface, target_ifindex);
     printf("Target MAC address: %02x:%02x:%02x:%02x:%02x:%02x\n",
            if_config.mac_addr[0], if_config.mac_addr[1], if_config.mac_addr[2],
            if_config.mac_addr[3], if_config.mac_addr[4], if_config.mac_addr[5]);
-    
+
     return 0;
 }
 
 /*
  * CONFIGURE NAT TARGET MAC ADDRESS
  * ================================
- * 
+ *
  * This function configures the MAC address for the NAT target IP using
  * the pre-resolved MAC address from the config structure. The MAC address
  * should have been resolved during program initialization.
- * 
+ *
  * PROCESS:
  * 1. Use pre-resolved MAC address from config
  * 2. Store MAC address and IP in nat_target_map
@@ -578,10 +578,10 @@ static int configure_nat_target_mac()
 {
     struct nat_target_config nat_config = {0};
     __u32 key = 0;
-    
+
     /* Use pre-resolved MAC address from config */
     memcpy(nat_config.mac_addr, cfg.nat_target_mac, 6);
-    
+
     /* Double-check MAC address validity (should have been validated earlier) */
     int mac_valid = 0;
     for (int i = 0; i < 6; i++) {
@@ -594,42 +594,42 @@ static int configure_nat_target_mac()
         fprintf(stderr, "Error: Cannot configure NAT target with invalid MAC address\n");
         return -1;
     }
-    
+
     /* Store NAT target IP for validation */
     if (inet_pton(AF_INET, cfg.nat_target_ip, &nat_config.ip_addr) != 1) {
         fprintf(stderr, "Invalid NAT target IP address: %s\n", cfg.nat_target_ip);
         return -1;
     }
-    
+
     /* Update NAT target map */
     if (bpf_map_update_elem(nat_target_map_fd, &key, &nat_config, BPF_ANY) != 0) {
         fprintf(stderr, "Failed to update NAT target map: %s\n", strerror(errno));
         return -1;
     }
-    
+
     printf("NAT target MAC configured: %s -> %02x:%02x:%02x:%02x:%02x:%02x\n",
            cfg.nat_target_ip,
            nat_config.mac_addr[0], nat_config.mac_addr[1], nat_config.mac_addr[2],
            nat_config.mac_addr[3], nat_config.mac_addr[4], nat_config.mac_addr[5]);
-    
+
     return 0;
 }
 
 /*
  * DISPLAY REAL-TIME STATISTICS WITH PERFORMANCE ANALYSIS
  * ======================================================
- * 
+ *
  * This function provides comprehensive real-time monitoring of the VXLAN
  * pipeline performance, including throughput analysis, error tracking,
  * and performance assessment against the 85K+ PPS target.
- * 
+ *
  * MONITORING METHODOLOGY:
  * ======================
  * 1. Delta calculation: Compare current vs. previous statistics snapshots
  * 2. Rate computation: Calculate per-second rates for key metrics
  * 3. Performance assessment: Evaluate against throughput targets
  * 4. Efficiency analysis: Compute processing ratios and success rates
- * 
+ *
  * KEY PERFORMANCE INDICATORS (KPIs):
  * =================================
  * - Packets Per Second (PPS): Primary performance metric
@@ -637,13 +637,13 @@ static int configure_nat_target_mac()
  * - NAT Application Rate: Network address translation effectiveness
  * - Throughput (Mbps): Bandwidth utilization measurement
  * - Error Rate: System reliability and stability indicator
- * 
+ *
  * PERFORMANCE THRESHOLDS:
  * ======================
  * - TARGET: 85,000+ PPS (production requirement)
  * - GOOD: 60,000+ PPS (acceptable performance)
  * - WARNING: <60,000 PPS (performance investigation needed)
- * 
+ *
  * STATISTICAL ACCURACY:
  * ====================
  * - Uses previous snapshot baseline for accurate delta calculations
@@ -655,13 +655,13 @@ static void display_stats()
 {
     static __u64 prev_stats[STAT_MAX_ENTRIES] = {0}; /* Previous snapshot for delta calculation */
     static time_t last_time = 0;                     /* Previous timestamp for rate calculation */
-    
+
     time_t current_time = time(NULL);
     double interval = current_time - last_time;
     if (last_time == 0) interval = 1.0; /* Handle first call gracefully */
-    
+
     __u64 current_stats[STAT_MAX_ENTRIES];
-    
+
     /*
      * COLLECT CURRENT STATISTICS FROM ALL CPU CORES
      * =============================================
@@ -672,28 +672,28 @@ static void display_stats()
     for (int i = 0; i < STAT_MAX_ENTRIES; i++) {
         current_stats[i] = get_stat_value(stats_map_fd, i);
     }
-    
+
     /* Calculate rates */
     __u64 packets_delta = current_stats[STAT_TOTAL_PACKETS] - prev_stats[STAT_TOTAL_PACKETS];
     __u64 bytes_delta = current_stats[STAT_BYTES_PROCESSED] - prev_stats[STAT_BYTES_PROCESSED];
     __u64 vxlan_delta = current_stats[STAT_VXLAN_PACKETS] - prev_stats[STAT_VXLAN_PACKETS];
     __u64 nat_delta = current_stats[STAT_NAT_APPLIED] - prev_stats[STAT_NAT_APPLIED];
-    
+
     double pps = packets_delta / interval;
     double vxlan_pps = vxlan_delta / interval;
     double mbps = (bytes_delta * 8.0) / (interval * 1024 * 1024);
-    
+
     /* Performance status indicators */
     const char* perf_status = "[!]";
     if (pps >= 85000) perf_status = "[OK]";
     else if (pps >= 60000) perf_status = "[--]";
-    
+
     /* Display comprehensive statistics */
     printf("\n%s === VXLAN Pipeline Statistics [%ds interval] ===\n", perf_status, cfg.stats_interval);
     printf("[P] Total Packets:    %10llu (%8.0f pps)\n", current_stats[STAT_TOTAL_PACKETS], pps);
     printf("[V] VXLAN Packets:    %10llu (%8.0f pps, %5.1f%%)\n",
            current_stats[STAT_VXLAN_PACKETS], vxlan_pps,
-           current_stats[STAT_TOTAL_PACKETS] > 0 ? 
+           current_stats[STAT_TOTAL_PACKETS] > 0 ?
                (double)current_stats[STAT_VXLAN_PACKETS] * 100.0 / current_stats[STAT_TOTAL_PACKETS] : 0.0);
     printf("[I] Inner Packets:    %10llu\n", current_stats[STAT_INNER_PACKETS]);
     printf("[N] NAT Applied:      %10llu (%8.0f/s)\n", current_stats[STAT_NAT_APPLIED], nat_delta / interval);
@@ -703,26 +703,26 @@ static void display_stats()
     printf("[L] IP Len Updated:   %10llu\n", current_stats[STAT_IP_LEN_UPDATED]);
     printf("[E] Errors:           %10llu\n", current_stats[STAT_ERRORS]);
     printf("[T] Throughput:       %10.2f Mbps\n", mbps);
-    
+
     /* Performance analysis */
     if (pps >= 85000) {
         printf("[!] PERFORMANCE TARGET ACHIEVED! (%0.f PPS)\n", pps);
     } else if (current_stats[STAT_TOTAL_PACKETS] > 1000) {
         printf("[+] Performance: %.0f PPS (target: 85K+)\n", pps);
     }
-    
+
     /* NAT efficiency analysis */
     if (current_stats[STAT_VXLAN_PACKETS] > 0) {
         double nat_ratio = (current_stats[STAT_NAT_APPLIED] * 100.0) / current_stats[STAT_VXLAN_PACKETS];
         printf("[*] NAT Efficiency:   %.1f%% (src_port matching)\n", nat_ratio);
     }
-    
+
     printf("========================================\n");
-    
+
     /* Update previous stats */
     memcpy(prev_stats, current_stats, sizeof(prev_stats));
     last_time = current_time;
-    
+
     /* Flush output to prevent corruption */
     fflush(stdout);
 }
@@ -732,14 +732,14 @@ static int load_bpf_program()
 {
     struct bpf_program *prog;
     int err;
-    
+
     /* Load eBPF object file */
     bpf_obj = bpf_object__open("vxlan_pipeline.bpf.o");
     if (libbpf_get_error(bpf_obj)) {
         fprintf(stderr, "Failed to open eBPF object file\n");
         return -1;
     }
-    
+
     /* Load program into kernel */
     err = bpf_object__load(bpf_obj);
     if (err) {
@@ -748,7 +748,7 @@ static int load_bpf_program()
         bpf_obj = NULL;
         return -1;
     }
-    
+
     /* Find main program */
     prog = bpf_object__find_program_by_name(bpf_obj, "vxlan_pipeline_main");
     if (!prog) {
@@ -761,7 +761,7 @@ static int load_bpf_program()
             return -1;
         }
     }
-    
+
     prog_fd = bpf_program__fd(prog);
     if (prog_fd < 0) {
         fprintf(stderr, "Failed to get program fd\n");
@@ -769,47 +769,47 @@ static int load_bpf_program()
         bpf_obj = NULL;
         return -1;
     }
-    
+
     /* Get map file descriptors */
     stats_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "stats_map");
     nat_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "nat_map");
     redirect_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "redirect_map");
     interface_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "interface_map");
     nat_target_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "nat_target_map");
-    
+
     /* Get new tail call maps */
     int pipeline_programs_fd = bpf_object__find_map_fd_by_name(bpf_obj, "pipeline_programs");
     int pipeline_ctx_map_fd = bpf_object__find_map_fd_by_name(bpf_obj, "pipeline_ctx_map");
-    
-    if (stats_map_fd < 0 || nat_map_fd < 0 || redirect_map_fd < 0 || 
-        interface_map_fd < 0 || nat_target_map_fd < 0 || 
+
+    if (stats_map_fd < 0 || nat_map_fd < 0 || redirect_map_fd < 0 ||
+        interface_map_fd < 0 || nat_target_map_fd < 0 ||
         pipeline_programs_fd < 0 || pipeline_ctx_map_fd < 0) {
         fprintf(stderr, "Failed to find required maps\n");
         bpf_object__close(bpf_obj);
         bpf_obj = NULL;
         return -1;
     }
-    
+
     /* Set up program array for tail calls */
     struct bpf_program *classifier_prog = bpf_object__find_program_by_name(bpf_obj, "vxlan_classifier");
     struct bpf_program *processor_prog = bpf_object__find_program_by_name(bpf_obj, "vxlan_processor");
     struct bpf_program *nat_prog = bpf_object__find_program_by_name(bpf_obj, "nat_engine");
     struct bpf_program *forward_prog = bpf_object__find_program_by_name(bpf_obj, "forwarding_stage");
-    
+
     if (!classifier_prog || !processor_prog || !nat_prog || !forward_prog) {
         fprintf(stderr, "Failed to find pipeline stage programs\n");
         bpf_object__close(bpf_obj);
         bpf_obj = NULL;
         return -1;
     }
-    
+
     /* Populate program array map */
     __u32 stage_0 = 0, stage_1 = 1, stage_2 = 2, stage_3 = 3;
     int classifier_fd = bpf_program__fd(classifier_prog);
     int processor_fd = bpf_program__fd(processor_prog);
     int nat_fd = bpf_program__fd(nat_prog);
     int forward_fd = bpf_program__fd(forward_prog);
-    
+
     if (bpf_map_update_elem(pipeline_programs_fd, &stage_0, &classifier_fd, BPF_ANY) ||
         bpf_map_update_elem(pipeline_programs_fd, &stage_1, &processor_fd, BPF_ANY) ||
         bpf_map_update_elem(pipeline_programs_fd, &stage_2, &nat_fd, BPF_ANY) ||
@@ -819,23 +819,23 @@ static int load_bpf_program()
         bpf_obj = NULL;
         return -1;
     }
-    
+
     /*
      * PIN MAPS FOR INTER-PROGRAM COMMUNICATION
      * ========================================
-     * 
+     *
      * BPF map pinning enables communication between different programs
      * by persisting maps in the filesystem. This is essential for the
      * architecture where vxlan_loader manages XDP and packet_injector
      * accesses the maps for userspace packet processing.
-     * 
+     *
      * PINNING ARCHITECTURE:
      * ====================
      * 1. vxlan_loader: Creates and pins maps during XDP program loading
      * 2. packet_injector: Accesses pinned maps for ring buffer processing
      * 3. Filesystem persistence: Maps survive program restarts
      * 4. Atomic updates: Multiple programs can safely access shared maps
-     * 
+     *
      * PINNED MAP FUNCTIONS:
      * ====================
      * - stats_map: Real-time performance statistics sharing
@@ -844,7 +844,7 @@ static int load_bpf_program()
      * - interface_map: MAC address and interface metadata
      * - ip_allowlist: IP filtering configuration
      * - packet_ringbuf: High-performance kernel-userspace communication
-     * 
+     *
      * FILESYSTEM LOCATION:
      * ===================
      * All maps pinned to /sys/fs/bpf/ for standardized access
@@ -857,12 +857,12 @@ static int load_bpf_program()
     struct bpf_map *nat_target_map = bpf_object__find_map_by_name(bpf_obj, "nat_target_map");
     struct bpf_map *ip_allowlist_map = bpf_object__find_map_by_name(bpf_obj, "ip_allowlist");
     struct bpf_map *ringbuf_map = bpf_object__find_map_by_name(bpf_obj, "packet_ringbuf");
-    
+
     /* Create pinning directory if it doesn't exist */
     if (system("mkdir -p /sys/fs/bpf") != 0) {
         fprintf(stderr, "Warning: Failed to create /sys/fs/bpf directory\n");
     }
-    
+
     /* Pin all maps */
     if (stats_map && bpf_map__pin(stats_map, "/sys/fs/bpf/vxlan_stats_map")) {
         fprintf(stderr, "Warning: Failed to pin stats_map\n");
@@ -885,9 +885,9 @@ static int load_bpf_program()
     if (ringbuf_map && bpf_map__pin(ringbuf_map, "/sys/fs/bpf/vxlan_packet_ringbuf")) {
         fprintf(stderr, "Warning: Failed to pin packet_ringbuf\n");
     }
-    
+
     printf("Maps pinned to /sys/fs/bpf/ for packet_injector access\n");
-    
+
     printf("eBPF program loaded successfully\n");
     return 0;
 }
@@ -895,36 +895,36 @@ static int load_bpf_program()
 /*
  * ATTACH XDP PROGRAM TO NETWORK INTERFACE
  * =======================================
- * 
+ *
  * This function attaches the compiled eBPF program to a network interface
  * using XDP (eXpress Data Path) for high-performance packet processing.
  * XDP operates at the earliest point in the kernel's packet reception path,
  * providing maximum performance and minimum latency.
- * 
+ *
  * XDP ATTACHMENT MODES:
  * ====================
- * 
+ *
  * 1. DRIVER MODE (XDP_FLAGS_DRV_MODE) - HIGHEST PERFORMANCE:
  *    - Native driver support required
  *    - Packets processed before sk_buff allocation
  *    - Maximum performance: 10M+ PPS on modern hardware
  *    - Zero memory allocations for dropped/redirected packets
  *    - Preferred mode for production high-throughput scenarios
- * 
+ *
  * 2. GENERIC MODE (XDP_FLAGS_SKB_MODE) - COMPATIBILITY FALLBACK:
  *    - Works with any network driver
  *    - Packets processed after sk_buff allocation
  *    - Lower performance but broader compatibility
  *    - Used when driver mode is not available
  *    - Still significantly faster than traditional kernel path
- * 
+ *
  * ATTACHMENT STRATEGY:
  * ===================
  * 1. Try driver mode first for maximum performance
  * 2. Fallback to generic mode if driver doesn't support XDP
  * 3. Provide clear feedback on which mode was successfully attached
  * 4. Fail completely only if both modes fail (rare on modern systems)
- * 
+ *
  * PERFORMANCE IMPACT:
  * ==================
  * - Driver mode: 85K+ PPS target easily achievable
@@ -944,7 +944,7 @@ static int attach_xdp_program()
         fprintf(stderr, "Interface '%s' not found\n", cfg.interface);
         return -1;
     }
-    
+
     /*
      * ATTEMPT DRIVER MODE ATTACHMENT (OPTIMAL PERFORMANCE)
      * ===================================================
@@ -954,23 +954,23 @@ static int attach_xdp_program()
      */
     int flags = XDP_FLAGS_DRV_MODE;
     int err = bpf_set_link_xdp_fd(ifindex, prog_fd, flags);
-    
+
     if (err) {
         /* Fallback to generic mode if driver mode fails */
         printf("Driver mode attachment failed, trying generic mode...\n");
         flags = XDP_FLAGS_SKB_MODE;
         err = bpf_set_link_xdp_fd(ifindex, prog_fd, flags);
     }
-    
+
     if (err) {
-        fprintf(stderr, "Failed to attach XDP program to %s: %s\n", 
+        fprintf(stderr, "Failed to attach XDP program to %s: %s\n",
                 cfg.interface, strerror(-err));
         return -1;
     }
-    
-    printf("XDP program attached to interface %s (%s mode)\n", 
+
+    printf("XDP program attached to interface %s (%s mode)\n",
            cfg.interface, (flags & XDP_FLAGS_DRV_MODE) ? "driver" : "generic");
-    
+
     return 0;
 }
 
@@ -1006,7 +1006,7 @@ static int parse_args(int argc, char **argv)
         {"help",         no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
-    
+
     int c;
     while ((c = getopt_long(argc, argv, "i:t:a:p:s:I:vh", long_options, NULL)) != -1) {
         switch (c) {
@@ -1039,20 +1039,20 @@ static int parse_args(int argc, char **argv)
             return -1;
         }
     }
-    
+
     return 0;
 }
 
 int main(int argc, char **argv)
 {
     int ret;
-    
+
     /* Parse command line arguments */
     ret = parse_args(argc, argv);
     if (ret != 0) {
         return ret == 1 ? 0 : 1; /* 1 means help was shown */
     }
-    
+
     /* Resolve NAT target MAC address early for fast startup validation */
     printf("Resolving NAT target MAC address for %s...\n", cfg.nat_target_ip);
     if (resolve_ip_to_mac(cfg.nat_target_ip, cfg.nat_target_mac) != 0) {
@@ -1062,7 +1062,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "  2. Target interface %s exists and is up\n", cfg.target_interface);
         return 1;
     }
-    
+
     /* Validate resolved MAC address is not all zeros */
     int mac_is_valid = 0;
     for (int i = 0; i < 6; i++) {
@@ -1079,53 +1079,53 @@ int main(int argc, char **argv)
         fprintf(stderr, "  3. No firewall is blocking ARP traffic\n");
         return 1;
     }
-    
+
     printf("NAT target MAC resolved: %02x:%02x:%02x:%02x:%02x:%02x\n",
            cfg.nat_target_mac[0], cfg.nat_target_mac[1], cfg.nat_target_mac[2],
            cfg.nat_target_mac[3], cfg.nat_target_mac[4], cfg.nat_target_mac[5]);
-    
+
     /* Setup signal handlers */
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
-    
+
     /* Register cleanup function */
     atexit(cleanup);
-    
+
     printf("Starting VXLAN Pipeline Controller...\n");
     printf("Interface: %s -> %s\n", cfg.interface, cfg.target_interface);
-    printf("NAT Rule: port %d -> %s:%d\n", 
+    printf("NAT Rule: port %d -> %s:%d\n",
            cfg.nat_source_port, cfg.nat_target_ip, cfg.nat_target_port);
-    
+
     /* Load eBPF program */
     if (load_bpf_program() != 0) {
         return 1;
     }
-    
+
     /* Configure NAT rules */
     if (configure_nat_rules() != 0) {
         return 1;
     }
-    
+
     /* Configure redirect interface */
     if (configure_redirect_interface() != 0) {
         return 1;
     }
-    
+
     /* Configure NAT target MAC address */
     if (configure_nat_target_mac() != 0) {
         return 1;
     }
-    
+
     /* Attach XDP program */
     if (attach_xdp_program() != 0) {
         return 1;
     }
-    
+
     /* Initialize statistics counters for clean startup */
     init_stats();
-    
+
     printf("VXLAN pipeline is active. Press Ctrl+C to stop.\n");
-    
+
     /* Main statistics loop */
     while (running) {
         sleep(cfg.stats_interval);
@@ -1133,7 +1133,7 @@ int main(int argc, char **argv)
             display_stats();
         }
     }
-    
+
     printf("Shutting down...\n");
     return 0;
 }

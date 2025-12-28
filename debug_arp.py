@@ -6,10 +6,10 @@ import time
 
 def test_arp_basic():
     """Test basic ARP functionality step by step"""
-    
+
     print("=== Step 1: Basic ARP Request ===")
     print("Sending ARP: Who has 172.30.82.95? Tell 172.30.82.13")
-    
+
     # Create ARP request
     arp_request = ARP(
         op=1,                    # ARP request (1 = request, 2 = reply)
@@ -18,24 +18,24 @@ def test_arp_basic():
         hwsrc="0a:77:55:c2:07:b3",  # Source MAC (ens5)
         hwdst="00:00:00:00:00:00"   # Target MAC (unknown, asking for this)
     )
-    
+
     # Wrap in Ethernet frame
     eth_frame = Ether(
         src="0a:77:55:c2:07:b3",    # Source MAC (ens5)
         dst="ff:ff:ff:ff:ff:ff"     # Broadcast destination
     )
-    
+
     packet = eth_frame / arp_request
-    
+
     print(f"\nPacket details:")
     packet.show2()
-    
+
     print(f"\n🚀 Sending ARP request...")
-    
+
     try:
         # Send and wait for response (srp = send/receive at layer 2)
         answered, unanswered = srp(packet, iface="ens5", timeout=3, verbose=1)
-        
+
         if answered:
             print(f"✅ Got {len(answered)} ARP response(s)!")
             for sent, received in answered:
@@ -44,7 +44,7 @@ def test_arp_basic():
         else:
             print(f"❌ No ARP responses received")
             return False
-            
+
     except Exception as e:
         print(f"❌ ARP request failed: {e}")
         return False
@@ -52,7 +52,7 @@ def test_arp_basic():
 def test_arp_simple():
     """Simple one-liner ARP test"""
     print("\n=== Step 2: Simple ARP Test ===")
-    
+
     try:
         # Use Scapy's built-in ARP function
         result = arping("172.30.82.95", iface="ens5", timeout=3, verbose=1)
@@ -70,12 +70,12 @@ def check_arp_table():
     """Check current ARP table"""
     print("\n=== Step 3: Check ARP Table ===")
     import subprocess
-    
+
     try:
         result = subprocess.run(['arp', '-a'], capture_output=True, text=True)
         print("Current ARP table:")
         print(result.stdout)
-        
+
         # Look specifically for our target
         if "172.30.82.95" in result.stdout:
             print("✅ 172.30.82.95 is already in ARP table")
@@ -83,7 +83,7 @@ def check_arp_table():
         else:
             print("❌ 172.30.82.95 not in ARP table")
             return False
-            
+
     except Exception as e:
         print(f"❌ ARP table check failed: {e}")
         return False
@@ -94,26 +94,26 @@ if __name__ == "__main__":
     print("Source: 172.30.82.13 (ens5: 0a:77:55:c2:07:b3)")
     print("Target: 172.30.82.95")
     print()
-    
+
     # Check if running as root
     if os.geteuid() != 0:
         print("❌ This script requires root privileges")
         print("Run with: sudo python3 test_arp.py")
         sys.exit(1)
-    
+
     # Run tests step by step
     results = []
-    
+
     results.append(("ARP Table Check", check_arp_table()))
     results.append(("Basic ARP Request", test_arp_basic()))
     results.append(("Simple ARP Test", test_arp_simple()))
-    
+
     print(f"\n" + "="*50)
     print("RESULTS SUMMARY:")
     for test_name, success in results:
         status = "✅ PASS" if success else "❌ FAIL"
         print(f"  {test_name}: {status}")
-    
+
     if any(result[1] for result in results):
         print(f"\n🎉 At least one ARP test worked - Layer 2 communication possible!")
     else:

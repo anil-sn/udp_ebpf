@@ -140,7 +140,7 @@ install: all $(SETUP_SCRIPT)
 	cp $(SETUP_SCRIPT) /opt/vxlan-pipeline/
 	@echo "Installation complete. Run '/opt/vxlan-pipeline/$(SETUP_SCRIPT)' to configure system."
 
-# Uninstall from system  
+# Uninstall from system
 uninstall:
 	@echo "Uninstalling VXLAN Pipeline..."
 	@echo "Removing program binaries..."
