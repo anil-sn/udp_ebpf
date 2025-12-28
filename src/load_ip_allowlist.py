@@ -23,7 +23,7 @@ def parse_bpf_key_robust(line):
         r'"key":\s*\[([0-9a-f,\s]+)\]',    # JSON format
         r'key\s*=\s*([0-9a-f\s]+)\s*value', # Alternative format
     ]
-    
+
     for pattern in hex_patterns:
         match = re.search(pattern, line, re.IGNORECASE)
         if match:
@@ -54,7 +54,7 @@ def load_from_json(json_file):
     try:
         with open(json_file, 'r') as f:
             data = json.load(f)
-        
+
         # Extract IPs from flat_ip_list for efficiency
         if 'flat_ip_list' in data:
             ip_list = data['flat_ip_list']
@@ -65,9 +65,9 @@ def load_from_json(json_file):
             for org in data.get('organizations', []):
                 ip_list.extend(org.get('ips', []))
             total_expected = len(ip_list)
-        
+
         print(f"Loading {total_expected} IPs from {json_file}")
-        
+
         # Check if BPF map exists first
         check_cmd = ['bpftool', 'map', 'show', 'name', 'ip_allowlist']
         try:
@@ -76,58 +76,58 @@ def load_from_json(json_file):
             print("Error: BPF map 'ip_allowlist' not found. Please load the XDP program first.")
             print("Run: sudo ./vxlan_loader -i <interface> --load-xdp")
             return 0
-        
+
         loaded_count = 0
         failed_count = 0
         failed_ips = []
         start_time = time.time()
-        
+
         for i, ip_str in enumerate(ip_list, 1):
             ip_str = ip_str.strip()
             hex_key = ip_to_hex_key(ip_str)
-            
+
             if not hex_key:
                 failed_count += 1
                 failed_ips.append(f"{ip_str} (invalid format)")
                 continue
-                
+
             # Add to BPF map (value 1 = allowed)
-            cmd = ['bpftool', 'map', 'update', 'name', 'ip_allowlist', 
+            cmd = ['bpftool', 'map', 'update', 'name', 'ip_allowlist',
                    'key', 'hex'] + hex_key.split() + ['value', 'hex', '01']
-            
+
             try:
                 subprocess.run(cmd, check=True, capture_output=True, text=True)
                 loaded_count += 1
-                
+
                 # Enhanced progress reporting with ETA (overwrite same line)
                 if loaded_count % 25 == 0 or i == total_expected:
                     elapsed = time.time() - start_time
                     rate = loaded_count / elapsed if elapsed > 0 else 0
                     eta = (total_expected - loaded_count) / rate if rate > 0 else 0
                     print(f"\rProgress: {loaded_count}/{total_expected} IPs ({rate:.1f}/sec, ETA: {eta:.1f}s)", end="", flush=True)
-                    
+
             except subprocess.CalledProcessError as e:
                 failed_count += 1
                 error_msg = e.stderr.strip() if e.stderr else 'Unknown error'
                 failed_ips.append(f"{ip_str} ({error_msg})")
-                
+
                 # Show command for first failure only
                 if failed_count == 1:
                     print(f"Debug: First failure command: {' '.join(cmd)}")
-        
+
         # Finalize progress line before summary
         print()
-        
+
         # Summary report
         elapsed_total = time.time() - start_time
         success_rate = (loaded_count / total_expected * 100) if total_expected > 0 else 0
-        
+
         print(f"\nLoad Summary:")
         print(f"  Successfully loaded: {loaded_count}/{total_expected} ({success_rate:.1f}%)")
         print(f"  Failed: {failed_count}")
         print(f"  Total time: {elapsed_total:.2f}s")
         print(f"  Average rate: {loaded_count/elapsed_total:.1f} IPs/sec")
-        
+
         # Show failed IPs if any (limit to first 10)
         if failed_ips:
             print(f"\nFailed IPs (showing first {min(10, len(failed_ips))}):")
@@ -135,9 +135,9 @@ def load_from_json(json_file):
                 print(f"  - {ip_error}")
             if len(failed_ips) > 10:
                 print(f"  ... and {len(failed_ips) - 10} more")
-        
+
         return loaded_count
-    
+
     except FileNotFoundError:
         print(f"Error: JSON file {json_file} not found")
         return 0
@@ -169,30 +169,30 @@ def display_loaded_ips():
             print("Warning: ip_allowlist.json not found, showing IPs without organization info")
         except Exception as e:
             print(f"Warning: Could not load organization info: {e}")
-        
+
         # Use JSON format directly instead of parsing text
         cmd = ['bpftool', 'map', 'dump', 'name', 'ip_allowlist', '--json']
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        
+
         ip_addresses = []
-        
+
         try:
             json_data = json.loads(result.stdout)
-            
+
             for entry in json_data:
                 # The bpftool JSON structure has 'formatted' key with the actual data
                 if 'formatted' in entry and 'key' in entry['formatted']:
                     try:
                         key_val = entry['formatted']['key']
-                        
+
                         if isinstance(key_val, int):
                             # Manual bit manipulation for little-endian BPF map format
                             ip_str = f"{key_val & 0xFF}.{(key_val >> 8) & 0xFF}.{(key_val >> 16) & 0xFF}.{(key_val >> 24) & 0xFF}"
                             ip_addresses.append(ip_str)
-                        
+
                     except (ValueError, OverflowError) as e:
                         print(f"Warning: Could not parse IP from {entry}: {e}")
-                        
+
         except json.JSONDecodeError as e:
             print(f"ERROR: JSON parsing failed: {e}")
             # Show raw output for debugging
@@ -201,24 +201,24 @@ def display_loaded_ips():
             return
         print("Currently loaded IP addresses:")
         print("-" * 50)
-        
+
         # Sort IPs for better readability
         try:
             ip_addresses.sort(key=lambda x: ipaddress.IPv4Address(x))
         except Exception as e:
             print(f"Warning: Could not sort IPs: {e}")
             ip_addresses.sort()  # Fallback to string sort
-        
+
         # Group IPs by organization and display in a grouped table format
         if ip_addresses:
             print("=== IP ALLOWLIST ===")
             print(f"Allowed IP Addresses: {len(ip_addresses)} total")
             print()
-            
+
             # Group IPs by organization
             org_groups = {}
             unmatched_ips = []
-            
+
             for ip in ip_addresses:
                 if ip in org_mapping:
                     org_info = org_mapping[ip]
@@ -228,36 +228,36 @@ def display_loaded_ips():
                     org_groups[org_key].append(ip)
                 else:
                     unmatched_ips.append(ip)
-            
+
             # Display grouped by organization
             for org_name, org_ips in sorted(org_groups.items()):
                 print(f"┌{'─' * 80}┐")
                 print(f"│ {org_name:<78} │")
                 print(f"├{'─' * 80}┤")
-                
+
                 # Display IPs in rows of 4 for this organization
                 for i in range(0, len(org_ips), 4):
                     row_ips = org_ips[i:i+4]
                     ip_row = "  ".join(f"{ip:<17}" for ip in row_ips)
                     print(f"│ {ip_row:<78} │")
-                
+
                 print(f"└{'─' * 80}┘")
                 print()
-            
+
             # Display unmatched IPs if any
             if unmatched_ips:
                 print(f"┌{'─' * 80}┐")
                 print(f"│ {'Unknown Organizations':<78} │")
                 print(f"├{'─' * 80}┤")
-                
+
                 for i in range(0, len(unmatched_ips), 4):
                     row_ips = unmatched_ips[i:i+4]
                     ip_row = "  ".join(f"{ip:<17}" for ip in row_ips)
                     print(f"│ {ip_row:<78} │")
-                
+
                 print(f"└{'─' * 80}┘")
                 print()
-            
+
             # Show summary
             first_ip = ipaddress.IPv4Address(ip_addresses[0])
             last_ip = ipaddress.IPv4Address(ip_addresses[-1])
@@ -268,10 +268,10 @@ def display_loaded_ips():
             print(f"  • Unmatched IPs: {len(unmatched_ips)}")
         else:
             print("No IP addresses found in allowlist")
-        
+
         print("-" * 50)
         print(f"Total IPs loaded: {len(ip_addresses)}")
-        
+
     except subprocess.CalledProcessError as e:
         if 'No such file or directory' in e.stderr:
             print("BPF map 'ip_allowlist' not found. Is the XDP program loaded?")
@@ -289,10 +289,10 @@ def check_ip_status():
         if not os.path.exists(json_file):
             print(f"Error: {json_file} not found")
             return
-            
+
         with open(json_file, 'r') as f:
             data = json.load(f)
-        
+
         # Get IPs from JSON
         if 'flat_ip_list' in data:
             json_ips = set(data['flat_ip_list'])
@@ -300,10 +300,10 @@ def check_ip_status():
             json_ips = set()
             for org in data.get('organizations', []):
                 json_ips.update(org.get('ips', []))
-        
+
         # Get IPs from eBPF map
         map_ips = get_ips_from_map()
-        
+
         # Create organization mapping
         org_mapping = {}
         for org in data.get('organizations', []):
@@ -311,39 +311,39 @@ def check_ip_status():
             org_id = org.get('org_id', 'N/A')
             for ip in org.get('ips', []):
                 org_mapping[ip] = {'name': org_name, 'id': org_id}
-        
+
         print("=== IP ALLOWLIST STATUS CHECK ===")
         print(f"JSON File: {json_file}")
         print(f"JSON IPs: {len(json_ips)}")
         print(f"Map IPs: {len(map_ips)}")
         print()
-        
+
         # Check each JSON IP against map
         active_count = 0
         inactive_count = 0
-        
+
         print("┌─── IP STATUS REPORT ───────────────────────────────────────────────────────┐")
         print("│ Status │ IP Address      │ Organization                                    │")
         print("├────────┼─────────────────┼─────────────────────────────────────────────────┤")
-        
+
         for ip in sorted(json_ips, key=lambda x: ipaddress.IPv4Address(x)):
             status = "ACTIVE" if ip in map_ips else "INACTIVE"
             if status == "ACTIVE":
                 active_count += 1
             else:
                 inactive_count += 1
-                
+
             org_info = org_mapping.get(ip, {'name': 'Unknown', 'id': 'N/A'})
             org_display = f"{org_info['name'][:40]}{'...' if len(org_info['name']) > 40 else ''}"
-            
+
             print(f"│ {status:6} │ {ip:15} │ {org_display:47} │")
-        
+
         print("└────────┴─────────────────┴─────────────────────────────────────────────────┘")
         print()
         print(f"Summary:")
         print(f"  • Active IPs (in both JSON and map): {active_count}")
         print(f"  • Inactive IPs (in JSON but not in map): {inactive_count}")
-        
+
         # Show orphaned IPs (in map but not in JSON)
         orphaned_ips = map_ips - json_ips
         if orphaned_ips:
@@ -351,7 +351,7 @@ def check_ip_status():
             print("\n--- ORPHANED IPs (in eBPF map but not in JSON) ---")
             for ip in sorted(orphaned_ips, key=lambda x: ipaddress.IPv4Address(x)):
                 print(f"    {ip} (source unknown - manually added or from old config)")
-        
+
         # Show recommendations
         print("\nRecommendations:")
         if inactive_count > 0:
@@ -360,7 +360,7 @@ def check_ip_status():
             print(f"  • Consider updating JSON file or clearing orphaned IPs")
         if active_count == len(json_ips) and not orphaned_ips:
             print(f"  • ✓ Perfect sync: All {active_count} IPs are properly configured")
-            
+
     except Exception as e:
         print(f"Error checking IP status: {e}")
 
@@ -370,7 +370,7 @@ def reload_ips_from_json():
     if not os.path.exists(json_file):
         print(f"Error: {json_file} not found")
         return
-        
+
     print("=== RELOADING IP ALLOWLIST ===")
     print("Step 1: Clearing existing IPs...")
     clear_all_ips()
@@ -384,23 +384,23 @@ def show_orphaned_ips():
         # Load IPs from JSON file
         json_file = 'ip_allowlist.json'
         json_ips = set()
-        
+
         if os.path.exists(json_file):
             with open(json_file, 'r') as f:
                 data = json.load(f)
-            
+
             if 'flat_ip_list' in data:
                 json_ips = set(data['flat_ip_list'])
             else:
                 for org in data.get('organizations', []):
                     json_ips.update(org.get('ips', []))
-        
+
         # Get IPs from eBPF map
         map_ips = get_ips_from_map()
-        
+
         # Find orphaned IPs
         orphaned_ips = map_ips - json_ips
-        
+
         print("=== ORPHANED IPs (in eBPF map but not in JSON) ===")
         if orphaned_ips:
             print(f"Found {len(orphaned_ips)} orphaned IP addresses:")
@@ -418,7 +418,7 @@ def show_orphaned_ips():
         else:
             print("✓ No orphaned IPs found. All active IPs are properly defined in the JSON file.")
             print(f"JSON IPs: {len(json_ips)}, Map IPs: {len(map_ips)}")
-            
+
     except Exception as e:
         print(f"Error checking orphaned IPs: {e}")
 
@@ -428,13 +428,13 @@ def get_ips_from_map():
         # Use JSON format for reliable parsing
         cmd = ['bpftool', 'map', 'dump', 'name', 'ip_allowlist', '--json']
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        
+
         ip_addresses = set()
-        
+
         if result.stdout.strip():
             try:
                 json_data = json.loads(result.stdout)
-                
+
                 for entry in json_data:
                     if 'formatted' in entry and 'key' in entry['formatted']:
                         try:
@@ -443,26 +443,26 @@ def get_ips_from_map():
                                 ip_int = key_val
                             else:
                                 continue
-                                
+
                             # Convert integer IP to dotted decimal notation
                             ip1 = ip_int & 0xFF
                             ip2 = (ip_int >> 8) & 0xFF
                             ip3 = (ip_int >> 16) & 0xFF
                             ip4 = (ip_int >> 24) & 0xFF
                             ip_str = f"{ip1}.{ip2}.{ip3}.{ip4}"
-                            
+
                             # Validate IP
                             ipaddress.IPv4Address(ip_str)
                             ip_addresses.add(ip_str)
-                            
+
                         except (ValueError, OverflowError):
                             continue
-                            
+
             except json.JSONDecodeError:
                 pass
-                
+
         return ip_addresses
-        
+
     except subprocess.CalledProcessError:
         return set()
 
@@ -472,41 +472,41 @@ def clear_all_ips():
         # First get all keys
         cmd = ['bpftool', 'map', 'dump', 'name', 'ip_allowlist']
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        
+
         lines = result.stdout.strip().split('\n')
         deleted_count = 0
         failed_count = 0
-        
+
         print("Clearing all IPs from allowlist...")
-        
+
         for line in lines:
             if 'key:' in line:
                 # Use robust parsing function
                 hex_key = parse_bpf_key_robust(line)
-                
+
                 if hex_key and len(hex_key) == 8:  # 4 bytes = 8 hex chars
                     # Convert to space-separated hex bytes for bpftool
                     hex_bytes = [hex_key[i:i+2] for i in range(0, 8, 2)]
-                    
+
                     # Delete from map
                     cmd = ['bpftool', 'map', 'delete', 'name', 'ip_allowlist', 'key', 'hex'] + hex_bytes
-                    
+
                     try:
                         subprocess.run(cmd, check=True, capture_output=True)
                         deleted_count += 1
-                        
+
                         # Progress indicator for large maps
                         if deleted_count % 100 == 0:
                             print(f"Cleared {deleted_count} IPs so far...")
-                            
+
                     except subprocess.CalledProcessError:
                         failed_count += 1
                         # Key might already be deleted or invalid - continue processing
-        
+
         print(f"Successfully cleared {deleted_count} IPs from allowlist")
         if failed_count > 0:
             print(f"Failed to clear {failed_count} entries (may already be deleted)")
-        
+
     except subprocess.CalledProcessError as e:
         if 'No such file or directory' in e.stderr:
             print("BPF map 'ip_allowlist' not found. Is the XDP program loaded?")
@@ -520,13 +520,13 @@ def sync_ips_with_json(json_file='ip_allowlist.json', dry_run=False):
     Adds new IPs and removes orphaned ones.
     """
     print(f"Synchronizing IP allowlist with {json_file}...")
-    
+
     # Load target IPs from JSON
     target_ips = set()
     try:
         with open(json_file, 'r') as f:
             data = json.load(f)
-        
+
         if 'flat_ip_list' in data:
             target_ips = set(data['flat_ip_list'])
         else:
@@ -535,13 +535,13 @@ def sync_ips_with_json(json_file='ip_allowlist.json', dry_run=False):
     except Exception as e:
         print(f"Error loading JSON file: {e}")
         return False
-    
+
     # Get currently loaded IPs from eBPF map
     current_ips = set()
     try:
         cmd = ['bpftool', 'map', 'dump', 'name', 'ip_allowlist', '--json']
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        
+
         json_data = json.loads(result.stdout)
         for entry in json_data:
             if 'formatted' in entry and 'key' in entry['formatted']:
@@ -552,17 +552,17 @@ def sync_ips_with_json(json_file='ip_allowlist.json', dry_run=False):
     except Exception as e:
         print(f"Error reading current eBPF map: {e}")
         return False
-    
+
     # Calculate differences
     ips_to_add = target_ips - current_ips
     ips_to_remove = current_ips - target_ips
-    
+
     print(f"Current state:")
     print(f"  - IPs in JSON: {len(target_ips)}")
     print(f"  - IPs in eBPF map: {len(current_ips)}")
     print(f"  - IPs to add: {len(ips_to_add)}")
     print(f"  - IPs to remove: {len(ips_to_remove)}")
-    
+
     if dry_run:
         if ips_to_add:
             print(f"\\nWould ADD {len(ips_to_add)} IPs:")
@@ -570,20 +570,20 @@ def sync_ips_with_json(json_file='ip_allowlist.json', dry_run=False):
                 print(f"  + {ip}")
             if len(ips_to_add) > 10:
                 print(f"  ... and {len(ips_to_add) - 10} more")
-        
+
         if ips_to_remove:
             print(f"\\nWould REMOVE {len(ips_to_remove)} IPs:")
             for ip in sorted(ips_to_remove)[:10]:  # Show first 10
                 print(f"  - {ip}")
             if len(ips_to_remove) > 10:
                 print(f"  ... and {len(ips_to_remove) - 10} more")
-        
+
         return True
-    
+
     # Perform actual sync
     success_count = 0
     fail_count = 0
-    
+
     # Add new IPs
     if ips_to_add:
         print(f"\\nAdding {len(ips_to_add)} new IPs...")
@@ -594,7 +594,7 @@ def sync_ips_with_json(json_file='ip_allowlist.json', dry_run=False):
             else:
                 fail_count += 1
                 print(f"  × Failed to add: {ip}")
-    
+
     # Remove orphaned IPs (mark and sweep)
     if ips_to_remove:
         print(f"\\nRemoving {len(ips_to_remove)} orphaned IPs...")
@@ -605,7 +605,7 @@ def sync_ips_with_json(json_file='ip_allowlist.json', dry_run=False):
             else:
                 fail_count += 1
                 print(f"  × Failed to remove: {ip}")
-    
+
     print(f"\\nSync complete: {success_count} operations successful, {fail_count} failed")
     return fail_count == 0
 
@@ -614,10 +614,10 @@ def add_single_ip(ip_str):
     hex_key = ip_to_hex_key(ip_str)
     if not hex_key:
         return False
-    
-    cmd = ['bpftool', 'map', 'update', 'name', 'ip_allowlist', 
+
+    cmd = ['bpftool', 'map', 'update', 'name', 'ip_allowlist',
            'key', 'hex'] + hex_key.split() + ['value', 'hex', '01']
-    
+
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
         return True
@@ -629,10 +629,10 @@ def remove_single_ip(ip_str):
     hex_key = ip_to_hex_key(ip_str)
     if not hex_key:
         return False
-    
-    cmd = ['bpftool', 'map', 'delete', 'name', 'ip_allowlist', 
+
+    cmd = ['bpftool', 'map', 'delete', 'name', 'ip_allowlist',
            'key', 'hex'] + hex_key.split()
-    
+
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
         return True
@@ -645,19 +645,19 @@ def watch_json_and_sync(json_file='ip_allowlist.json', interval=30):
     """
     import hashlib
     import os
-    
+
     print(f"Watching {json_file} for changes (checking every {interval} seconds)...")
     print("Press Ctrl+C to stop watching")
-    
+
     last_hash = None
-    
+
     try:
         while True:
             # Calculate file hash to detect changes
             if os.path.exists(json_file):
                 with open(json_file, 'rb') as f:
                     current_hash = hashlib.md5(f.read()).hexdigest()
-                
+
                 if last_hash is None:
                     # First run - do initial sync
                     print(f"Initial sync with {json_file}")
@@ -670,19 +670,19 @@ def watch_json_and_sync(json_file='ip_allowlist.json', interval=30):
                     last_hash = current_hash
             else:
                 print(f"Warning: {json_file} not found")
-            
+
             time.sleep(interval)
-            
+
     except KeyboardInterrupt:
         print(f"\\nStopped watching {json_file}")
 
 def bulk_add_ips(ip_list):
     """Add multiple IPs efficiently"""
     print(f"Adding {len(ip_list)} IPs to allowlist...")
-    
+
     success_count = 0
     fail_count = 0
-    
+
     for ip in ip_list:
         if add_single_ip(ip.strip()):
             success_count += 1
@@ -690,17 +690,17 @@ def bulk_add_ips(ip_list):
                 print(f"Added {success_count} IPs...")
         else:
             fail_count += 1
-    
+
     print(f"Bulk add complete: {success_count} added, {fail_count} failed")
     return success_count, fail_count
 
 def bulk_remove_ips(ip_list):
     """Remove multiple IPs efficiently"""
     print(f"Removing {len(ip_list)} IPs from allowlist...")
-    
+
     success_count = 0
     fail_count = 0
-    
+
     for ip in ip_list:
         if remove_single_ip(ip.strip()):
             success_count += 1
@@ -708,7 +708,7 @@ def bulk_remove_ips(ip_list):
                 print(f"Removed {success_count} IPs...")
         else:
             fail_count += 1
-    
+
     print(f"Bulk remove complete: {success_count} removed, {fail_count} failed")
     return success_count, fail_count
 
@@ -721,7 +721,7 @@ def main():
     group.add_argument('--check-status', action='store_true', help='Check status of IPs (JSON vs eBPF map)')
     group.add_argument('--reload', action='store_true', help='Reload IPs from JSON file (clears and reloads)')
     group.add_argument('--show-orphaned', action='store_true', help='Show IPs in map but not in JSON file')
-    
+
     # New runtime management options
     group.add_argument('--sync', metavar='JSON_FILE', help='Sync eBPF map with JSON file (mark and sweep)')
     group.add_argument('--sync-dry-run', metavar='JSON_FILE', help='Show what would be synced without making changes')
@@ -730,12 +730,12 @@ def main():
     group.add_argument('--add-ips', metavar='IP_LIST', help='Add comma-separated list of IPs')
     group.add_argument('--remove-ips', metavar='IP_LIST', help='Remove comma-separated list of IPs')
     group.add_argument('--watch', metavar='JSON_FILE', help='Watch JSON file for changes and auto-sync')
-    
+
     # Optional arguments
     parser.add_argument('--interval', type=int, default=30, help='Watch interval in seconds (default: 30)')
-    
+
     args = parser.parse_args()
-    
+
     try:
         if args.display:
             display_loaded_ips()
@@ -778,7 +778,7 @@ def main():
             load_from_json(args.json_file)
         else:
             parser.print_help()
-            
+
     except KeyboardInterrupt:
         print("\\nOperation interrupted by user")
         sys.exit(130)
