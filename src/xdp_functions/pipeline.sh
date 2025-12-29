@@ -171,17 +171,37 @@ start_pipeline() {
         print_color "blue" "Starting optimized packet injectors..."
         
         # packet_injector provides essential userspace packet processing
-        # Start multiple instances for maximum CPU utilization
+        # Start multiple instances for maximum CPU utilization with dynamic scaling
         if [ -f "vxlan_pipeline.bpf.o" ]; then
-            print_color "blue" "Starting 8 packet_injector instances for maximum performance..."
+            # Dynamic CPU detection and optimal worker allocation
+            local total_cpus=$(nproc)
+            local worker_count
+            
+            # Intelligent worker count calculation
+            if [ "$total_cpus" -le 8 ]; then
+                worker_count="$total_cpus"
+            elif [ "$total_cpus" -le 16 ]; then
+                worker_count=$((total_cpus - 2))  # Reserve 2 CPUs for system
+            else
+                worker_count=$((total_cpus - 4))  # Reserve 4 CPUs for system on high-core systems
+            fi
+            
+            print_color "blue" "Starting $worker_count packet_injector instances (${total_cpus}-core system)..."
             
             # Kill any existing injectors first
             sudo pkill -f "packet_injector" 2>/dev/null || true
             sleep 1
             
-            # Start 8 packet injector instances with CPU affinity
-            for ((cpu=0; cpu<8; cpu++)); do
-                nohup taskset -c "$cpu" sudo ./packet_injector vxlan_pipeline.bpf.o "$TARGET_INTERFACE" \
+            # Enhanced CPU affinity strategy
+            local cpu_offset=0
+            if [ "$total_cpus" -gt 8 ]; then
+                cpu_offset=2  # Start from CPU 2 on high-core systems, reserve 0-1 for system
+            fi
+            
+            # Start packet injector instances with intelligent CPU affinity
+            for ((i=0; i<worker_count; i++)); do
+                local assigned_cpu=$((i + cpu_offset))
+                nohup taskset -c "$assigned_cpu" sudo ./packet_injector vxlan_pipeline.bpf.o "$TARGET_INTERFACE" \
                     </dev/null >/dev/null 2>&1 &
                 sleep 0.2  # Small delay between starts
             done
@@ -194,17 +214,21 @@ start_pipeline() {
             if [ "$injector_count" -gt 0 ]; then
                 # Ensure clean terminal state after background processes
                 printf "\r"
-                print_color "green" "✓ Started $injector_count packet_injector instances"
+                print_color "green" "✓ Started $injector_count packet_injector instances on ${total_cpus}-core system"
                 
-                # Set CPU affinity for worker processes
-                local cpu=0
+                # Enhanced CPU affinity optimization for high-core systems
+                local cpu_counter=$cpu_offset
                 pgrep -f "packet_injector.*vxlan_pipeline" | while read pid; do
-                    sudo taskset -cp "$cpu" "$pid" >/dev/null 2>&1
-                    cpu=$(((cpu + 1) % 8))
+                    sudo taskset -cp "$cpu_counter" "$pid" >/dev/null 2>&1
+                    cpu_counter=$(((cpu_counter + 1)))
+                    # Wrap around if we exceed available CPUs (shouldn't happen with proper calculation)
+                    if [ "$cpu_counter" -ge "$total_cpus" ]; then
+                        cpu_counter=$cpu_offset
+                    fi
                 done
                 
                 printf "\r"
-                print_color "green" "✓ CPU affinity optimized for all injector processes"
+                print_color "green" "✓ CPU affinity optimized: $worker_count workers on CPUs $cpu_offset-$((cpu_offset + worker_count - 1))"
             else
                 print_color "yellow" "Warning: No packet injector processes started"
                 print_color "yellow" "Packet injectors running with minimal logging to conserve disk space"

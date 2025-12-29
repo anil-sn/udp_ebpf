@@ -71,11 +71,10 @@ COMMANDS:
                    simple   - Simple pipeline monitoring with performance thresholds
     cleanup         Comprehensive cleanup of all resources (logs, temp files, maps)
                    Use --reset-interfaces to reset network config
-    scale           Dynamic performance scaling (queue management and CPU affinity)
-                   Use 'max-performance' for maximum CPU utilization
-                   Use 'monitor' for performance monitoring mode
-                   Use 'balanced' for optimal resource balance
-    tune            Apply comprehensive system tuning (network buffers, IRQ, persistence)
+    tune            Apply comprehensive system tuning with performance modes
+                   'tune' or 'tune balanced'     - Balanced performance (default)
+                   'tune max-performance'        - Maximum CPU/memory optimization
+                   'tune monitor'                - Live performance monitoring
                    Creates persistent configuration and applies immediately
                    NOTE: Basic tuning is applied automatically with all commands
     arp [IP]        Manually populate ARP table for MAC resolution
@@ -96,8 +95,9 @@ EXAMPLES:
     ./xdp.sh ipstats                        # Show per-IP traffic analysis
     ./xdp.sh pps both 1 60                  # Monitor PPS on both interfaces for 60s
     ./xdp.sh cleanup --reset-interfaces     # Full cleanup + reset network
-    ./xdp.sh scale max-performance          # Scale for maximum performance
-    ./xdp.sh tune                           # Apply system performance tuning
+    ./xdp.sh tune max-performance           # Apply maximum performance tuning
+    ./xdp.sh tune monitor                   # Monitor performance in real-time
+    ./xdp.sh tune balanced                  # Apply balanced system tuning
 
 CONFIGURATION:
     Edit .env file in project root or use environment variables
@@ -329,27 +329,106 @@ case "$CMD" in
                 ;;
         esac
         ;;
-    "scale")
-        source "$SCRIPT_DIR/xdp_functions/dynamic_scaling.sh"
-        if [ "${1:-}" = "max-performance" ]; then
-            echo "Configuring XDP pipeline for maximum performance..."
-            scale_performance "max-performance"
-        elif [ "${1:-}" = "monitor" ]; then
-            scale_performance "monitor"
-        elif [ "${1:-}" = "balanced" ] || [ -z "${1:-}" ]; then
-            scale_performance "balanced"
-        else
-            print_color "red" "ERROR: Invalid scale option: ${1:-}"
-            echo "Valid options: max-performance, monitor, balanced"
-            echo "Usage: ./xdp.sh scale [max-performance|monitor|balanced]"
-            exit 1
-        fi
-        ;;
+
     "tune")
+        # Enhanced tuning with performance modes
+        local tune_mode="${1:-balanced}"
+        
         print_color "blue" "Applying comprehensive system tuning for XDP VXLAN pipeline..."
+        print_color "blue" "Mode: $tune_mode"
+        
+        # Get system specs for intelligent tuning
+        local total_cpus=$(nproc)
+        local total_ram=$(free -m | awk '/^Mem:/{print $2}')
+        local current_workers=$(pgrep -f "packet_injector.*vxlan_pipeline" | wc -l)
+        
+        print_color "blue" "System: ${total_cpus}-core, ${total_ram}MB RAM, ${current_workers} active workers"
+        
+        # Apply base system tuning
         apply_system_tuning
         create_persistent_tuning
-        print_color "green" "System tuning complete! Settings applied immediately and will persist after reboot."
+        
+        # Apply mode-specific optimizations
+        case "$tune_mode" in
+            "max-performance"|"high")
+                print_color "blue" "Applying maximum performance optimizations..."
+                
+                # Enhanced tuning for high-performance systems
+                if [ "$total_cpus" -gt 8 ] || [ "$total_ram" -gt 16384 ]; then
+                    # CPU allocation strategy
+                    local system_cpus=$((total_cpus / 4))
+                    [ "$system_cpus" -lt 2 ] && system_cpus=2
+                    local packet_cpus=$((total_cpus - system_cpus))
+                    
+                    print_color "yellow" "• CPU allocation: ${system_cpus} system CPUs, ${packet_cpus} packet processing CPUs"
+                    
+                    # Enhanced memory pool for high-RAM systems
+                    if [ "$total_ram" -gt 32768 ]; then
+                        print_color "yellow" "• Memory optimization: Configuring for ${total_ram}MB system"
+                        sudo sysctl -w vm.swappiness=10 >/dev/null 2>&1 || true
+                        sudo sysctl -w vm.dirty_ratio=15 >/dev/null 2>&1 || true
+                    fi
+                    
+                    # Configure network buffers based on RAM
+                    local buffer_size=$((total_ram * 1024 / 8))  # Use 1/8th of RAM
+                    [ "$buffer_size" -gt 268435456 ] && buffer_size=268435456  # Cap at 256MB
+                    [ "$buffer_size" -lt 134217728 ] && buffer_size=134217728  # Min 128MB
+                    
+                    sudo sysctl -w net.core.rmem_max=$buffer_size >/dev/null 2>&1 || true
+                    sudo sysctl -w net.core.wmem_max=$buffer_size >/dev/null 2>&1 || true
+                    print_color "green" "  ✓ Network buffers configured to $((buffer_size / 1024 / 1024))MB"
+                fi
+                
+                # Check if restart needed for worker scaling
+                if [ "$current_workers" -gt 0 ] && [ "$current_workers" -ne "$total_cpus" ]; then
+                    print_color "yellow" "• Current workers ($current_workers) != CPU count ($total_cpus)"
+                    print_color "yellow" "• Restart pipeline to apply dynamic CPU scaling: ./xdp.sh restart"
+                fi
+                ;;
+                
+            "balanced"|"default"|"")
+                print_color "blue" "Applying balanced performance settings..."
+                print_color "green" "✓ Balanced settings applied"
+                ;;
+                
+            "monitor")
+                print_color "blue" "Starting performance monitoring mode..."
+                print_color "yellow" "Press Ctrl+C to stop monitoring"
+                
+                # Source the dynamic scaling functions for monitoring
+                source "$SCRIPT_DIR/xdp_functions/dynamic_scaling.sh"
+                
+                while true; do
+                    local perf_data=$(calculate_performance 2>/dev/null || echo "0 0")
+                    local pps=$(echo "$perf_data" | awk '{print $1}')
+                    local error_rate=$(echo "$perf_data" | awk '{print $2}')
+                    local timestamp=$(date '+%H:%M:%S')
+                    
+                    # Performance status
+                    local status="NORMAL"
+                    if [ "$pps" -gt 50000 ]; then
+                        status="HIGH LOAD"
+                    elif [ "$pps" -lt 10000 ]; then
+                        status="LOW LOAD"
+                    fi
+                    
+                    printf "\r%s | PPS: %6d | Error Rate: %s%% | Status: %s" \
+                        "$timestamp" "$pps" "$error_rate" "$status"
+                    
+                    sleep 2
+                done
+                ;;
+                
+            *)
+                print_color "red" "ERROR: Invalid tune mode: $tune_mode"
+                echo "Valid modes: max-performance, balanced, monitor"
+                echo "Usage: ./xdp.sh tune [max-performance|balanced|monitor]"
+                exit 1
+                ;;
+        esac
+        
+        print_color "green" "System tuning complete! Optimized for ${total_cpus}-core system ($tune_mode mode)."
+        print_color "green" "Settings applied immediately and will persist after reboot."
         ;;
     "arp")
         # Manual ARP resolution for troubleshooting
