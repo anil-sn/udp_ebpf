@@ -18,7 +18,7 @@ print_color() {
 # Check if BPF programs are loaded
 check_bpf_program() {
     local count=$(sudo bpftool prog list type xdp 2>/dev/null | grep -c "xdp" || echo "0")
-    echo "$count"
+    echo "$count" | tr -d '\n'
 }
 
 # Real-time monitoring using unified Python script
@@ -140,7 +140,7 @@ show_pipeline_status() {
     
     # Check for running processes
     local loader_pid=$(pgrep -f "vxlan_loader" | head -1)
-    local injector_count=$(pgrep -f "packet_injector" | wc -l)
+    local injector_count=$(pgrep -f "packet_injector" | wc -l | tr -d ' \n')
     local prog_count=$(check_bpf_program)
     
     if [ -n "$loader_pid" ]; then
@@ -198,6 +198,47 @@ performance_test() {
     timeout "$duration" python3 src/xdp_functions/xdp_monitor.py realtime
     
     print_color "green" "\n✅ Performance test completed"
+}
+
+# Show detailed system information
+show_detailed_info() {
+    print_color "blue" "📋 XDP VXLAN Pipeline - Detailed Information"
+    echo "============================================"
+    echo
+    
+    print_color "cyan" "🖥️  System Information:"
+    echo "  Hostname: $(hostname)"
+    echo "  Kernel: $(uname -r)"
+    echo "  Uptime: $(uptime -p 2>/dev/null || uptime)"
+    echo "  CPU Cores: $(nproc)"
+    echo "  Memory: $(free -h | awk '/^Mem:/{print $2}' | tr -d ' ')"
+    echo
+    
+    print_color "cyan" "🔗 Network Interfaces:"
+    ip link show | grep -E "^[0-9]+:" | while read -r line; do
+        iface=$(echo "$line" | cut -d: -f2 | tr -d ' ')
+        state=$(echo "$line" | grep -o "state [A-Z]*" | cut -d' ' -f2)
+        echo "  $iface: $state"
+    done
+    echo
+    
+    print_color "cyan" "⚙️  Pipeline Configuration:"
+    if [ -f "$PROJECT_ROOT/.env" ]; then
+        echo "  Config File: $PROJECT_ROOT/.env"
+        echo "  Target Interface: ${TARGET_INTERFACE:-"Not set"}"
+        echo "  Target IP: ${TARGET_IP:-"Not set"}"
+        echo "  Target Port: ${TARGET_PORT:-"Not set"}"
+    else
+        echo "  ⚠️  Configuration file not found"
+    fi
+    echo
+    
+    print_color "cyan" "📊 Current Status:"
+    show_pipeline_status
+    echo
+    
+    print_color "cyan" "📈 Performance Statistics:"
+    python3 src/xdp_functions/analyze_stats.py --detailed 2>/dev/null || print_color "yellow" "⚠️  Statistics unavailable - run './xdp.sh start' first"
 }
 
 # Help function
