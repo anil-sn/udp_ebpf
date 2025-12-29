@@ -59,41 +59,37 @@ show_vxlan_analysis() {
     fi
     echo
     
-    # Quick traffic capture (10 seconds instead of 30)
-    print_color "cyan" "🔍 Traffic Analysis (10s capture):"
+    # Quick interface statistics instead of tcpdump
+    print_color "cyan" "🔍 Interface Traffic Statistics:"
+    echo
     
-    local vxlan_temp="/tmp/vxlan_traffic_$$.txt"
-    local tap_temp="/tmp/tap_traffic_$$.txt"
+    # Get interface stats before
+    local ens5_rx_before=$(cat /sys/class/net/ens5/statistics/rx_packets 2>/dev/null || echo "0")
+    local tap0_tx_before=$(cat /sys/class/net/tap0/statistics/tx_packets 2>/dev/null || echo "0")
     
-    echo "   Analyzing incoming and processed traffic..."
+    echo "   Monitoring traffic for 5 seconds..."
+    sleep 5
     
-    # Shorter capture time
-    timeout 10s sudo tcpdump -i any -nn -c 500 'udp port 4789' > "$vxlan_temp" 2>/dev/null &
-    timeout 10s sudo tcpdump -i tap0 -nn -c 500 > "$tap_temp" 2>/dev/null &
+    # Get interface stats after
+    local ens5_rx_after=$(cat /sys/class/net/ens5/statistics/rx_packets 2>/dev/null || echo "0")
+    local tap0_tx_after=$(cat /sys/class/net/tap0/statistics/tx_packets 2>/dev/null || echo "0")
     
-    sleep 12  # Wait for captures
+    # Calculate differences
+    local ens5_delta=$((ens5_rx_after - ens5_rx_before))
+    local tap0_delta=$((tap0_tx_after - tap0_before))
+    local processing_rate=0
     
-    # Simple analysis
-    local vxlan_count=0
-    local tap_count=0
-    
-    if [[ -s "$vxlan_temp" ]]; then
-        vxlan_count=$(wc -l < "$vxlan_temp")
-    fi
-    
-    if [[ -s "$tap_temp" ]]; then
-        tap_count=$(wc -l < "$tap_temp")
+    if [ $ens5_delta -gt 0 ]; then
+        processing_rate=$((tap0_delta * 100 / ens5_delta))
     fi
     
     echo
-    print_color "green" "📈 Traffic Summary:"
-    echo "   • VXLAN Input:  $vxlan_count packets"
-    echo "   • Pipeline Output: $tap_count packets" 
-    echo "   • Processing Rate: $(( vxlan_count > 0 ? tap_count * 100 / vxlan_count : 0 ))%"
-    echo "   • All traffic processed (no IP blocking)"
-    
-    # Cleanup
-    rm -f "$vxlan_temp" "$tap_temp" 2>/dev/null || true
+    print_color "green" "📈 Traffic Summary (5s window):"
+    echo "   • ens5 Input:      $ens5_delta packets"
+    echo "   • tap0 Output:     $tap0_delta packets" 
+    echo "   • Processing Rate: ${processing_rate}%"
+    echo "   • Status:          All VXLAN traffic processed (no blocking)"
+}
 }
 
 # Legacy function aliases for backward compatibility
