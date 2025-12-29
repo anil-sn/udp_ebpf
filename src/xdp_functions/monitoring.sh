@@ -1223,45 +1223,48 @@ show_ip_statistics() {
         print_color "red" "  ❌ Could not read pipeline statistics"
     fi
     
-    print_color "green" "\n🔍 Live Traffic Analysis (XDP-level capture):"
-    print_color "yellow" "   Sampling VXLAN traffic at XDP level on ${INTERFACE}..."
+    print_color "green" "\n🔍 Extended Traffic Analysis (30s XDP-level capture):"
+    print_color "yellow" "   Sampling VXLAN traffic at XDP level on ${INTERFACE} for 30 seconds..."
     
     # Sample traffic using xdpdump to see what XDP program actually receives
     local temp_file="/tmp/xdp_traffic_$$.txt"
     
-    # Use xdpdump with tcpdump pipeline as suggested
+    # Use xdpdump with tcpdump pipeline - longer duration, more packets
     {
-        timeout 5 sudo xdpdump -i "${INTERFACE}" -w - | tcpdump -r - -n -s 0 -q 'udp port 4789' -c 10 >"$temp_file" 2>/dev/null &
+        timeout 30 sudo xdpdump -i "${INTERFACE}" -w - | tcpdump -r - -n -s 0 -q 'udp port 4789' -c 200 >"$temp_file" 2>/dev/null &
         local xdpdump_pid=$!
-        sleep 5
+        sleep 30
         kill "$xdpdump_pid" 2>/dev/null || true
         wait "$xdpdump_pid" 2>/dev/null || true
     } 2>/dev/null
     
     if [ -s "$temp_file" ]; then
-        echo "   Raw VXLAN Traffic Output:"
+        echo "   Sample VXLAN Traffic (first 5 lines):"
         echo "   ┌─────────────────────────────────────────────────────────────────┐"
-        cat "$temp_file" | head -10 | while IFS= read -r line; do
+        head -5 "$temp_file" | while IFS= read -r line; do
             printf "   │ %-63s │\n" "$line"
         done
         echo "   └─────────────────────────────────────────────────────────────────┘"
         echo ""
         
-        echo "   VXLAN Source IP Analysis (XDP-level):"
-        echo "   ┌─────────────────┬─────────┬─────────┬──────────┐"
-        echo "   │ Source IP       │ Packets │ PPS     │ Status   │"
-        echo "   ├─────────────────┼─────────┼─────────┼──────────┤"
+        echo "   📊 COMPREHENSIVE SOURCE IP ANALYSIS (30s sample):"
+        echo "   ┌─────────────────┬─────────┬─────────┬─────────┬──────────────────┐"
+        echo "   │ Source IP       │ Packets │ PPS     │ % Total │ Status           │"
+        echo "   ├─────────────────┼─────────┼─────────┼─────────┼──────────────────┤"
         
-        # Extract source IPs from VXLAN traffic
+        # Extract and analyze all source IPs from VXLAN traffic
+        local total_captured=$(grep -c 'IP.*>' "$temp_file" 2>/dev/null || echo "0")
+        
         grep 'IP.*>' "$temp_file" 2>/dev/null | \
         sed -E 's/.*IP ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | \
-        sort | uniq -c | sort -nr | head -8 | \
-        while read -r count ip; do
+        sort | uniq -c | sort -nr | while read -r count ip; do
             [ -z "$count" ] || [ -z "$ip" ] && continue
-            local pps=$(awk "BEGIN {printf \"%.1f\", $count/5}")
+            local pps=$(awk "BEGIN {printf \"%.1f\", $count/30}")
+            local percent=$(awk "BEGIN {printf \"%.1f\", ($count/$total_captured)*100}")
             
-            # Check if IP is in allowlist by checking the map dump
-            local status="❌ Filtered"
+            # Check if IP is in allowlist
+            local status="❌ BLOCKED"
+            local status_detail="Not in allowlist"
             if sudo bpftool map dump id "$ip_map_id" --json 2>/dev/null | jq -r '.[].formatted.key' 2>/dev/null | \
                while read -r ip_int; do
                    if [ -n "$ip_int" ] && [ "$ip_int" != "null" ]; then
@@ -1276,17 +1279,50 @@ show_ip_statistics() {
                        fi
                    fi
                done | grep -q "FOUND"; then
-                status="✅ Allowed"
+                status="✅ ALLOWED"
+                status_detail="In allowlist"
             fi
             
-            printf "   │ %-15s │ %7d │ %7s │ %-8s │\n" "$ip" "$count" "$pps" "$status"
+            printf "   │ %-15s │ %7d │ %7s │ %6s%% │ %-16s │\n" "$ip" "$count" "$pps" "$percent" "$status"
         done
         
-        echo "   └─────────────────┴─────────┴─────────┴──────────┘"
+        echo "   └─────────────────┴─────────┴─────────┴─────────┴──────────────────┘"
         
-        # Show VXLAN traffic summary
+        # Traffic summary with blocked vs allowed breakdown
         local total_packets=$(grep -c "IP.*>" "$temp_file" 2>/dev/null || echo "0")
-        printf "   📊 Captured %d VXLAN packets in 5 seconds (~%.0f pps)\n" "$total_packets" "$(awk "BEGIN {print $total_packets/5}")"
+        local unique_ips=$(grep 'IP.*>' "$temp_file" 2>/dev/null | sed -E 's/.*IP ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | sort -u | wc -l)
+        
+        printf "\n   📈 TRAFFIC SUMMARY:\n"
+        printf "   • Total captured: %d packets in 30s (~%.0f pps)\n" "$total_packets" "$(awk "BEGIN {print $total_packets/30}")"
+        printf "   • Unique source IPs: %d\n" "$unique_ips"
+        
+        # Calculate blocked traffic percentage
+        echo ""
+        print_color "red" "   🚫 TOP BLOCKED SOURCE IPs (High Volume):"
+        grep 'IP.*>' "$temp_file" 2>/dev/null | \
+        sed -E 's/.*IP ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | \
+        sort | uniq -c | sort -nr | head -5 | while read -r count ip; do
+            [ -z "$count" ] || [ -z "$ip" ] && continue
+            local pps=$(awk "BEGIN {printf \"%.1f\", $count/30}")
+            
+            # Check if blocked
+            if ! sudo bpftool map dump id "$ip_map_id" --json 2>/dev/null | jq -r '.[].formatted.key' 2>/dev/null | \
+               while read -r ip_int; do
+                   if [ -n "$ip_int" ] && [ "$ip_int" != "null" ]; then
+                       local a=$((ip_int & 0xFF))
+                       local b=$(((ip_int >> 8) & 0xFF))
+                       local c=$(((ip_int >> 16) & 0xFF))
+                       local d=$(((ip_int >> 24) & 0xFF))
+                       local mapped_ip="$d.$c.$b.$a"
+                       if [ "$mapped_ip" = "$ip" ]; then
+                           echo "FOUND"
+                           break
+                       fi
+                   fi
+               done | grep -q "FOUND"; then
+                printf "     🔴 %s: %d packets (%.1f pps) - ADD TO ALLOWLIST?\n" "$ip" "$count" "$pps"
+            fi
+        done
         
     else
         print_color "yellow" "   ❌ No VXLAN traffic captured during XDP sample"
