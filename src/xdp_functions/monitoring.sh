@@ -17,15 +17,9 @@ print_color() {
 
 # Check if BPF programs are loaded
 check_bpf_program() {
-    # First try bpftool if available
-    if command -v bpftool >/dev/null 2>&1; then
-        local count=$(sudo bpftool prog list type xdp 2>/dev/null | grep -c "xdp" || echo "0")
-        echo "$count" | tr -d '\n'
-    else
-        # Fallback: check via ip link command for XDP programs
-        local count=$(ip link show 2>/dev/null | grep -c "prog/xdp" || echo "0")
-        echo "$count" | tr -d '\n'
-    fi
+    # Check via ip link command for XDP programs (most reliable)
+    local count=$(ip link show 2>/dev/null | grep -c "prog/xdp" || echo "0")
+    echo "$count"
 }
 
 # Real-time monitoring using unified Python script
@@ -251,15 +245,19 @@ show_bpf_maps() {
     echo
     
     print_color "cyan" "🔧 Active XDP Programs:"
-    if command -v bpftool >/dev/null 2>&1; then
-        bpftool prog show type xdp 2>/dev/null || echo "  No XDP programs found"
-    else
-        # Fallback: check via proc or ip command
-        if ip link show | grep -q "xdp"; then
-            echo "  XDP programs detected (use 'ip link show' for details)"
-        else
-            echo "  No XDP programs detected"
+    # Check for XDP programs on interfaces
+    local xdp_found=false
+    while IFS= read -r line; do
+        if echo "$line" | grep -q "prog/xdp"; then
+            local iface=$(echo "$line" | cut -d: -f2 | awk '{print $1}')
+            local prog_id=$(echo "$line" | grep -o "prog/xdp id [0-9]*" | awk '{print $3}')
+            echo "  Interface $iface: XDP program ID $prog_id"
+            xdp_found=true
         fi
+    done < <(ip link show 2>/dev/null)
+    
+    if [ "$xdp_found" = false ]; then
+        echo "  No XDP programs found"
     fi
 }
 
