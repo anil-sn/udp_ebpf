@@ -209,93 +209,76 @@ class TrafficAnalyzer:
             return "❌ DENIED"
     
     def analyze_and_display(self, vxlan_file: str, ipsec_file: str, tap_file: str, duration: int = 30):
-        """Enhanced analysis showing dropped vs processed packets"""
-        
-        # Parse all traffic types
+        """Simplified, clear traffic analysis"""
+        print("🎯 Traffic Analysis Results:")
+        print(f"   ✅ Loaded allowlist from: {self.allowlist_file}")
+        print(f"   📄 Allowlist contains {len(self.allowlist_ips)} IPs")
+
+        # Parse traffic files
         vxlan_ips = self.parse_vxlan_traffic(vxlan_file)
-        ipsec_ips = self.parse_ipsec_traffic(ipsec_file) 
+        ipsec_ips = self.parse_ipsec_traffic(ipsec_file)  
         tap_ips = self.parse_tap_traffic(tap_file)
-        
-        # Use flow analysis if we have VXLAN data
-        if vxlan_ips:
-            self.print_traffic_flow_analysis(vxlan_ips, tap_ips, duration)
-            
-            # Show IPSec separately if present
-            if ipsec_ips:
-                print()
-                print("   🔐 IPSEC/ESP TRAFFIC:")
-                for ip, count in sorted(ipsec_ips.items(), key=lambda x: x[1], reverse=True)[:5]:
-                    pps = count / duration
-                    print(f"   • {ip}: {count:,} packets ({pps:.1f} pps)")
-        else:
-            # Fallback to flow analysis view
-            self.print_traffic_flow_analysis({}, tap_ips, duration)
-        
+
         # Calculate totals
         total_vxlan = sum(vxlan_ips.values())
-        total_ipsec = sum(ipsec_ips.values())
+        total_ipsec = sum(ipsec_ips.values()) 
         total_tap = sum(tap_ips.values())
-        
-        print(f"\n   📊 MULTI-PROTOCOL TRAFFIC ANALYSIS ({duration}s capture):")
+
+        print(f"\n   📊 TRAFFIC SUMMARY ({duration}s capture):")
         print("   ┌─────────────────┬─────────┬─────────┬──────────────────┐")
-        print("   │ Source IP       │ Packets │   PPS   │ Status/Protocol  │")
+        print("   │ Source IP       │ Packets │   PPS   │ Status           │")
         print("   ├─────────────────┼─────────┼─────────┼──────────────────┤")
-        
-        # Combine all unique IPs for analysis
+
+        # Combine all IPs and analyze their status
         all_ips = set(vxlan_ips.keys()) | set(ipsec_ips.keys()) | set(tap_ips.keys())
-        found_traffic = False
         
-        # Sort by total packet count (VXLAN + TAP)
-        ip_totals = []
+        # Build analysis for each IP
+        ip_analysis = []
         for ip in all_ips:
             vxlan_count = vxlan_ips.get(ip, 0)
-            ipsec_count = ipsec_ips.get(ip, 0)
+            ipsec_count = ipsec_ips.get(ip, 0) 
             tap_count = tap_ips.get(ip, 0)
-            total_count = vxlan_count + ipsec_count + tap_count
-            ip_totals.append((ip, total_count, vxlan_count, ipsec_count, tap_count))
-        
-        # Sort by total count descending
-        ip_totals.sort(key=lambda x: x[1], reverse=True)
-        
-        # Display results
-        for ip, total_count, vxlan_count, ipsec_count, tap_count in ip_totals[:10]:
-            pps = total_count / duration
+            total_count = max(vxlan_count, ipsec_count, tap_count)  # Use highest count as primary
             
-            # Determine protocol and status based on where IP appears
+            # Determine clear status
             if ipsec_count > 0:
-                status = "🔐 IPSec/ESP"
+                status = "🔐 IPSec Traffic"
             elif tap_count > 0:
-                # IP appeared in TAP = successfully processed 
-                status = "✅ PROCESSED"
+                status = "✅ Processed"
             elif vxlan_count > 0:
-                # IP in VXLAN but not TAP = check allowlist to see why
                 if ip in self.allowlist_ips:
-                    status = "✅ ALLOWED"  # Should be processed but TAP capture might be incomplete
+                    status = "⚠️ Allowed but no TAP"
                 else:
-                    status = "❌ DENIED"   # Blocked by allowlist
+                    status = "❌ Blocked (not in allowlist)"
             else:
                 status = "❓ Unknown"
+                
+            ip_analysis.append((ip, total_count, status))
+
+        # Sort by packet count and display
+        ip_analysis.sort(key=lambda x: x[1], reverse=True)
+        
+        if ip_analysis:
+            for ip, count, status in ip_analysis[:10]:
+                pps = count / duration if duration > 0 else 0
+                print(f"   │ {ip:<15} │ {count:>7} │ {pps:>7.1f} │ {status:<16} │")
+        else:
+            print("   │ No traffic detected during capture period                    │")
             
-            print(f"   │ {ip:<15} │ {total_count:>7} │ {pps:>7.1f} │ {status:<16} │")
-            found_traffic = True
-        
-        if not found_traffic:
-            print("   │ No traffic      │       0 │     0.0 │ No data captured │")
-        
         print("   └─────────────────┴─────────┴─────────┴──────────────────┘")
+
+        # Clear summary
+        print(f"\n   📈 CAPTURE SUMMARY:")
+        print(f"   • Total Sources: {len(all_ips)} unique IPs")
+        if total_vxlan > 0:
+            print(f"   • VXLAN Input: {total_vxlan:,} packets")
+        if total_ipsec > 0:
+            print(f"   • IPSec Traffic: {total_ipsec:,} packets") 
+        if total_tap > 0:
+            print(f"   • Pipeline Output: {total_tap:,} packets")
         
-        # Summary
-        print(f"\n   📈 SUMMARY:")
-        print(f"   • VXLAN Inner: {total_vxlan} packets (~{total_vxlan/duration:.0f} pps) from {len(vxlan_ips)} IPs")
-        print(f"   • IPSec/ESP: {total_ipsec} packets (~{total_ipsec/duration:.0f} pps) from {len(ipsec_ips)} IPs")
-        print(f"   • TAP Output: {total_tap} packets (~{total_tap/duration:.0f} pps) from {len(tap_ips)} IPs")
-        
-        # Allowlist effectiveness
-        allowed_vxlan = sum(1 for ip in vxlan_ips if ip in self.allowlist_ips)
-        denied_vxlan = len(vxlan_ips) - allowed_vxlan
-        
-        if vxlan_ips:
-            print(f"   • Allowlist: {allowed_vxlan} allowed, {denied_vxlan} denied VXLAN IPs")
+        # Simple explanation
+        print(f"\n💡 Key: ✅=Processed successfully, ❌=Blocked by allowlist, 🔐=IPSec bypass")
 
 
 def main():
