@@ -1115,38 +1115,50 @@ sequenceDiagram
 #### **Zero-Copy Processing Techniques**
 
 ```mermaid
-graph LR
-    subgraph "Memory Management Optimizations"
-        direction TB
-        
-        DMA[DMA Buffers<br/>Direct Memory Access<br/>No CPU Involvement<br/>Wire-Speed Reception]
-        
-        XDP_BUF[XDP Buffer<br/>Pre-allocated Pages<br/>No sk_buff Allocation<br/>Minimal Metadata]
-        
-        REDIRECT[XDP_REDIRECT<br/>Zero-Copy Forwarding<br/>Direct Buffer Transfer<br/>Bypass Kernel Stack]
-        
-        MMAP[Memory Pools<br/>mmap() Pre-allocation<br/>32MB User Buffers<br/>Lock-Free Access]
-        
-        DMA --> XDP_BUF
-        XDP_BUF --> REDIRECT
-        XDP_BUF --> MMAP
-    end
-    
-    subgraph "CPU Cache Optimizations"
-        PREFETCH[Memory Prefetching<br/>__builtin_prefetch()<br/>Cache Line Alignment<br/>Reduced Cache Misses]
-        
-        PERCPU[Per-CPU Data Structures<br/>No Cache Line Bouncing<br/>Lock-Free Statistics<br/>NUMA Awareness]
-        
-        BATCH[Batch Processing<br/>Amortized Syscall Cost<br/>Vector Operations<br/>Pipeline Efficiency]
-    end
-    
-    subgraph "Lock-Free Architecture"
-        ATOMIC[Atomic Operations<br/>Compare-and-Swap<br/>Memory Barriers<br/>Wait-Free Algorithms]
-        
-        SPMC[SPMC Queues<br/>Single Producer<br/>Multiple Consumer<br/>Ring Buffer Design]
-        
-        RCU[RCU Semantics<br/>Read-Copy-Update<br/>Deferred Reclamation<br/>Scalable Reads]
-    end
+---
+config:
+  layout: elk
+---
+flowchart TB
+ subgraph Mem_Opt["Memory Management Optimizations"]
+    direction TB
+        DMA["DMA Buffers<br>Direct Memory Access<br>No CPU Involvement<br>Wire-Speed Reception"]
+        XDP_BUF["XDP Buffer<br>Pre-allocated Pages<br>No sk_buff Allocation<br>Minimal Metadata"]
+        REDIRECT["XDP_REDIRECT<br>Zero-Copy Forwarding<br>Direct Buffer Transfer<br>Bypass Kernel Stack"]
+        MMAP["Memory Pools<br>mmap() Pre-allocation<br>32MB User Buffers<br>Lock-Free Access"]
+  end
+ subgraph CPU_Opt["CPU Cache Optimizations"]
+    direction TB
+        PREFETCH["Memory Prefetching<br>__builtin_prefetch()<br>Cache Line Alignment<br>Reduced Cache Misses"]
+        PERCPU["Per-CPU Data Structures<br>No Cache Line Bouncing<br>Lock-Free Statistics<br>NUMA Awareness"]
+        BATCH["Batch Processing<br>Amortized Syscall Cost<br>Vector Operations<br>Pipeline Efficiency"]
+  end
+ subgraph Lock_Opt["Lock-Free Architecture"]
+    direction TB
+        ATOMIC["Atomic Operations<br>Compare-and-Swap<br>Memory Barriers<br>Wait-Free Algorithms"]
+        SPMC["SPMC Queues<br>Single Producer<br>Multiple Consumer<br>Ring Buffer Design"]
+        RCU["RCU Semantics<br>Read-Copy-Update<br>Deferred Reclamation<br>Scalable Reads"]
+  end
+    DMA --> XDP_BUF
+    XDP_BUF --> REDIRECT & MMAP
+    PREFETCH ~~~ PERCPU
+    PERCPU ~~~ BATCH
+    ATOMIC ~~~ SPMC
+    SPMC ~~~ RCU
+
+     DMA:::memory
+     XDP_BUF:::memory
+     REDIRECT:::memory
+     MMAP:::memory
+     PREFETCH:::cpu
+     PERCPU:::cpu
+     BATCH:::cpu
+     ATOMIC:::lock
+     SPMC:::lock
+     RCU:::lock
+    classDef memory fill:#E1F5FE,stroke:#0277BD,stroke-width:2px,color:black
+    classDef cpu fill:#FFF3E0,stroke:#EF6C00,stroke-width:2px,color:black
+    classDef lock fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px,color:black
 ```
 
 #### **Performance Bottleneck Elimination**
@@ -1230,30 +1242,6 @@ done
 # - No NUMA awareness in process launching
 ```
 
-**Enhanced Configuration for High-Performance Systems:**
-```bash
-# Recommended: Adaptive CPU Scaling
-TOTAL_CPUS=$(nproc)
-NUMA_NODES=$(lscpu | grep "NUMA node(s)" | awk '{print $3}')
-
-# Option 1: CPU Set Isolation (Best for dedicated systems)
-# Reserve CPUs 0-3 for system, use 4+ for packet processing
-SYSTEM_CPUS="0-3"
-PACKET_CPUS="4-$((TOTAL_CPUS-1))"
-WORKER_COUNT=$((TOTAL_CPUS-4))
-
-# Option 2: NUMA-Aware Distribution (Best for high-core systems)
-# Distribute workers across NUMA nodes
-CPUS_PER_NODE=$((TOTAL_CPUS / NUMA_NODES))
-NODE0_CPUS="0-$((CPUS_PER_NODE-1))"
-NODE1_CPUS="$CPUS_PER_NODE-$((TOTAL_CPUS-1))"
-
-# Option 3: Free-Floating with CPU Governor (Balanced approach)
-# Let kernel scheduler optimize, but pin IRQs
-echo performance > /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
-# Pin network IRQs to specific CPUs, leave workers free-floating
-```
-
 **Performance Scaling Recommendations:**
 
 | System Configuration | Worker Strategy | Expected Performance Gain |
@@ -1263,35 +1251,9 @@ echo performance > /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
 | **32-core, 64GB RAM** | NUMA-aware 28 workers | **3.2x improvement: 270K+ PPS** |
 | **64-core, 128GB RAM** | CPU isolation + 56 workers | **5.8x improvement: 490K+ PPS** |
 
-**Implementation for Enhanced Performance:**
-```bash
-# Enhanced packet_injector launching (replace pipeline.sh section)
-TOTAL_CPUS=$(nproc)
-WORKER_COUNT=$((TOTAL_CPUS > 8 ? TOTAL_CPUS - 4 : 8))  # Reserve 4 CPUs for system
+---
 
-# Start workers with intelligent CPU distribution
-for ((worker=0; worker<WORKER_COUNT; worker++)); do
-    cpu=$((worker + 4))  # Skip CPUs 0-3 for system processes
-    if [ $cpu -ge $TOTAL_CPUS ]; then
-        cpu=$((cpu % TOTAL_CPUS))  # Wrap around if needed
-    fi
-    
-    # Launch with CPU affinity and NUMA awareness
-    numactl --cpunodebind=$(( cpu / (TOTAL_CPUS/2) )) \
-            --membind=$(( cpu / (TOTAL_CPUS/2) )) \
-        taskset -c "$cpu" \
-            sudo ./packet_injector vxlan_pipeline.bpf.o "$TARGET_INTERFACE" &
-done
-```
-
-**Free-Floating Alternative (Less Overhead):**
-```bash
-# Alternative: Let kernel scheduler optimize CPU usage
-# This can be better for variable workloads and mixed traffic
-sudo ./packet_injector vxlan_pipeline.bpf.o "$TARGET_INTERFACE" $(nproc)
-# No taskset - kernel handles CPU scheduling dynamically
-# Better for: Variable traffic, mixed workloads, shared systems
-```
+*This technical report provides comprehensive documentation of the XDP VXLAN Pipeline architecture, suitable for deployment in enterprise environments processing 200K+ PPS across distributed VM clusters.*
 
 ### 3. Control Plane Architecture
 
@@ -1301,10 +1263,18 @@ graph LR
     
     B -->|start| C[start_pipeline]
     B -->|stop| D[stop_pipeline] 
+    B -->|restart| R[restart_pipeline]
     B -->|status| E[show_pipeline_status]
-    B -->|stats| F[show_statistics]
-    B -->|monitor| G[monitor_pipeline]
-    B -->|ips| H[ip_allowlist_mgmt]
+    B -->|stats| F[analyze_stats.py]
+    B -->|config| G[show_configuration]
+    B -->|maps| H[show_bpf_maps]
+    B -->|ips| I[ip_allowlist_mgmt]
+    B -->|monitor| J[xdp_monitor.py]
+    B -->|logs| K[show_logs]
+    B -->|info| L[show_system_info]
+    B -->|tune| M[dynamic_scaling.sh]
+    B -->|cleanup| N[comprehensive_cleanup]
+    B -->|arp| O[arp_population]
     
     C --> C1[Configuration Validation]
     C --> C2[System Tuning]
@@ -1318,10 +1288,18 @@ graph LR
     D --> D2[XDP Detachment]
     D --> D3[Resource Cleanup]
     
-    E --> E1[Process Status Check]
-    E --> E2[XDP Attachment Status]
-    E --> E3[Traffic Rate Monitor]
-    E --> E4[Configuration Display]
+    F --> F1[Performance Analysis]
+    F --> F2[Statistics Aggregation]
+    F --> F3[Threshold Monitoring]
+    
+    I --> I1[Show Allowlist Status]
+    I --> I2[Add/Remove IPs]
+    I --> I3[Sync JSON ↔ eBPF]
+    I --> I4[Watch File Changes]
+    
+    J --> J1[Real-time Monitoring]
+    J --> J2[Interface Statistics]
+    J --> J3[Performance Alerts]
 ```
 
 ## Current Implementation Status
