@@ -43,6 +43,138 @@ show_progress() {
     printf "\b✓\n"
 }
 
+# Wait for apt locks to be released
+wait_for_apt_lock() {
+    local max_wait=${1:-300}  # Maximum wait time in seconds (5 minutes)
+    local wait_time=0
+    local check_interval=5
+    
+    info "Checking for existing package manager operations..."
+    
+    while [ $wait_time -lt $max_wait ]; do
+        # Check for dpkg lock files
+        if sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
+           sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1 || \
+           sudo fuser /var/cache/apt/archives/lock >/dev/null 2>&1; then
+            
+            if [ $wait_time -eq 0 ]; then
+                warn "Package manager is busy (dpkg/apt locks detected)"
+                info "Waiting for existing operations to complete..."
+            fi
+            
+            # Show which processes are holding locks
+            local apt_processes
+            apt_processes=$(ps aux | grep -E '(apt|dpkg|unattended-upgrade)' | grep -v grep | wc -l)
+            if [ "$apt_processes" -gt 0 ]; then
+                info "Found $apt_processes active package management processes"
+            fi
+            
+            sleep $check_interval
+            wait_time=$((wait_time + check_interval))
+        else
+            if [ $wait_time -gt 0 ]; then
+                log "Package manager is now available (waited ${wait_time}s)"
+            else
+                log "Package manager is available"
+            fi
+            return 0
+        fi
+    done
+    
+    error "Timed out waiting for package manager (${max_wait}s)"
+    return 1
+}
+
+# Kill hanging apt processes if needed
+cleanup_apt_processes() {
+    info "Checking for stuck package management processes..."
+    
+    # Find potentially stuck apt/dpkg processes
+    local stuck_processes
+    stuck_processes=$(ps aux | grep -E '(apt-get|dpkg|unattended-upgrade)' | grep -v grep | awk '{print $2}' || true)
+    
+    if [ -n "$stuck_processes" ]; then
+        warn "Found potentially stuck processes: $stuck_processes"
+        
+        # Try graceful termination first
+        echo "$stuck_processes" | while read -r pid; do
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                info "Attempting graceful termination of process $pid"
+                sudo kill -TERM "$pid" 2>/dev/null || true
+            fi
+        done
+        
+        sleep 5
+        
+        # Force kill if still running
+        echo "$stuck_processes" | while read -r pid; do
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                warn "Force killing stuck process $pid"
+                sudo kill -KILL "$pid" 2>/dev/null || true
+            fi
+        done
+        
+        # Clean up lock files if processes are gone
+        sleep 2
+        if ! sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
+            sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock 2>/dev/null || true
+            info "Cleaned up stale lock files"
+            
+            # Attempt to recover package database state
+            info "Running dpkg recovery to fix any incomplete package configurations..."
+            if sudo dpkg --configure -a 2>/dev/null; then
+                log "Package database recovered successfully"
+            else
+                warn "dpkg recovery completed with warnings (this may be normal)"
+            fi
+            
+            # Fix any broken dependencies
+            info "Checking for broken dependencies..."
+            if sudo apt-get -f install -y >/dev/null 2>&1; then
+                log "Dependencies verified and fixed"
+            else
+                warn "Dependency fix completed with warnings"
+            fi
+        fi
+    else
+        log "No stuck processes found"
+    fi
+}
+
+# Safe apt operation wrapper
+safe_apt() {
+    local max_retries=3
+    local retry_count=0
+    
+    while [ $retry_count -lt $max_retries ]; do
+        # Wait for locks to be available
+        if ! wait_for_apt_lock; then
+            if [ $retry_count -eq 0 ]; then
+                cleanup_apt_processes
+                wait_for_apt_lock 60 || {
+                    error "Could not acquire package manager locks after cleanup"
+                    return 1
+                }
+            else
+                return 1
+            fi
+        fi
+        
+        # Execute the apt command
+        if "$@"; then
+            return 0
+        else
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -lt $max_retries ]; then
+                warn "Apt operation failed, retrying ($retry_count/$max_retries)..."
+                sleep 3
+            fi
+        fi
+    done
+    
+    return 1
+}
+
 # Check sudo access and handle authentication issues
 check_sudo() {
     section "Checking Sudo Access"
@@ -160,6 +292,9 @@ sleep 1
 install_dependencies() {
     section "Installing System Dependencies"
     
+    # Clean up any existing stuck processes first
+    cleanup_apt_processes
+    
     # Check if running as root
     if [[ $EUID -eq 0 ]]; then
         warn "Running as root. Consider using sudo instead."
@@ -179,60 +314,55 @@ install_dependencies() {
     case $OS in
         "ubuntu"|"debian")
             info "Installing for Ubuntu/Debian..."
+            
+            # Update package lists safely
             info "Updating package lists (non-interactive mode)..."
-            if ! sudo apt-get update -y -qq 2>/dev/null; then
-                warn "Package update failed, trying with different approach..."
-                # Try without quiet mode to see errors
-                sudo apt-get update -y || {
-                    error "Failed to update package lists"
-                    error "Please check your internet connection and try again"
-                    return 1
-                }
+            if safe_apt sudo DEBIAN_FRONTEND=noninteractive apt-get update -y; then
+                log "Package lists updated successfully"
+            else
+                error "Failed to update package lists"
+                error "Please check your internet connection and try again"
+                return 1
             fi
             
             # Core build dependencies (non-interactive)
             info "Installing core build dependencies..."
-            if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential clang gcc make libbpf-dev 2>/dev/null; then
+            if safe_apt sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential clang gcc make libbpf-dev; then
                 log "Core build tools installed"
             else
-                warn "Retrying core dependencies installation..."
-                if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential clang gcc make libbpf-dev; then
-                    log "Core build tools installed (retry successful)"
-                else
-                    error "Failed to install core build dependencies"
-                    return 1
-                fi
+                error "Failed to install core build dependencies"
+                return 1
             fi
             
             # Kernel headers (optional for WSL2)
             info "Installing kernel headers for $(uname -r)..."
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "linux-headers-$(uname -r)" || {
+            if ! safe_apt sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "linux-headers-$(uname -r)"; then
                 warn "Could not install kernel headers for $(uname -r)"
                 warn "This is normal for WSL2. XDP functionality may be limited."
                 info "Continuing with setup..."
-            }
+            else
+                log "Kernel headers installed successfully"
+            fi
             
             # Network tools (including ARP discovery and JSON processing)
             info "Installing network analysis tools..."
-            if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq iproute2 net-tools tcpdump iputils-arping jq 2>/dev/null; then
+            if safe_apt sudo DEBIAN_FRONTEND=noninteractive apt-get install -y iproute2 net-tools tcpdump iputils-arping jq; then
                 log "Network tools installed (including arping for MAC discovery and jq for JSON processing)"
             else
-                warn "Some network tools may not be available, continuing..."
-                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y iproute2 net-tools jq || true
-                log "Basic network tools installed"
+                warn "Some network tools may not be available, trying basic set..."
+                if safe_apt sudo DEBIAN_FRONTEND=noninteractive apt-get install -y iproute2 net-tools jq; then
+                    log "Basic network tools installed"
+                else
+                    warn "Network tools installation partially failed, continuing..."
+                fi
             fi
             
             # Extended XDP development packages
             info "Installing extended XDP development packages..."
-            if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git llvm libelf-dev libpcap-dev pkg-config m4 zlib1g-dev libcap-dev 2>/dev/null; then
+            if safe_apt sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git llvm libelf-dev libpcap-dev pkg-config m4 zlib1g-dev libcap-dev; then
                 log "Extended XDP development packages installed"
             else
-                warn "Retrying extended packages installation..."
-                if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git llvm libelf-dev libpcap-dev pkg-config m4 zlib1g-dev libcap-dev; then
-                    log "Extended XDP development packages installed (retry successful)"
-                else
-                    warn "Some extended packages may not be available, continuing..."
-                fi
+                warn "Some extended packages may not be available, continuing..."
             fi
             
             # BPF tools - Build from source for reliability (AWS kernels often need this)
@@ -241,16 +371,11 @@ install_dependencies() {
                 
                 # Install build dependencies (non-interactive)
                 info "Installing bpftool build dependencies..."
-                if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential libssl-dev binutils-dev libcap-dev git 2>/dev/null; then
+                if safe_apt sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential libssl-dev binutils-dev libcap-dev git; then
                     log "Build dependencies installed"
                 else
-                    warn "Retrying build dependencies installation..."
-                    if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential libssl-dev binutils-dev libcap-dev git; then
-                        log "Build dependencies installed (retry successful)"
-                    else
-                        error "Failed to install bpftool build dependencies"
-                        return 1
-                    fi
+                    error "Failed to install bpftool build dependencies"
+                    return 1
                 fi
                 
                 # Build bpftool from source
@@ -323,16 +448,11 @@ install_dependencies() {
             
             # Python development tools
             info "Installing Python development environment..."
-            if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 python3-dev python3-pip 2>/dev/null; then
+            if safe_apt sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-dev python3-pip; then
                 log "Python development tools installed"
             else
-                warn "Retrying Python installation..."
-                if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-dev python3-pip; then
-                    log "Python development tools installed (retry successful)"
-                else
-                    error "Failed to install Python development tools"
-                    return 1
-                fi
+                error "Failed to install Python development tools"
+                return 1
             fi
             ;;
             
