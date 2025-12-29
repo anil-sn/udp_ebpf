@@ -1231,7 +1231,7 @@ show_ip_statistics() {
     
     # Use xdpdump with tcpdump pipeline as suggested
     {
-        timeout 5 sudo xdpdump -i "${INTERFACE}" -w - | tcpdump -r - -n -s 0 -q 'udp port 4789' -c 10 2>"$temp_file" >/dev/null &
+        timeout 5 sudo xdpdump -i "${INTERFACE}" -w - | tcpdump -r - -n -s 0 -q 'udp port 4789' -c 10 >"$temp_file" 2>/dev/null &
         local xdpdump_pid=$!
         sleep 5
         kill "$xdpdump_pid" 2>/dev/null || true
