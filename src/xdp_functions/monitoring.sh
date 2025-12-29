@@ -60,7 +60,7 @@ show_vxlan_analysis() {
     local ipsec_temp="/tmp/ipsec_traffic_$$.txt"
     
     echo "   Capturing incoming VXLAN traffic (pre-processing)..."
-    timeout 30s sudo tcpdump -i eth0 -nn -c 2000 'udp port 4789' > "$vxlan_temp" 2>/dev/null &
+    timeout 30s sudo tcpdump -i any -nn -c 2000 'udp port 4789' > "$vxlan_temp" 2>/dev/null &
     
     echo "   Capturing IPSec traffic (UDP 4500)..."
     timeout 30s sudo tcpdump -i any -nn -c 1000 'port 4500' > "$ipsec_temp" 2>/dev/null &

@@ -36,7 +36,88 @@ class TrafficAnalyzer:
                     print(f"   ❌ Error loading {path}: {e}", file=sys.stderr)
         print(f"   ❌ No allowlist file found in: {paths}", file=sys.stderr)
     
-    def parse_vxlan_traffic(self, vxlan_file: str) -> Dict[str, int]:
+    def analyze_traffic_flow(self, vxlan_ips: Dict[str, int], tap_ips: Dict[str, int]) -> Dict[str, List[Tuple[str, int, str]]]:
+        """Compare VXLAN input vs TAP output to identify dropped packets"""
+        results = {
+            'processed': [],  # IPs that appear in both VXLAN and TAP
+            'dropped': [],    # IPs that appear in VXLAN but not in TAP
+            'tap_only': []    # IPs that appear only in TAP (unexpected)
+        }
+        
+        # Find processed IPs (in both VXLAN and TAP)
+        for ip, vxlan_count in vxlan_ips.items():
+            tap_count = tap_ips.get(ip, 0)
+            if tap_count > 0:
+                status = "✅ ALLOWED" if ip in self.allowlist_ips else "🔄 PROCESSED"
+                results['processed'].append((ip, vxlan_count, status))
+        
+        # Find dropped IPs (in VXLAN but not in TAP)
+        for ip, vxlan_count in vxlan_ips.items():
+            if ip not in tap_ips:
+                status = "❌ DROPPED" if ip not in self.allowlist_ips else "⚠️ ALLOWED_BUT_DROPPED"
+                results['dropped'].append((ip, vxlan_count, status))
+        
+        # Find TAP-only IPs (shouldn't happen normally)
+        for ip, tap_count in tap_ips.items():
+            if ip not in vxlan_ips:
+                results['tap_only'].append((ip, tap_count, "🔄 TAP_ONLY"))
+        
+        return results
+    
+    def print_traffic_flow_analysis(self, vxlan_ips: Dict[str, int], tap_ips: Dict[str, int], duration: int):
+        """Print enhanced analysis showing dropped vs processed traffic"""
+        flow_analysis = self.analyze_traffic_flow(vxlan_ips, tap_ips)
+        
+        print()
+        print("   📊 TRAFFIC FLOW ANALYSIS:")
+        print("   ┌─────────────────┬─────────┬─────────┬──────────────────┐")
+        print("   │ Source IP       │ Packets │   PPS   │ Flow Status      │") 
+        print("   ├─────────────────┼─────────┼─────────┼──────────────────┤")
+        
+        # Show processed traffic first
+        all_traffic = []
+        for ip, count, status in flow_analysis['processed']:
+            pps = count / duration if duration > 0 else 0
+            all_traffic.append((ip, count, pps, status))
+        
+        # Show dropped traffic
+        for ip, count, status in flow_analysis['dropped']:
+            pps = count / duration if duration > 0 else 0
+            all_traffic.append((ip, count, pps, status))
+        
+        # Show TAP-only traffic
+        for ip, count, status in flow_analysis['tap_only']:
+            pps = count / duration if duration > 0 else 0
+            all_traffic.append((ip, count, pps, status))
+        
+        # Sort by packet count (descending)
+        all_traffic.sort(key=lambda x: x[1], reverse=True)
+        
+        # Display top 15 IPs
+        for ip, count, pps, status in all_traffic[:15]:
+            print(f"   │ {ip:<15} │ {count:7,} │ {pps:7.1f} │ {status:<16} │")
+        
+        if len(all_traffic) > 15:
+            print(f"   │ ... and {len(all_traffic)-15} more IPs")
+        
+        print("   └─────────────────┴─────────┴─────────┴──────────────────┘")
+        
+        # Summary statistics
+        total_processed = sum(count for _, count, _ in flow_analysis['processed'])
+        total_dropped = sum(count for _, count, _ in flow_analysis['dropped'])
+        total_vxlan = sum(vxlan_ips.values())
+        
+        print()
+        print("   📈 FLOW SUMMARY:")
+        print(f"   • VXLAN Input:  {total_vxlan:,} packets from {len(vxlan_ips)} IPs")
+        print(f"   • Processed:    {total_processed:,} packets from {len(flow_analysis['processed'])} IPs")
+        print(f"   • Dropped:      {total_dropped:,} packets from {len(flow_analysis['dropped'])} IPs")
+        
+        if total_vxlan > 0:
+            drop_rate = (total_dropped / total_vxlan) * 100
+            process_rate = (total_processed / total_vxlan) * 100
+            print(f"   • Drop Rate:    {drop_rate:.1f}%")
+            print(f"   • Process Rate: {process_rate:.1f}%")
         """Parse VXLAN traffic and extract inner source IPs"""
         ip_counts = Counter()
         
@@ -120,12 +201,27 @@ class TrafficAnalyzer:
             return "❌ DENIED"
     
     def analyze_and_display(self, vxlan_file: str, ipsec_file: str, tap_file: str, duration: int = 30):
-        """Main analysis function"""
+        """Enhanced analysis showing dropped vs processed packets"""
         
         # Parse all traffic types
         vxlan_ips = self.parse_vxlan_traffic(vxlan_file)
-        ipsec_ips = self.parse_ipsec_traffic(ipsec_file)
+        ipsec_ips = self.parse_ipsec_traffic(ipsec_file) 
         tap_ips = self.parse_tap_traffic(tap_file)
+        
+        # Use flow analysis if we have VXLAN data
+        if vxlan_ips:
+            self.print_traffic_flow_analysis(vxlan_ips, tap_ips, duration)
+            
+            # Show IPSec separately if present
+            if ipsec_ips:
+                print()
+                print("   🔐 IPSEC/ESP TRAFFIC:")
+                for ip, count in sorted(ipsec_ips.items(), key=lambda x: x[1], reverse=True)[:5]:
+                    pps = count / duration
+                    print(f"   • {ip}: {count:,} packets ({pps:.1f} pps)")
+        else:
+            # Fallback to traditional view
+            self.print_traditional_analysis(vxlan_ips, ipsec_ips, tap_ips, duration)
         
         # Calculate totals
         total_vxlan = sum(vxlan_ips.values())

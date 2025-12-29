@@ -122,9 +122,9 @@ case "$CMD" in
         ;;
     "stats") 
         # Use enhanced statistics analyzer
-        if [[ "$2" == "--detailed" ]] || [[ "$2" == "-d" ]]; then
+        if [[ "${2:-}" == "--detailed" ]] || [[ "${2:-}" == "-d" ]]; then
             python3 src/xdp_functions/analyze_stats.py --detailed
-        elif [[ "$2" == "--compact" ]] || [[ "$2" == "-c" ]]; then
+        elif [[ "${2:-}" == "--compact" ]] || [[ "${2:-}" == "-c" ]]; then
             python3 src/xdp_functions/analyze_stats.py --compact
         else
             # Default to detailed analysis
