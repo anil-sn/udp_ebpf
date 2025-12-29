@@ -44,84 +44,57 @@ show_ip_statistics() {
 
 # Complete VXLAN analysis with traffic capture
 show_vxlan_analysis() {
-    # Use Python for header and BPF status
-    python3 src/xdp_functions/xdp_monitor.py status
-    if [ $? -ne 0 ]; then
-        return 1
-    fi
-    
+    print_color "blue" "📊 XDP Pipeline - Traffic Analysis"
+    echo "=========================================="
     echo
-    print_color "cyan" "🔍 Multi-Protocol Traffic Analysis (30s capture):"
-    print_color "yellow" "   Capturing incoming VXLAN and processed output traffic..."
-    print_color "cyan" "   (Analyzing traffic flow patterns and processing performance)"
     
-    # Capture traffic files
+    # Show pipeline status first
+    show_pipeline_status
+    echo
+    
+    # Show current allowlist count (reference only)
+    if [ -f "src/ip_allowlist.json" ]; then
+        local allowlist_count=$(python3 -c "import json; print(len(json.load(open('src/ip_allowlist.json'))))" 2>/dev/null || echo "0")
+        print_color "cyan" "📋 IP Allowlist: $allowlist_count IPs (reference only - no filtering applied)"
+    fi
+    echo
+    
+    # Quick traffic capture (10 seconds instead of 30)
+    print_color "cyan" "🔍 Traffic Analysis (10s capture):"
+    
     local vxlan_temp="/tmp/vxlan_traffic_$$.txt"
     local tap_temp="/tmp/tap_traffic_$$.txt"
-    local ipsec_temp="/tmp/ipsec_traffic_$$.txt"
     
-    echo "   Capturing incoming VXLAN traffic (pre-processing)..."
-    timeout 30s sudo tcpdump -i any -nn -c 2000 'udp port 4789' > "$vxlan_temp" 2>/dev/null &
+    echo "   Analyzing incoming and processed traffic..."
     
-    echo "   Capturing IPSec traffic (UDP 4500)..."
-    timeout 30s sudo tcpdump -i any -nn -c 1000 'port 4500' > "$ipsec_temp" 2>/dev/null &
+    # Shorter capture time
+    timeout 10s sudo tcpdump -i any -nn -c 500 'udp port 4789' > "$vxlan_temp" 2>/dev/null &
+    timeout 10s sudo tcpdump -i tap0 -nn -c 500 > "$tap_temp" 2>/dev/null &
     
-    echo "   Capturing processed TAP output (post-processing)..."
-    timeout 30s sudo tcpdump -i tap0 -nn -c 1000 > "$tap_temp" 2>/dev/null &
+    sleep 12  # Wait for captures
     
-    # Simple wait approach - let timeout handle it
-    echo "   Waiting for captures to complete (max 35s)..."
-    sleep 35
+    # Simple analysis
+    local vxlan_count=0
+    local tap_count=0
     
-    # Force cleanup of any remaining tcpdump processes
-    sudo pkill -f "tcpdump.*port.*4789" 2>/dev/null || true
-    sudo pkill -f "tcpdump.*port.*4500" 2>/dev/null || true  
-    sudo pkill -f "tcpdump.*tap0" 2>/dev/null || true
+    if [[ -s "$vxlan_temp" ]]; then
+        vxlan_count=$(wc -l < "$vxlan_temp")
+    fi
     
-    # Brief pause for cleanup
-    sleep 1
+    if [[ -s "$tap_temp" ]]; then
+        tap_count=$(wc -l < "$tap_temp")
+    fi
     
     echo
-    
-    # Check capture results
-    if [[ -s "$vxlan_temp" ]]; then
-        local vxlan_lines=$(wc -l < "$vxlan_temp")
-        echo "   ✅ VXLAN capture: $vxlan_lines lines"
-    else
-        echo "   ❌ VXLAN capture: No data captured"
-    fi
-    
-    if [[ -s "$ipsec_temp" ]]; then
-        local ipsec_lines=$(wc -l < "$ipsec_temp")
-        echo "   ✅ IPSec capture: $ipsec_lines lines"
-    else
-        echo "   ❌ IPSec capture: No data captured"
-    fi
-    
-    # Analyze traffic using Python
-    if [[ -s "$vxlan_temp" ]] || [[ -s "$tap_temp" ]] || [[ -s "$ipsec_temp" ]]; then
-        print_color "green" "🎯 Traffic Analysis Results:"
-        python3 src/xdp_functions/traffic_analyzer.py "$vxlan_temp" "$ipsec_temp" "$tap_temp" 30
-        
-        echo
-        print_color "blue" "📊 Pipeline Performance Analysis:"
-        echo "  🔍 Incoming VXLAN traffic shows all source telemetry data"
-        echo "  ✅ Processed output shows VXLAN packets after XDP pipeline processing"
-        echo "  📊 All VXLAN traffic is processed (no IP filtering applied)"
-        echo "  📈 Compare input vs output rates to measure processing efficiency"
-    else
-        print_color "yellow" "   ❌ No traffic captured during analysis"
-        print_color "blue" "   💡 Check if XDP program is loaded and traffic is flowing"
-    fi
+    print_color "green" "📈 Traffic Summary:"
+    echo "   • VXLAN Input:  $vxlan_count packets"
+    echo "   • Pipeline Output: $tap_count packets" 
+    echo "   • Processing Rate: $(( vxlan_count > 0 ? tap_count * 100 / vxlan_count : 0 ))%"
+    echo "   • All traffic processed (no IP blocking)"
     
     # Cleanup
-    rm -f "$vxlan_temp" "$tap_temp" "$ipsec_temp" 2>/dev/null || true
-    
-    print_color "blue" "\n💡 Usage Tips:"
-    echo "  • All VXLAN traffic is processed by the XDP pipeline"
-    echo "  • IP allowlist exists but does NOT filter traffic (reference only)"
-    echo "  • Use './xdp.sh status' to check pipeline health"
-    echo "  • Run this command periodically to monitor traffic patterns"
+    rm -f "$vxlan_temp" "$tap_temp" 2>/dev/null || true
+}
 }
 
 # Legacy function aliases for backward compatibility
