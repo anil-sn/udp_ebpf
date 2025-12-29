@@ -1245,8 +1245,8 @@ show_ip_statistics() {
         echo "   ├─────────────────┼─────────┼─────────┼──────────┤"
         
         # Extract source IPs from VXLAN traffic
-        grep -E '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ >' "$temp_file" 2>/dev/null | \
-        sed -E 's/.* ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | \
+        grep -E 'IP [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ >' "$temp_file" 2>/dev/null | \
+        sed -E 's/.*IP ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | \
         sort | uniq -c | sort -nr | head -8 | \
         while read -r count ip; do
             [ -z "$count" ] || [ -z "$ip" ] && continue
