@@ -1264,16 +1264,116 @@ show_ip_statistics() {
     fi
     
     if [[ -s "$vxlan_temp" ]] || [[ -s "$tap_temp" ]]; then
+        
+        # Combined summary with allowed/denied breakdown
+        local vxlan_packets=$(grep -c "vni\|IP.*>" "$vxlan_temp" 2>/dev/null || echo "0")
+        local tap_packets=$(grep -c "IP.*>" "$tap_temp" 2>/dev/null || echo "0")
+        local vxlan_ips=$(grep -E '^\s*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\s*>\|IP.*>' "$vxlan_temp" 2>/dev/null | sed -E 's/.*IP ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | sort -u | wc -l 2>/dev/null || echo "0")
+        local tap_ips=$(grep 'IP.*>' "$tap_temp" 2>/dev/null | sed -E 's/.*IP ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | sort -u | wc -l 2>/dev/null || echo "0")
+        
+        # Count allowed and denied IPs
+        local allowed_count=0
+        local denied_count=0
+        
+        # Count allowed IPs from TAP interface (these made it through)
+        if [[ -s "$tap_temp" ]]; then
+            allowed_count=$(grep 'IP.*>' "$tap_temp" 2>/dev/null | sed -E 's/.*IP ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | sort -u | wc -l 2>/dev/null || echo "0")
+        fi
+        
+        # Estimate denied count (VXLAN captured but not in TAP = blocked)
+        denied_count=$((vxlan_ips - allowed_count))
+        if [ "$denied_count" -lt 0 ]; then
+            denied_count=0
+        fi
+        
+        printf "\n   📈 TRAFFIC SUMMARY (Allowed vs Denied):\n"
+        printf "   ┌─────────────────┬─────────────────┬─────────────────┬─────────────────┐\n"
+        printf "   │ Traffic Type    │ Total Packets   │ Unique IPs      │ Status          │\n"
+        printf "   ├─────────────────┼─────────────────┼─────────────────┼─────────────────┤\n"
+        printf "   │ ✅ ALLOWED      │ %7d (%5.0f/s) │ %7d         │ Processed       │\n" "$tap_packets" "$(awk "BEGIN {print $tap_packets/30}" 2>/dev/null || echo "0")" "$allowed_count"
+        printf "   │ ❌ DENIED       │ %7d (%5.0f/s) │ %7d         │ Blocked         │\n" "$((vxlan_packets - tap_packets))" "$(awk "BEGIN {print ($vxlan_packets - $tap_packets)/30}" 2>/dev/null || echo "0")" "$denied_count"
+        printf "   │ 📊 TOTAL        │ %7d (%5.0f/s) │ %7d         │ Captured        │\n" "$vxlan_packets" "$(awk "BEGIN {print $vxlan_packets/30}" 2>/dev/null || echo "0")" "$vxlan_ips"
+        printf "   └─────────────────┴─────────────────┴─────────────────┴─────────────────┘\n"
+        
+        print_color "green" "\n   ✅ ANALYSIS LAYERS:"
+        print_color "white" "   • ✅ Allowed: Traffic that passed through XDP filtering (appears on TAP)"
+        print_color "white" "   • ❌ Denied: Traffic captured at VXLAN but blocked by allowlist"
+        print_color "white" "   • 📊 Both tables show the same format for easy comparison"
+        if [ "$vxlan_ips" -gt 0 ] && [ "$tap_ips" -gt 0 ] && [ "$vxlan_ips" -ne "$tap_ips" ]; then
+            print_color "yellow" "   • IP count difference indicates effective allowlist filtering"
+        fi
         echo ""
         
-        # Analyze VXLAN Inner Packets
-        if [[ -s "$vxlan_temp" ]]; then
+        # ALLOWED TRAFFIC ANALYSIS
+        print_color "green" "   ✅ ALLOWED TRAFFIC ANALYSIS:"
+        if [[ -s "$tap_temp" ]]; then
+            echo "   ✅ TAP capture: $tap_lines lines"
+            echo ""
             echo "   📊 VXLAN INNER PACKET ANALYSIS (Before Processing):"
             echo "   ┌─────────────────┬─────────┬─────────┬─────────┬──────────────────┐"
             echo "   │ VXLAN Inner IP  │ Packets │ PPS     │ % Total │ Raw Inner Source │"
             echo "   ├─────────────────┼─────────┼─────────┼─────────┼──────────────────┤"
             
-            # Parse VXLAN inner packet source IPs - look for lines after VXLAN headers
+            # Parse allowed TAP interface source IPs
+            local allowed_found=false
+            grep 'IP.*>' "$tap_temp" 2>/dev/null | \
+            sed -E 's/.*IP ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | \
+            sort | uniq -c | sort -nr | while read -r count ip; do
+                [ -z "$count" ] || [ -z "$ip" ] && continue
+                
+                # Check if IP is in allowlist
+                if sudo bpftool map dump id "$ip_map_id" --json 2>/dev/null | jq -r '.[].formatted.key' 2>/dev/null | \
+                   while read -r ip_int; do
+                       if [ -n "$ip_int" ] && [ "$ip_int" != "null" ]; then
+                           local a=$((ip_int & 0xFF))
+                           local b=$(((ip_int >> 8) & 0xFF))
+                           local c=$(((ip_int >> 16) & 0xFF))
+                           local d=$(((ip_int >> 24) & 0xFF))
+                           local mapped_ip="$d.$c.$b.$a"
+                           if [ "$mapped_ip" = "$ip" ]; then
+                               echo "FOUND"
+                               break
+                           fi
+                       fi
+                   done | grep -q "FOUND"; then
+                    local pps=$(awk "BEGIN {printf \"%.1f\", $count/30}")
+                    local percent=$(awk "BEGIN {printf \"%.1f\", ($count/$tap_total)*100}")
+                    printf "   │ %-15s │ %7d │ %7s │ %6s%% │ %-16s │\n" "$ip" "$count" "$pps" "$percent" "VXLAN Inner"
+                    allowed_found=true
+                fi
+            done
+            
+            if [ "$allowed_found" != "true" ]; then
+                printf "   │ %-15s │ %7s │ %7s │ %7s │ %-16s │\n" "No data" "0" "0.0" "0.0%" "No allowed IPs"
+            fi
+            
+            echo "   └─────────────────┴─────────┴─────────┴─────────┴──────────────────┘"
+        else
+            echo "   ❌ TAP capture: No data captured"
+            echo ""
+            echo "   📊 VXLAN INNER PACKET ANALYSIS (Before Processing):"
+            echo "   ┌─────────────────┬─────────┬─────────┬─────────┬──────────────────┐"
+            echo "   │ VXLAN Inner IP  │ Packets │ PPS     │ % Total │ Raw Inner Source │"
+            echo "   ├─────────────────┼─────────┼─────────┼─────────┼──────────────────┤"
+            printf "   │ %-15s │ %7s │ %7s │ %7s │ %-16s │\n" "No data" "0" "0.0" "0.0%" "No capture data"
+            echo "   └─────────────────┴─────────┴─────────┴─────────┴──────────────────┘"
+        fi
+        
+        echo ""
+        
+        # DENIED TRAFFIC ANALYSIS  
+        print_color "red" "   ❌ DENIED TRAFFIC ANALYSIS:"
+        if [[ -s "$vxlan_temp" ]]; then
+            local vxlan_lines=$(wc -l < "$vxlan_temp")
+            echo "   ❌ TAP capture: No data captured"
+            echo ""
+            echo "   📊 VXLAN INNER PACKET ANALYSIS (Before Processing):"
+            echo "   ┌─────────────────┬─────────┬─────────┬─────────┬──────────────────┐"
+            echo "   │ VXLAN Inner IP  │ Packets │ PPS     │ % Total │ Raw Inner Source │"
+            echo "   ├─────────────────┼─────────┼─────────┼─────────┼──────────────────┤"
+            
+            # Parse denied VXLAN inner packet source IPs
+            local denied_found=false
             local vxlan_total=0
             
             # Method 1: Look for lines with "vni" followed by IP lines
@@ -1286,56 +1386,9 @@ show_ip_statistics() {
                 sed -E 's/^\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+\s*>.*/\1/' | \
                 sort | uniq -c | sort -nr | while read -r count ip; do
                     [ -z "$count" ] || [ -z "$ip" ] && continue
-                    local pps=$(awk "BEGIN {printf \"%.1f\", $count/30}")
-                    local percent=$(awk "BEGIN {printf \"%.1f\", ($count/$vxlan_total)*100}")
                     
-                    printf "   │ %-15s │ %7d │ %7s │ %6s%% │ %-16s │\n" "$ip" "$count" "$pps" "$percent" "VXLAN Inner"
-                done
-            else
-                # Method 2: Look for any IP traffic in VXLAN capture
-                vxlan_total=$(grep -c 'IP.*>' "$vxlan_temp" 2>/dev/null || echo "0")
-                if [ "$vxlan_total" -gt 0 ]; then
-                    grep 'IP.*>' "$vxlan_temp" 2>/dev/null | \
-                    sed -E 's/.*IP ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | \
-                    sort | uniq -c | sort -nr | head -10 | while read -r count ip; do
-                        [ -z "$count" ] || [ -z "$ip" ] && continue
-                        local pps=$(awk "BEGIN {printf \"%.1f\", $count/30}")
-                        local percent=$(awk "BEGIN {printf \"%.1f\", ($count/$vxlan_total)*100}")
-                        
-                        printf "   │ %-15s │ %7d │ %7s │ %6s%% │ %-16s │\n" "$ip" "$count" "$pps" "$percent" "VXLAN Traffic"
-                    done
-                fi
-            fi
-            
-            if [ "$vxlan_total" -eq 0 ]; then
-                printf "   │ %-15s │ %7s │ %7s │ %7s │ %-16s │\n" "No data" "0" "0.0" "0.0%" "Capture issue"
-            fi
-            
-            echo "   └─────────────────┴─────────┴─────────┴─────────┴──────────────────┘"
-            echo ""
-        fi
-        
-        # Analyze TAP Interface Packets  
-        if [[ -s "$tap_temp" ]]; then
-            echo "   📊 TAP INTERFACE ANALYSIS (After XDP Processing):"
-            echo "   ┌─────────────────┬─────────┬─────────┬─────────┬──────────────────┐"
-            echo "   │ TAP Source IP   │ Packets │ PPS     │ % Total │ Allowlist Status │"
-            echo "   ├─────────────────┼─────────┼─────────┼─────────┼──────────────────┤"
-            
-            local tap_total=$(grep -c 'IP.*>' "$tap_temp" 2>/dev/null || echo "0")
-            
-            if [ "$tap_total" -gt 0 ]; then
-                # Parse TAP interface source IPs
-                grep 'IP.*>' "$tap_temp" 2>/dev/null | \
-                sed -E 's/.*IP ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | \
-                sort | uniq -c | sort -nr | while read -r count ip; do
-                    [ -z "$count" ] || [ -z "$ip" ] && continue
-                    local pps=$(awk "BEGIN {printf \"%.1f\", $count/30}")
-                    local percent=$(awk "BEGIN {printf \"%.1f\", ($count/$tap_total)*100}")
-                    
-                    # Check if IP is in allowlist
-                    local status="❌ BLOCKED"
-                    if sudo bpftool map dump id "$ip_map_id" --json 2>/dev/null | jq -r '.[].formatted.key' 2>/dev/null | \
+                    # Check if IP is NOT in allowlist (denied)
+                    if ! sudo bpftool map dump id "$ip_map_id" --json 2>/dev/null | jq -r '.[].formatted.key' 2>/dev/null | \
                        while read -r ip_int; do
                            if [ -n "$ip_int" ] && [ "$ip_int" != "null" ]; then
                                local a=$((ip_int & 0xFF))
@@ -1349,62 +1402,60 @@ show_ip_statistics() {
                                fi
                            fi
                        done | grep -q "FOUND"; then
-                        status="✅ ALLOWED"
+                        local pps=$(awk "BEGIN {printf \"%.1f\", $count/30}")
+                        local percent=$(awk "BEGIN {printf \"%.1f\", ($count/$vxlan_total)*100}")
+                        printf "   │ %-15s │ %7d │ %7s │ %6s%% │ %-16s │\n" "$ip" "$count" "$pps" "$percent" "VXLAN Inner"
+                        denied_found=true
                     fi
-                    
-                    printf "   │ %-15s │ %7d │ %7s │ %6s%% │ %-16s │\n" "$ip" "$count" "$pps" "$percent" "$status"
                 done
             else
-                printf "   │ %-15s │ %7s │ %7s │ %7s │ %-16s │\n" "No data" "0" "0.0" "0.0%" "Capture issue"
+                # Method 2: Look for any IP traffic in VXLAN capture
+                vxlan_total=$(grep -c 'IP.*>' "$vxlan_temp" 2>/dev/null || echo "0")
+                if [ "$vxlan_total" -gt 0 ]; then
+                    grep 'IP.*>' "$vxlan_temp" 2>/dev/null | \
+                    sed -E 's/.*IP ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | \
+                    sort | uniq -c | sort -nr | head -10 | while read -r count ip; do
+                        [ -z "$count" ] || [ -z "$ip" ] && continue
+                        
+                        # Check if IP is NOT in allowlist (denied)
+                        if ! sudo bpftool map dump id "$ip_map_id" --json 2>/dev/null | jq -r '.[].formatted.key' 2>/dev/null | \
+                           while read -r ip_int; do
+                               if [ -n "$ip_int" ] && [ "$ip_int" != "null" ]; then
+                                   local a=$((ip_int & 0xFF))
+                                   local b=$(((ip_int >> 8) & 0xFF))
+                                   local c=$(((ip_int >> 16) & 0xFF))
+                                   local d=$(((ip_int >> 24) & 0xFF))
+                                   local mapped_ip="$d.$c.$b.$a"
+                                   if [ "$mapped_ip" = "$ip" ]; then
+                                       echo "FOUND"
+                                       break
+                                   fi
+                               fi
+                           done | grep -q "FOUND"; then
+                            local pps=$(awk "BEGIN {printf \"%.1f\", $count/30}")
+                            local percent=$(awk "BEGIN {printf \"%.1f\", ($count/$vxlan_total)*100}")
+                            printf "   │ %-15s │ %7d │ %7s │ %6s%% │ %-16s │\n" "$ip" "$count" "$pps" "$percent" "VXLAN Traffic"
+                            denied_found=true
+                        fi
+                    done
+                fi
+            fi
+            
+            if [ "$denied_found" != "true" ]; then
+                printf "   │ %-15s │ %7s │ %7s │ %7s │ %-16s │\n" "No data" "0" "0.0" "0.0%" "No denied IPs"
             fi
             
             echo "   └─────────────────┴─────────┴─────────┴─────────┴──────────────────┘"
+        else
+            echo "   ❌ TAP capture: No data captured"
+            echo ""
+            echo "   📊 VXLAN INNER PACKET ANALYSIS (Before Processing):"
+            echo "   ┌─────────────────┬─────────┬─────────┬─────────┬──────────────────┐"
+            echo "   │ VXLAN Inner IP  │ Packets │ PPS     │ % Total │ Raw Inner Source │"
+            echo "   ├─────────────────┼─────────┼─────────┼─────────┼──────────────────┤"
+            printf "   │ %-15s │ %7s │ %7s │ %7s │ %-16s │\n" "No data" "0" "0.0" "0.0%" "Capture issue"
+            echo "   └─────────────────┴─────────┴─────────┴─────────┴──────────────────┘"
         fi
-        
-        # Combined summary
-        local vxlan_packets=$(grep -c "vni\|IP.*>" "$vxlan_temp" 2>/dev/null || echo "0")
-        local tap_packets=$(grep -c "IP.*>" "$tap_temp" 2>/dev/null || echo "0")
-        local vxlan_ips=$(grep -E '^\s*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\s*>\|IP.*>' "$vxlan_temp" 2>/dev/null | sed -E 's/.*IP ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | sort -u | wc -l 2>/dev/null || echo "0")
-        local tap_ips=$(grep 'IP.*>' "$tap_temp" 2>/dev/null | sed -E 's/.*IP ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | sort -u | wc -l 2>/dev/null || echo "0")
-        
-        printf "\n   📈 COMPREHENSIVE TRAFFIC SUMMARY:\n"
-        printf "   • VXLAN captured: %d packets (~%.0f pps) from %d unique IPs\n" "$vxlan_packets" "$(awk "BEGIN {print $vxlan_packets/30}" 2>/dev/null || echo "0")" "$vxlan_ips"
-        printf "   • TAP processed: %d packets (~%.0f pps) from %d unique IPs\n" "$tap_packets" "$(awk "BEGIN {print $tap_packets/30}" 2>/dev/null || echo "0")" "$tap_ips"
-        
-        print_color "green" "\n   ✅ ANALYSIS LAYERS:"
-        print_color "white" "   • VXLAN Inner: Shows original source IPs before XDP processing"
-        print_color "white" "   • TAP Interface: Shows final IPs after XDP NAT/processing (allowlist applies here)"
-        if [ "$vxlan_ips" -gt 0 ] && [ "$tap_ips" -gt 0 ] && [ "$vxlan_ips" -ne "$tap_ips" ]; then
-            print_color "yellow" "   • IP count difference indicates NAT translation or IP modification by XDP program"
-        fi
-        
-        # Calculate blocked traffic percentage
-        echo ""
-        print_color "red" "   🚫 TOP BLOCKED SOURCE IPs (High Volume):"
-        grep 'IP.*>' "$temp_file" 2>/dev/null | \
-        sed -E 's/.*IP ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | \
-        sort | uniq -c | sort -nr | head -5 | while read -r count ip; do
-            [ -z "$count" ] || [ -z "$ip" ] && continue
-            local pps=$(awk "BEGIN {printf \"%.1f\", $count/30}")
-            
-            # Check if blocked
-            if ! sudo bpftool map dump id "$ip_map_id" --json 2>/dev/null | jq -r '.[].formatted.key' 2>/dev/null | \
-               while read -r ip_int; do
-                   if [ -n "$ip_int" ] && [ "$ip_int" != "null" ]; then
-                       local a=$((ip_int & 0xFF))
-                       local b=$(((ip_int >> 8) & 0xFF))
-                       local c=$(((ip_int >> 16) & 0xFF))
-                       local d=$(((ip_int >> 24) & 0xFF))
-                       local mapped_ip="$d.$c.$b.$a"
-                       if [ "$mapped_ip" = "$ip" ]; then
-                           echo "FOUND"
-                           break
-                       fi
-                   fi
-               done | grep -q "FOUND"; then
-                printf "     🔴 %s: %d packets (%.1f pps) - ADD TO ALLOWLIST?\n" "$ip" "$count" "$pps"
-            fi
-        done
         
     else
         print_color "yellow" "   ❌ No VXLAN traffic captured during XDP sample"
