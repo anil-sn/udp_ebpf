@@ -17,8 +17,15 @@ print_color() {
 
 # Check if BPF programs are loaded
 check_bpf_program() {
-    local count=$(sudo bpftool prog list type xdp 2>/dev/null | grep -c "xdp" || echo "0")
-    echo "$count" | tr -d '\n'
+    # First try bpftool if available
+    if command -v bpftool >/dev/null 2>&1; then
+        local count=$(sudo bpftool prog list type xdp 2>/dev/null | grep -c "xdp" || echo "0")
+        echo "$count" | tr -d '\n'
+    else
+        # Fallback: check via ip link command for XDP programs
+        local count=$(ip link show 2>/dev/null | grep -c "prog/xdp" || echo "0")
+        echo "$count" | tr -d '\n'
+    fi
 }
 
 # Real-time monitoring using unified Python script
