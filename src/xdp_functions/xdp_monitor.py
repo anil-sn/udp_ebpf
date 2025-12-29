@@ -43,12 +43,12 @@ class XDPPipelineMonitor:
     def convert_bpf_ip_correct(self, ip_int: int) -> str:
         """Convert BPF integer IP to dotted decimal (little-endian from bpftool)"""
         # bpftool outputs IP integers in little-endian format
-        # We need to reverse the complete byte order
-        a = ip_int & 0xFF          # First byte
-        b = (ip_int >> 8) & 0xFF   # Second byte  
-        c = (ip_int >> 16) & 0xFF  # Third byte
-        d = (ip_int >> 24) & 0xFF  # Fourth byte
-        return f"{d}.{c}.{b}.{a}"  # Reverse the order completely
+        # Extract bytes in little-endian order
+        a = ip_int & 0xFF          # First octet (172)
+        b = (ip_int >> 8) & 0xFF   # Second octet (30)  
+        c = (ip_int >> 16) & 0xFF  # Third octet (83)
+        d = (ip_int >> 24) & 0xFF  # Fourth octet (192)
+        return f"{a}.{b}.{c}.{d}"  # Correct order: 172.30.83.192
     
     def load_allowlist_json(self) -> Optional[Dict]:
         """Load allowlist from JSON file"""
@@ -99,10 +99,7 @@ class XDPPipelineMonitor:
         for entry in ip_data:
             if "formatted" in entry and "key" in entry["formatted"]:
                 ip_int = entry["formatted"]["key"]
-                # Debug: print raw value
-                print(f"  DEBUG: Raw IP int: {ip_int} (0x{ip_int:08x})")
                 ip_str = self.convert_bpf_ip_correct(ip_int)  # Fixed function
-                print(f"  DEBUG: Converted to: {ip_str}")
                 ips.append(ip_str)
         
         # Sort IPs for consistent display
