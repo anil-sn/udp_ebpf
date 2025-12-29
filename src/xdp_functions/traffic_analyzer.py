@@ -118,29 +118,7 @@ class TrafficAnalyzer:
             process_rate = (total_processed / total_vxlan) * 100
             print(f"   • Drop Rate:    {drop_rate:.1f}%")
             print(f"   • Process Rate: {process_rate:.1f}%")
-        """Parse VXLAN traffic and extract inner source IPs"""
-        ip_counts = Counter()
-        
-        if not os.path.isfile(vxlan_file):
-            return {}
-        
-        try:
-            with open(vxlan_file, 'r') as f:
-                content = f.read()
-                
-            # Pattern to match VXLAN inner packets
-            # Looking for lines after "VXLAN, flags [I]" that contain IP traffic
-            vxlan_pattern = r'VXLAN, flags \[I\].*?vni \d+\s*\n\s*IP.*?(\d+\.\d+\.\d+\.\d+)\.\d+\s*>\s*(\d+\.\d+\.\d+\.\d+)'
-            
-            matches = re.findall(vxlan_pattern, content, re.MULTILINE | re.DOTALL)
-            for src_ip, dst_ip in matches:
-                ip_counts[src_ip] += 1
-                
-        except Exception as e:
-            print(f"   ❌ Error parsing VXLAN file: {e}", file=sys.stderr)
-            
-        return dict(ip_counts)
-    
+
     def parse_ipsec_traffic(self, ipsec_file: str) -> Dict[str, int]:
         """Parse IPSec/ESP traffic and extract source IPs"""
         ip_counts = Counter()
