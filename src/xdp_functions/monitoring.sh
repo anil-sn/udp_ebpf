@@ -51,25 +51,22 @@ show_vxlan_analysis() {
     
     echo
     print_color "cyan" "🔍 Multi-Protocol Traffic Analysis (30s capture):"
-    print_color "yellow" "   Analyzing VXLAN inner packets, IPSec traffic, and TAP output..."
-    print_color "cyan" "   (Shows inner IPs from VXLAN + encrypted IPSec flows + processed TAP IPs)"
+    print_color "yellow" "   Capturing incoming VXLAN, processed TAP output, and dropped packets..."
+    print_color "cyan" "   (Shows allowed vs denied IPs based on allowlist status)"
     
     # Capture traffic files
     local vxlan_temp="/tmp/vxlan_traffic_$$.txt"
     local tap_temp="/tmp/tap_traffic_$$.txt"
     local ipsec_temp="/tmp/ipsec_traffic_$$.txt"
     
-    echo "   Capturing VXLAN traffic (UDP 4789)..."
-    timeout 30s sudo tcpdump -i any -nn -c 1000 'port 4789' > "$vxlan_temp" 2>/dev/null &
-    local vxlan_pid=$!
+    echo "   Capturing incoming VXLAN traffic (pre-processing)..."
+    timeout 30s sudo tcpdump -i eth0 -nn -c 2000 'udp port 4789' > "$vxlan_temp" 2>/dev/null &
     
     echo "   Capturing IPSec traffic (UDP 4500)..."
     timeout 30s sudo tcpdump -i any -nn -c 1000 'port 4500' > "$ipsec_temp" 2>/dev/null &
-    local ipsec_pid=$!
     
-    echo "   Capturing TAP interface traffic..."
+    echo "   Capturing processed TAP output (post-processing)..."
     timeout 30s sudo tcpdump -i tap0 -nn -c 1000 > "$tap_temp" 2>/dev/null &
-    local tap_pid=$!
     
     # Simple wait approach - let timeout handle it
     echo "   Waiting for captures to complete (max 35s)..."
@@ -104,6 +101,13 @@ show_vxlan_analysis() {
     if [[ -s "$vxlan_temp" ]] || [[ -s "$tap_temp" ]] || [[ -s "$ipsec_temp" ]]; then
         print_color "green" "🎯 Traffic Analysis Results:"
         python3 src/xdp_functions/traffic_analyzer.py "$vxlan_temp" "$ipsec_temp" "$tap_temp" 30
+        
+        echo
+        print_color "blue" "📊 Pipeline Performance Analysis:"
+        echo "  🔍 Incoming VXLAN packets show ALL source IPs (before filtering)"
+        echo "  ✅ TAP output shows ONLY allowed IPs (after processing)"  
+        echo "  ❌ Missing IPs from TAP = DROPPED by allowlist filter"
+        echo "  📈 Compare VXLAN vs TAP counts to see filtering effectiveness"
     else
         print_color "yellow" "   ❌ No traffic captured during analysis"
         print_color "blue" "   💡 Check if XDP program is loaded and traffic is flowing"

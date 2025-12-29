@@ -351,7 +351,7 @@ case "$CMD" in
         fi
         ;;  
     "ipstats")
-        show_ip_statistics "$@"
+        show_vxlan_analysis "$@"
         ;;
     "cleanup") 
         cleanup_pipeline "$@"
