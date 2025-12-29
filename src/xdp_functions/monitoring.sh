@@ -1223,18 +1223,24 @@ show_ip_statistics() {
         print_color "red" "  ❌ Could not read pipeline statistics"
     fi
     
-    print_color "green" "\n🔍 VXLAN Inner Packet Analysis (30s multi-layer capture):"
-    print_color "yellow" "   Analyzing VXLAN inner packets and TAP output for 30 seconds..."
-    print_color "cyan" "   (Shows both VXLAN inner IPs and final processed IPs)"
+    print_color "green" "\n🔍 Multi-Protocol Traffic Analysis (30s capture):"
+    print_color "yellow" "   Analyzing VXLAN inner packets, IPSec traffic, and TAP output..."
+    print_color "cyan" "   (Shows inner IPs from VXLAN + encrypted IPSec flows + processed TAP IPs)"
     
     # Capture VXLAN inner packets using xdpdump
     local vxlan_temp="/tmp/vxlan_traffic_$$.txt"
     local tap_temp="/tmp/tap_traffic_$$.txt"
+    local ipsec_temp="/tmp/ipsec_traffic_$$.txt"
     
-    echo "   Capturing VXLAN traffic..."
+    echo "   Capturing VXLAN traffic (UDP 4789)..."
     # Capture VXLAN traffic with more robust command
     timeout 30s sudo xdpdump -i ens5 -w - 2>/dev/null | tcpdump -r - -n -vv 'udp port 4789' 2>/dev/null > "$vxlan_temp" &
     local xdp_pid=$!
+    
+    echo "   Capturing IPSec traffic (UDP 4500)..."
+    # Capture IPSec/ESP traffic 
+    timeout 30s tcpdump -i ens5 -n -vv 'udp port 4500' -c 50 2>/dev/null > "$ipsec_temp" &
+    local ipsec_pid=$!
     
     echo "   Capturing TAP interface traffic..."
     # Capture TAP traffic 
@@ -1243,8 +1249,8 @@ show_ip_statistics() {
     
     # Wait for both captures to complete
     sleep 30
-    kill "$xdp_pid" "$tap_pid" 2>/dev/null || true
-    wait "$xdp_pid" "$tap_pid" 2>/dev/null || true
+    kill "$xdp_pid" "$tap_pid" "$ipsec_pid" 2>/dev/null || true
+    wait "$xdp_pid" "$tap_pid" "$ipsec_pid" 2>/dev/null || true
     
     echo ""
     
@@ -1256,99 +1262,24 @@ show_ip_statistics() {
         echo "   ❌ VXLAN capture: No data captured"
     fi
     
-    if [[ -s "$tap_temp" ]]; then
-        local tap_lines=$(wc -l < "$tap_temp")
-        echo "   ✅ TAP capture: $tap_lines lines"
+    if [[ -s "$ipsec_temp" ]]; then
+        local ipsec_lines=$(wc -l < "$ipsec_temp")
+        echo "   ✅ IPSec capture: $ipsec_lines lines"
     else
-        echo "   ❌ TAP capture: No data captured"
+        echo "   ❌ IPSec capture: No data captured"
     fi
     
-    if [[ -s "$vxlan_temp" ]] || [[ -s "$tap_temp" ]]; then
+    if [[ -s "$vxlan_temp" ]] || [[ -s "$tap_temp" ]] || [[ -s "$ipsec_temp" ]]; then
         
-        # Simple traffic analysis
-        local vxlan_packets=$(grep -c "vni\|IP.*>" "$vxlan_temp" 2>/dev/null || echo "0")
-        local tap_packets=$(grep -c "IP.*>" "$tap_temp" 2>/dev/null || echo "0")
-        
-        # Sanitize packet counts
-        vxlan_packets=${vxlan_packets:-0}
-        tap_packets=${tap_packets:-0}
-        vxlan_packets=$(printf "%s" "$vxlan_packets" | tr -cd '0-9' || echo "0")
-        tap_packets=$(printf "%s" "$tap_packets" | tr -cd '0-9' || echo "0")
-        [ -z "$vxlan_packets" ] && vxlan_packets=0
-        [ -z "$tap_packets" ] && tap_packets=0
-        
-        printf "\n   📊 TRAFFIC ANALYSIS (30s capture):\n"
-        printf "   ┌─────────────────┬─────────┬─────────┬──────────────────┐\n"
-        printf "   │ Source IP       │ Packets │   PPS   │ Status           │\n"
-        printf "   ├─────────────────┼─────────┼─────────┼──────────────────┤\n"
-        
-        # Analyze VXLAN traffic and check allowlist status
-        local found_traffic=false
-        if [[ -s "$vxlan_temp" ]]; then
-            # Extract IPs from VXLAN capture
-            if grep -q "vni" "$vxlan_temp" 2>/dev/null; then
-                # Method 1: VXLAN format with VNI
-                grep -A1 "vni" "$vxlan_temp" 2>/dev/null | \
-                grep -E '^\s*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\s*>' | \
-                sed -E 's/^\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+\s*>.*/\1/' | \
-                sort | uniq -c | sort -nr | head -10 | while read -r count ip; do
-                    [ -z "$count" ] || [ -z "$ip" ] && continue
-                    local pps=$(awk "BEGIN {printf \"%.1f\", $count/30}" 2>/dev/null || echo "0")
-                    
-                    # Check if IP is in allowlist - simplified check using JSON file
-                    local status="❌ DENIED"
-                    if [[ -s "/mnt/c/Users/asrirang/git/udp_ebpf/src/ip_allowlist.json" ]]; then
-                        if grep -q "\"$ip\"" "/mnt/c/Users/asrirang/git/udp_ebpf/src/ip_allowlist.json" 2>/dev/null; then
-                            status="✅ ALLOWED"
-                        fi
-                    fi
-                    
-                    printf "   │ %-15s │ %7d │ %7s │ %-16s │\n" "$ip" "$count" "$pps" "$status"
-                    found_traffic=true
-                done
-            else
-                # Method 2: Regular IP traffic
-                grep 'IP.*>' "$vxlan_temp" 2>/dev/null | \
-                sed -E 's/.*IP ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | \
-                sort | uniq -c | sort -nr | head -10 | while read -r count ip; do
-                    [ -z "$count" ] || [ -z "$ip" ] && continue
-                    local pps=$(awk "BEGIN {printf \"%.1f\", $count/30}" 2>/dev/null || echo "0")
-                    
-                    # Check if IP is in allowlist - simplified check using JSON file
-                    local status="❌ DENIED"
-                    if [[ -s "/mnt/c/Users/asrirang/git/udp_ebpf/src/ip_allowlist.json" ]]; then
-                        if grep -q "\"$ip\"" "/mnt/c/Users/asrirang/git/udp_ebpf/src/ip_allowlist.json" 2>/dev/null; then
-                            status="✅ ALLOWED"
-                        fi
-                    fi
-                    
-                    printf "   │ %-15s │ %7d │ %7s │ %-16s │\n" "$ip" "$count" "$pps" "$status"
-                    found_traffic=true
-                done
-            fi
-        fi
-        
-        if [ "$found_traffic" != "true" ]; then
-            printf "   │ %-15s │ %7s │ %7s │ %-16s │\n" "No traffic" "0" "0.0" "No data captured"
-        fi
-        
-        printf "   └─────────────────┴─────────┴─────────┴──────────────────┘\n"
-        
-        # Simple summary
-        local denied_count=$((vxlan_packets - tap_packets))
-        if [ "$denied_count" -lt 0 ]; then denied_count=0; fi
-        
-        printf "\n   📈 SUMMARY:\n"
-        printf "   • Captured: %d packets (~%.0f pps)\n" "$vxlan_packets" "$(awk "BEGIN {print $vxlan_packets/30}" 2>/dev/null || echo "0")"
-        printf "   • Allowed: %d packets (~%.0f pps)\n" "$tap_packets" "$(awk "BEGIN {print $tap_packets/30}" 2>/dev/null || echo "0")"
-        printf "   • Denied: %d packets (~%.0f pps)\n" "$denied_count" "$(awk "BEGIN {print $denied_count/30}" 2>/dev/null || echo "0")"
+        # Call Python traffic analyzer
+        python3 src/xdp_functions/traffic_analyzer.py "$vxlan_temp" "$ipsec_temp" "$tap_temp" 30
         
     else
-        print_color "yellow" "   ❌ No VXLAN traffic captured during XDP sample"
-        print_color "blue" "   💡 Check if XDP program is loaded and VXLAN traffic is flowing"
+        print_color "yellow" "   ❌ No traffic captured during analysis"
+        print_color "blue" "   💡 Check if XDP program is loaded and traffic is flowing"
     fi
     
-    rm -f "$vxlan_temp" "$tap_temp" 2>/dev/null || true
+    rm -f "$vxlan_temp" "$tap_temp" "$ipsec_temp" 2>/dev/null || true
     
     print_color "blue" "\n💡 Usage Tips:"
     echo "  • IPs with ✅ are processed by the pipeline"
