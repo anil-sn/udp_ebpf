@@ -59,31 +59,33 @@ show_vxlan_analysis() {
     fi
     echo
     
-    print_color "cyan" "🔍 Traffic Analysis (10s capture):"
-    echo "   Analyzing VXLAN input vs IPSec output..."
+    print_color "cyan" "🔍 Traffic Analysis (5s capture):"
+    echo "   Quick packet capture analysis..."
     
-    # Kill any existing tcpdump processes first
-    sudo pkill -f "tcpdump.*port.*4789" 2>/dev/null || true
-    sudo pkill -f "tcpdump.*port.*4500" 2>/dev/null || true
+    # Kill any existing tcpdump processes
+    sudo pkill -9 tcpdump 2>/dev/null || true
     sleep 1
     
-    # Capture VXLAN input (port 4789) for 10 seconds - simplified approach
-    local vxlan_count=$(timeout 10s sudo tcpdump -i ens5 -n -c 100 'udp port 4789' 2>/dev/null | wc -l || echo "0")
+    # Simple 5 second captures with limits
+    echo "   Capturing VXLAN (4789)..."
+    local vxlan_count=$(timeout 5s sudo tcpdump -i ens5 -nn -c 50 'udp port 4789' 2>/dev/null | grep -c "VXLAN" || echo "0")
     
-    # Capture IPSec output (port 4500) for 10 seconds  
-    local ipsec_count=$(timeout 10s sudo tcpdump -i ens5 -n -c 100 'udp port 4500' 2>/dev/null | wc -l || echo "0")
+    sleep 1
+    sudo pkill -9 tcpdump 2>/dev/null || true
+    
+    echo "   Capturing IPSec (4500)..."  
+    local ipsec_count=$(timeout 5s sudo tcpdump -i ens5 -nn -c 50 'udp port 4500' 2>/dev/null | grep -c "UDP-encap" || echo "0")
+    
+    # Final cleanup
+    sudo pkill -9 tcpdump 2>/dev/null || true
     
     # Ensure variables are numbers
     vxlan_count=${vxlan_count:-0}
     ipsec_count=${ipsec_count:-0}
     
-    # Clean up any remaining processes
-    sudo pkill -f "tcpdump.*port.*4789" 2>/dev/null || true
-    sudo pkill -f "tcpdump.*port.*4500" 2>/dev/null || true
-    
-    # Calculate rates
-    local vxlan_pps=$((vxlan_count / 10))
-    local ipsec_pps=$((ipsec_count / 10))
+    # Calculate rates (5 second window)
+    local vxlan_pps=$((vxlan_count / 5))
+    local ipsec_pps=$((ipsec_count / 5))
     local processing_rate=0
     local loss_rate=0
     
@@ -94,17 +96,17 @@ show_vxlan_analysis() {
     
     echo
     print_color "green" "📈 Traffic Analysis Results:"
-    echo "   • VXLAN Input (4789):  $vxlan_count packets ($vxlan_pps PPS)"
-    echo "   • IPSec Output (4500):  $ipsec_count packets ($ipsec_pps PPS)"
-    echo "   • Processing Rate:      ${processing_rate}%"
-    echo "   • Loss Rate:           ${loss_rate}%"
-    echo "   • Firewall Blocking:    0% (no IP filtering applied)"
+    echo "   • VXLAN Input (4789):   $vxlan_count packets (~$vxlan_pps PPS)"
+    echo "   • IPSec Output (4500):   $ipsec_count packets (~$ipsec_pps PPS)"
+    echo "   • Processing Rate:       ${processing_rate}%"
+    echo "   • Loss Rate:            ${loss_rate}%"
+    echo "   • Firewall Blocking:     0% (no IP filtering applied)"
     echo
     
-    if [ $loss_rate -lt 5 ]; then
+    if [ "$loss_rate" -lt 5 ]; then
         print_color "green" "✅ Pipeline Performance: EXCELLENT"
-    elif [ $loss_rate -lt 15 ]; then
-        print_color "yellow" "⚠️  Pipeline Performance: GOOD"
+    elif [ "$loss_rate" -lt 15 ]; then
+        print_color "yellow" "⚠️  Pipeline Performance: GOOD"  
     else
         print_color "red" "❌ Pipeline Performance: NEEDS ATTENTION"
     fi
