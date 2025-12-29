@@ -52,8 +52,8 @@ show_vxlan_analysis() {
     
     echo
     print_color "cyan" "🔍 Multi-Protocol Traffic Analysis (30s capture):"
-    print_color "yellow" "   Capturing incoming VXLAN, processed TAP output, and dropped packets..."
-    print_color "cyan" "   (Shows allowed vs denied IPs based on allowlist status)"
+    print_color "yellow" "   Capturing incoming VXLAN and processed output traffic..."
+    print_color "cyan" "   (Analyzing traffic flow patterns and processing performance)"
     
     # Capture traffic files
     local vxlan_temp="/tmp/vxlan_traffic_$$.txt"
@@ -105,10 +105,10 @@ show_vxlan_analysis() {
         
         echo
         print_color "blue" "📊 Pipeline Performance Analysis:"
-        echo "  🔍 Incoming VXLAN packets show ALL source IPs (before filtering)"
-        echo "  ✅ TAP output shows ONLY allowed IPs (after processing)"  
-        echo "  ❌ Missing IPs from TAP = DROPPED by allowlist filter"
-        echo "  📈 Compare VXLAN vs TAP counts to see filtering effectiveness"
+        echo "  🔍 Incoming VXLAN traffic shows all source telemetry data"
+        echo "  ✅ Processed output shows VXLAN packets after XDP pipeline processing"
+        echo "  📊 All VXLAN traffic is processed (no IP filtering applied)"
+        echo "  📈 Compare input vs output rates to measure processing efficiency"
     else
         print_color "yellow" "   ❌ No traffic captured during analysis"
         print_color "blue" "   💡 Check if XDP program is loaded and traffic is flowing"
@@ -118,10 +118,10 @@ show_vxlan_analysis() {
     rm -f "$vxlan_temp" "$tap_temp" "$ipsec_temp" 2>/dev/null || true
     
     print_color "blue" "\n💡 Usage Tips:"
-    echo "  • IPs with ✅ are processed by the pipeline"
-    echo "  • IPs with ❌ are filtered out (not in allowlist)" 
-    echo "  • Use './xdp.sh ips' to manage the allowlist"
-    echo "  • Run this command periodically to monitor IP-level performance"
+    echo "  • All VXLAN traffic is processed by the XDP pipeline"
+    echo "  • IP allowlist exists but does NOT filter traffic (reference only)"
+    echo "  • Use './xdp.sh status' to check pipeline health"
+    echo "  • Run this command periodically to monitor traffic patterns"
 }
 
 # Legacy function aliases for backward compatibility

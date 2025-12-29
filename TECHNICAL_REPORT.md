@@ -766,7 +766,7 @@ flowchart LR
         INNER["Inner Packet Analysis<br>- Inner Ethernet Parse<br>- Inner IP Validation<br>- Inner Protocol Detection<br>- DF Bit Management"]
   end
  subgraph subGraph3["Stage 2: NAT Engine"]
-        NAT["nat_engine<br>- IP Allowlist Check<br>- Source Port Matching<br>- NAT Rule Lookup<br>- Address Translation"]
+        NAT["nat_engine<br>- Source Port Matching<br>- NAT Rule Lookup<br>- Address Translation<br>- All VXLAN Traffic Processed"]
         DNAT["DNAT Processing<br>- Dest IP: Customer to 10.2.41.17<br>- Dest Port: Various to 8081<br>- Checksum Recalculation<br>- Header Updates"]
   end
  subgraph subGraph4["Stage 3: Forwarding Engine"]
@@ -783,7 +783,7 @@ flowchart LR
  subgraph subGraph6["BPF Maps - Shared State"]
     direction LR
         STATS["stats_map<br>Per-CPU Counters<br>10 Statistics Types<br>Lock-Free Updates"]
-        IP_LIST["ip_allowlist<br>324 Device IPs<br>Hash Map Lookup<br>O(1) Performance"]
+        IP_LIST["ip_allowlist<br>324 Device IPs<br>Reference Data<br>NOT Used for Filtering"]
         NAT_MAP["nat_map<br>Port-Based Rules<br>Source Port to Target<br>Fast Translation"]
         INTERFACE["interface_map<br>MAC Addresses<br>Interface Metadata<br>L2 Configuration"]
         REDIRECT_MAP["redirect_map<br>Target Interface Index<br>XDP_REDIRECT Config<br>Zero-Copy Forwarding"]
@@ -951,15 +951,14 @@ flowchart LR
 
 #### **Stage 3: NAT Engine (`nat_engine`)**
 ```c
-// IP allowlist validation and NAT processing
+// NAT processing for all VXLAN traffic
 1. Inner source IP extraction
-2. IP allowlist lookup (324 device validation)
-3. Source port extraction and NAT rule matching
-4. Destination IP translation (Customer IP → 10.2.41.17)
-5. Destination port translation (Various → 8081)
-6. IP header checksum recalculation
-7. Statistics update (STAT_NAT_APPLIED)
-8. Tail call to forwarding_stage (Stage 4)
+2. Source port extraction and NAT rule matching  
+3. Destination IP translation (Customer IP → 10.2.41.17)
+4. Destination port translation (Various → 8081)
+5. IP header checksum recalculation
+6. Statistics update (STAT_NAT_APPLIED)
+7. Tail call to forwarding_stage (Stage 4)
 ```
 
 #### **Stage 4: Forwarding Engine (`forwarding_stage`)**
@@ -978,7 +977,7 @@ flowchart LR
 ```c
 // Shared state management across all stages
 stats_map:        Per-CPU performance counters (10 types)
-ip_allowlist:     324 device IP validation (hash lookup)
+ip_allowlist:     324 device IP reference data (not used for filtering)
 nat_map:          Port-based NAT rules (source port → target)
 interface_map:    Target interface MAC and metadata
 redirect_map:     XDP_REDIRECT interface configuration
