@@ -193,6 +193,36 @@ class TrafficAnalyzer:
             
         return dict(ip_counts)
     
+    def parse_vxlan_traffic(self, vxlan_file: str) -> Dict[str, int]:
+        """Parse VXLAN traffic from tcpdump capture file"""
+        ip_counts = defaultdict(int)
+        
+        try:
+            if not os.path.exists(vxlan_file):
+                print(f"   ⚠️ VXLAN file not found: {vxlan_file}", file=sys.stderr)
+                return dict(ip_counts)
+            
+            with open(vxlan_file, 'r') as f:
+                for line_num, line in enumerate(f, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    # Parse VXLAN traffic format: timestamp IP src > dst: VXLAN ...
+                    # Look for IP addresses in VXLAN traffic
+                    ip_pattern = r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
+                    ips = re.findall(ip_pattern, line)
+                    
+                    for ip in ips:
+                        # Skip common non-routable IPs
+                        if not ip.startswith(('127.', '0.', '255.')):
+                            ip_counts[ip] += 1
+                    
+        except Exception as e:
+            print(f"   ❌ Error parsing VXLAN file: {e}", file=sys.stderr)
+            
+        return dict(ip_counts)
+    
     def check_allowlist_status(self, ip: str) -> str:
         """Check if IP is in allowlist"""
         if ip in self.allowlist_ips:

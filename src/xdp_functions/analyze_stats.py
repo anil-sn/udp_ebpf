@@ -251,8 +251,8 @@ def main():
     
     args = parser.parse_args()
     
-    # Default to detailed if no option specified
-    compact = args.compact and not args.detailed
+    # Use compact mode if --compact is specified, otherwise detailed
+    compact = args.compact
     
     analyzer = VXLANStatsAnalyzer(compact=compact)
     return analyzer.run()
