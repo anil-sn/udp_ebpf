@@ -62,11 +62,24 @@ show_vxlan_analysis() {
     print_color "cyan" "🔍 Traffic Analysis (10s capture):"
     echo "   Analyzing VXLAN input vs IPSec output..."
     
-    # Capture VXLAN input (port 4789) for 10 seconds
-    local vxlan_count=$(timeout 10s sudo xdpdump -i ens5 -w - 2>/dev/null | tcpdump -r - -n 'udp port 4789' 2>/dev/null | wc -l)
+    # Kill any existing tcpdump processes first
+    sudo pkill -f "tcpdump.*port.*4789" 2>/dev/null || true
+    sudo pkill -f "tcpdump.*port.*4500" 2>/dev/null || true
+    sleep 1
+    
+    # Capture VXLAN input (port 4789) for 10 seconds - simplified approach
+    local vxlan_count=$(timeout 10s sudo tcpdump -i ens5 -n -c 100 'udp port 4789' 2>/dev/null | wc -l || echo "0")
     
     # Capture IPSec output (port 4500) for 10 seconds  
-    local ipsec_count=$(timeout 10s tcpdump -i ens5 -n -c 1000 'udp port 4500' 2>/dev/null | wc -l)
+    local ipsec_count=$(timeout 10s sudo tcpdump -i ens5 -n -c 100 'udp port 4500' 2>/dev/null | wc -l || echo "0")
+    
+    # Ensure variables are numbers
+    vxlan_count=${vxlan_count:-0}
+    ipsec_count=${ipsec_count:-0}
+    
+    # Clean up any remaining processes
+    sudo pkill -f "tcpdump.*port.*4789" 2>/dev/null || true
+    sudo pkill -f "tcpdump.*port.*4500" 2>/dev/null || true
     
     # Calculate rates
     local vxlan_pps=$((vxlan_count / 10))
@@ -74,7 +87,7 @@ show_vxlan_analysis() {
     local processing_rate=0
     local loss_rate=0
     
-    if [ $vxlan_count -gt 0 ]; then
+    if [ "$vxlan_count" -gt 0 ]; then
         processing_rate=$((ipsec_count * 100 / vxlan_count))
         loss_rate=$((100 - processing_rate))
     fi
