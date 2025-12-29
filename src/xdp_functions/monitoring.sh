@@ -59,36 +59,42 @@ show_vxlan_analysis() {
     fi
     echo
     
-    # Quick interface statistics instead of tcpdump
-    print_color "cyan" "🔍 Interface Traffic Statistics:"
-    echo
+    print_color "cyan" "🔍 Traffic Analysis (10s capture):"
+    echo "   Analyzing VXLAN input vs IPSec output..."
     
-    # Get interface stats before
-    local ens5_rx_before=$(cat /sys/class/net/ens5/statistics/rx_packets 2>/dev/null || echo "0")
-    local tap0_tx_before=$(cat /sys/class/net/tap0/statistics/tx_packets 2>/dev/null || echo "0")
+    # Capture VXLAN input (port 4789) for 10 seconds
+    local vxlan_count=$(timeout 10s sudo xdpdump -i ens5 -w - 2>/dev/null | tcpdump -r - -n 'udp port 4789' 2>/dev/null | wc -l)
     
-    echo "   Monitoring traffic for 5 seconds..."
-    sleep 5
+    # Capture IPSec output (port 4500) for 10 seconds  
+    local ipsec_count=$(timeout 10s tcpdump -i ens5 -n -c 1000 'udp port 4500' 2>/dev/null | wc -l)
     
-    # Get interface stats after
-    local ens5_rx_after=$(cat /sys/class/net/ens5/statistics/rx_packets 2>/dev/null || echo "0")
-    local tap0_tx_after=$(cat /sys/class/net/tap0/statistics/tx_packets 2>/dev/null || echo "0")
-    
-    # Calculate differences
-    local ens5_delta=$((ens5_rx_after - ens5_rx_before))
-    local tap0_delta=$((tap0_tx_after - tap0_tx_before))
+    # Calculate rates
+    local vxlan_pps=$((vxlan_count / 10))
+    local ipsec_pps=$((ipsec_count / 10))
     local processing_rate=0
+    local loss_rate=0
     
-    if [ $ens5_delta -gt 0 ]; then
-        processing_rate=$((tap0_delta * 100 / ens5_delta))
+    if [ $vxlan_count -gt 0 ]; then
+        processing_rate=$((ipsec_count * 100 / vxlan_count))
+        loss_rate=$((100 - processing_rate))
     fi
     
     echo
-    print_color "green" "📈 Traffic Summary (5s window):"
-    echo "   • ens5 Input:      $ens5_delta packets"
-    echo "   • tap0 Output:     $tap0_delta packets" 
-    echo "   • Processing Rate: ${processing_rate}%"
-    echo "   • Status:          All VXLAN traffic processed (no blocking)"
+    print_color "green" "📈 Traffic Analysis Results:"
+    echo "   • VXLAN Input (4789):  $vxlan_count packets ($vxlan_pps PPS)"
+    echo "   • IPSec Output (4500):  $ipsec_count packets ($ipsec_pps PPS)"
+    echo "   • Processing Rate:      ${processing_rate}%"
+    echo "   • Loss Rate:           ${loss_rate}%"
+    echo "   • Firewall Blocking:    0% (no IP filtering applied)"
+    echo
+    
+    if [ $loss_rate -lt 5 ]; then
+        print_color "green" "✅ Pipeline Performance: EXCELLENT"
+    elif [ $loss_rate -lt 15 ]; then
+        print_color "yellow" "⚠️  Pipeline Performance: GOOD"
+    else
+        print_color "red" "❌ Pipeline Performance: NEEDS ATTENTION"
+    fi
 }
 
 # Legacy function aliases for backward compatibility
