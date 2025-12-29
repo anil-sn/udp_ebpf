@@ -41,7 +41,9 @@ COMMANDS:
     stop            Stop the pipeline and clean up processes (graceful shutdown)
     restart         Stop and restart the pipeline
     status          Show pipeline status and basic info
-    stats           Show real-time packet statistics (compact format)
+    stats           Show pipeline performance analysis
+                   'stats' or 'stats --detailed' - Detailed performance analysis (default)
+                   'stats --compact'              - Compact one-line statistics
     ipstats         Show per-IP traffic statistics and allowlist status
     config          Show current pipeline configuration
     maps            Show detailed eBPF maps status and contents
@@ -89,7 +91,9 @@ EXAMPLES:
     ./xdp.sh ips reload                     # Clear and reload IPs from JSON  
     ./xdp.sh ips orphaned                   # Show IPs in map but not in JSON
     ./xdp.sh logs 50 ALERT                  # Show last 50 log entries with alerts
-    ./xdp.sh stats                          # Show live statistics
+    ./xdp.sh stats                          # Show detailed pipeline analysis
+    ./xdp.sh stats --compact                # Show compact statistics
+    ./xdp.sh ipstats                        # Show per-IP traffic analysis
     ./xdp.sh pps both 1 60                  # Monitor PPS on both interfaces for 60s
     ./xdp.sh cleanup --reset-interfaces     # Full cleanup + reset network
     ./xdp.sh scale max-performance          # Scale for maximum performance
@@ -117,7 +121,15 @@ case "$CMD" in
         show_pipeline_status "$@"
         ;;
     "stats") 
-        show_compact_statistics "$@"
+        # Use enhanced statistics analyzer
+        if [[ "$2" == "--detailed" ]] || [[ "$2" == "-d" ]]; then
+            python3 src/xdp_functions/analyze_stats.py --detailed
+        elif [[ "$2" == "--compact" ]] || [[ "$2" == "-c" ]]; then
+            python3 src/xdp_functions/analyze_stats.py --compact
+        else
+            # Default to detailed analysis
+            python3 src/xdp_functions/analyze_stats.py --detailed
+        fi
         ;;
     "config") 
         show_configuration "$@"
