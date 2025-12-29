@@ -1239,6 +1239,14 @@ show_ip_statistics() {
     } 2>/dev/null
     
     if [ -s "$temp_file" ]; then
+        echo "   Raw VXLAN Traffic Output:"
+        echo "   ┌─────────────────────────────────────────────────────────────────┐"
+        cat "$temp_file" | head -10 | while IFS= read -r line; do
+            printf "   │ %-63s │\n" "$line"
+        done
+        echo "   └─────────────────────────────────────────────────────────────────┘"
+        echo ""
+        
         echo "   VXLAN Source IP Analysis (XDP-level):"
         echo "   ┌─────────────────┬─────────┬─────────┬──────────┐"
         echo "   │ Source IP       │ Packets │ PPS     │ Status   │"
@@ -1277,7 +1285,7 @@ show_ip_statistics() {
         echo "   └─────────────────┴─────────┴─────────┴──────────┘"
         
         # Show VXLAN traffic summary
-        local total_packets=$(grep -c "UDP" "$temp_file" 2>/dev/null || echo "0")
+        local total_packets=$(grep -c "IP.*>" "$temp_file" 2>/dev/null || echo "0")
         printf "   📊 Captured %d VXLAN packets in 5 seconds (~%.0f pps)\n" "$total_packets" "$(awk "BEGIN {print $total_packets/5}")"
         
     else
