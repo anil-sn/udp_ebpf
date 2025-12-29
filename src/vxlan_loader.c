@@ -1055,12 +1055,32 @@ int main(int argc, char **argv)
 
     /* Resolve NAT target MAC address early for fast startup validation */
     printf("Resolving NAT target MAC address for %s...\n", cfg.nat_target_ip);
-    if (resolve_ip_to_mac(cfg.nat_target_ip, cfg.nat_target_mac) != 0) {
-        fprintf(stderr, "Failed to resolve MAC address for NAT target IP %s\n", cfg.nat_target_ip);
-        fprintf(stderr, "This is required for proper L2 forwarding. Please ensure:\n");
-        fprintf(stderr, "  1. NAT target IP %s is reachable\n", cfg.nat_target_ip);
-        fprintf(stderr, "  2. Target interface %s exists and is up\n", cfg.target_interface);
-        return 1;
+    // UNIFIED VM LOGIC: If target is tap0, use its local MAC address
+    if (strcmp(cfg.target_interface, "tap0") == 0) {
+        printf("[*] Unified Mode detected (tap0). Reading local MAC...\n");
+        FILE *f = fopen("/sys/class/net/tap0/address", "r");
+        if (f) {
+            char mac_str[18];
+            if (fgets(mac_str, sizeof(mac_str), f)) {
+                sscanf(mac_str, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+                   &cfg.nat_target_mac[0], &cfg.nat_target_mac[1], &cfg.nat_target_mac[2],
+                   &cfg.nat_target_mac[3], &cfg.nat_target_mac[4], &cfg.nat_target_mac[5]);
+                printf("[+] Target MAC set to tap0 address: %s", mac_str);
+            }
+            fclose(f);
+        } else {
+            fprintf(stderr, "CRITICAL: Could not read /sys/class/net/tap0/address. Is tap0 up?\n");
+            return 1;
+        }
+    } else {
+        // STANDARD LOGIC: Resolve ARP for physical wire
+        if (resolve_ip_to_mac(cfg.nat_target_ip, cfg.nat_target_mac) != 0) {
+            fprintf(stderr, "Failed to resolve MAC address for NAT target IP %s\n", cfg.nat_target_ip);
+            fprintf(stderr, "This is required for proper L2 forwarding. Please ensure:\n");
+            fprintf(stderr, "  1. NAT target IP %s is reachable\n", cfg.nat_target_ip);
+            fprintf(stderr, "  2. Target interface %s exists and is up\n", cfg.target_interface);
+            return 1;
+        }
     }
 
     /* Validate resolved MAC address is not all zeros */

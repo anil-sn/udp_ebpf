@@ -74,7 +74,13 @@ start_pipeline() {
     
     # Pre-populate ARP table for better MAC resolution reliability
     print_color "blue" "Pre-resolving MAC address for NAT target..."
-    populate_arp_table "$NAT_IP" "$TARGET_INTERFACE"
+    # Unified VM Change: Skip ARP if target is tap0 (Virtual Interface)
+    if [ "$TARGET_INTERFACE" != "tap0" ]; then
+        print_color "blue" "Pre-resolving MAC address for NAT target..."
+        populate_arp_table "$NAT_IP" "$TARGET_INTERFACE"
+    else
+        print_color "blue" "Target is tap0 (Unified Mode) - Skipping ARP resolution"
+    fi    
     
     # Change to src directory where .bpf.o file is located
     cd "$SCRIPT_DIR" || {

@@ -230,6 +230,7 @@ static struct packet_buffer* dequeue_packet(struct packet_queue *q) {
 static int send_packet_batch(struct worker_context *ctx,
                            struct packet_buffer **packets, int count) {
     int sent = 0;
+    ssize_t result = 0;
 
     /*
      * Process each packet in the batch using raw socket transmission.
@@ -242,6 +243,8 @@ static int send_packet_batch(struct worker_context *ctx,
             __builtin_prefetch(packets[i + PREFETCH_DISTANCE]->data, 0, 3);
         }
 
+        /* Unified VM archicture Design */
+#if 0
         /*
          * Send packet using AF_PACKET raw socket.
          * MSG_DONTWAIT prevents blocking on socket buffer full conditions.
@@ -264,6 +267,21 @@ static int send_packet_batch(struct worker_context *ctx,
              */
             ctx->errors++;
         }
+
+#else
+        result = write(ctx->raw_socket, packets[i]->data, packets[i]->len);
+
+        // If write fails with EBADF (Bad File Descriptor), it might be a socket, try sendto
+        // But for migration, simply using write() on the TAP FD is what we need.
+
+        if (result > 0) {
+            ctx->packets_sent++;
+            ctx->bytes_sent += result;
+            sent++;
+        } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            ctx->errors++;
+        }
+#endif
         /*
          * Note: EAGAIN/EWOULDBLOCK are not counted as errors since they
          * indicate temporary resource exhaustion, not permanent failures.
@@ -526,6 +544,35 @@ static int handle_ring_buffer_event(void *ctx __attribute__((unused)), void *dat
  * - Socket reuse eliminates TIME_WAIT delays during restart
  */
 static int setup_optimized_raw_socket(const char* interface) {
+
+    // Check if we are using TAP (Unified Mode)
+    if (strncmp(interface, "tap", 3) == 0) {
+        struct ifreq ifr;
+        int fd, err;
+
+        if ((fd = open("/dev/net/tun", O_RDWR)) < 0) {
+            perror("[!] Opening /dev/net/tun");
+            return -1;
+        }
+
+        memset(&ifr, 0, sizeof(ifr));
+        ifr.ifr_flags = IFF_TAP | IFF_NO_PI; // IFF_NO_PI is critical!
+        strncpy(ifr.ifr_name, interface, IFNAMSIZ);
+
+        if ((err = ioctl(fd, TUNSETIFF, (void *) &ifr)) < 0) {
+            perror("[!] ioctl(TUNSETIFF)");
+            close(fd);
+            return -1;
+        }
+
+        // Non-blocking mode
+        int flags = fcntl(fd, F_GETFL, 0);
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+        printf("[+] TAP interface %s opened (fd: %d)\n", interface, fd);
+        return fd;
+    }
+
     /*
      * CREATE RAW PACKET SOCKET
      * ========================
@@ -539,6 +586,7 @@ static int setup_optimized_raw_socket(const char* interface) {
         perror("socket");
         return -1;
     }
+
 
     /*
      * SOCKET BUFFER OPTIMIZATION
