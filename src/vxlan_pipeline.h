@@ -101,7 +101,7 @@
 /* =================================================================== */
 
 /* Size Limits */
-#define MIN_FRAGMENT_SIZE              1400         /* Only clear DF bit on packets > this size */
+#define MIN_FRAGMENT_SIZE              1300         /* Only clear DF bit on packets > this size */
 #define MAX_PACKET_SIZE                9000         /* Reject packets larger than jumbo frame */
 #define MAX_OUTER_HEADERS_SIZE         200          /* Maximum reasonable VXLAN overhead */
 #define MIN_PACKET_SIZE                64           /* Minimum valid packet size */
