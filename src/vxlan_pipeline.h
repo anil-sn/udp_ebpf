@@ -216,7 +216,7 @@
 #define DEBUG_VALUE_MASK                      0x0000FFFF   /* Mask for extracting 16-bit values */
 
 /* Network Performance */
-#define RING_BUFFER_SIZE               4096         /* Optimal ring buffer size */
+#define RING_BUFFER_SIZE               16384        /* Large ring buffer for high PPS (16KB) */
 #define INTERRUPT_COALESCING_USECS     1            /* Interrupt coalescing microseconds */
 #define INTERRUPT_COALESCING_FRAMES    1            /* Interrupt coalescing frame count */
 

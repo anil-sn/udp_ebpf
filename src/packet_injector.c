@@ -331,15 +331,13 @@ static void* worker_thread(void *arg) {
      * - Improve memory access patterns and NUMA locality
      * - Reduce overall system jitter and improve determinism
      */
-    /* Set CPU affinity - allow all cores but maintain worker distribution */
+    /* Set CPU affinity - pin each worker to a specific core for maximum performance */
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);                    /* Clear CPU set */
-
-    /* Allow worker to use all CPUs for maximum utilization while maintaining distribution */
-    int num_cpus = sysconf(_SC_NPROCESSORS_ONLN);
-    for (int i = 0; i < num_cpus; i++) {
-        CPU_SET(i, &cpuset);              /* Add all available CPUs */
-    }
+    
+    /* Pin worker to specific CPU core for cache affinity */
+    int assigned_cpu = ctx->thread_id % sysconf(_SC_NPROCESSORS_ONLN);
+    CPU_SET(assigned_cpu, &cpuset);       /* Pin to assigned CPU */
 
     /* Apply CPU affinity to current thread */
     if (pthread_setaffinity_np(pthread_self(), sizeof(cpuset), &cpuset) != 0) {
@@ -347,8 +345,8 @@ static void* worker_thread(void *arg) {
         /* Continue anyway - performance will be reduced but functional */
     }
 
-    printf("[+] Worker %d started with full CPU access (0-%ld)\n",
-           ctx->thread_id, sysconf(_SC_NPROCESSORS_ONLN) - 1);
+    printf("[+] Worker %d pinned to CPU %d for maximum cache affinity\n",
+           ctx->thread_id, assigned_cpu);
 
     /*
      * MAIN PACKET PROCESSING LOOP

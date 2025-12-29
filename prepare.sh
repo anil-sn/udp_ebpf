@@ -604,11 +604,71 @@ verify_setup() {
 }
 
 # ============================================================================
-# STEP 6: NETWORK CONFIGURATION
+# STEP 6: SYSTEM PERFORMANCE TUNING
+# ============================================================================
+
+optimize_system_performance() {
+    section "Optimizing System for High-PPS Performance"
+    
+    info "Applying performance optimizations for 85K+ PPS target..."
+    
+    # Network stack optimizations
+    info "Configuring network stack for high throughput..."
+    
+    # Increase network buffer sizes
+    sudo sysctl -w net.core.rmem_max=134217728 >/dev/null 2>&1 || warn "Could not set rmem_max"
+    sudo sysctl -w net.core.wmem_max=134217728 >/dev/null 2>&1 || warn "Could not set wmem_max"
+    sudo sysctl -w net.core.netdev_max_backlog=5000 >/dev/null 2>&1 || warn "Could not set netdev_max_backlog"
+    sudo sysctl -w net.core.netdev_budget=600 >/dev/null 2>&1 || warn "Could not set netdev_budget"
+    
+    # Optimize network device queue lengths
+    for iface in ens5 ens6; do
+        if ip link show "$iface" >/dev/null 2>&1; then
+            sudo ip link set "$iface" txqueuelen 10000 >/dev/null 2>&1 || warn "Could not set $iface txqueuelen"
+        fi
+    done
+    
+    # CPU performance optimizations
+    info "Configuring CPU performance settings..."
+    
+    # Disable CPU frequency scaling for consistent performance
+    if [ -d "/sys/devices/system/cpu/cpu0/cpufreq" ]; then
+        for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+            [ -w "$cpu" ] && echo "performance" | sudo tee "$cpu" >/dev/null 2>&1 || true
+        done
+        log "CPU governor set to performance mode"
+    else
+        info "CPU frequency scaling not available or already optimized"
+    fi
+    
+    # Memory optimization
+    info "Optimizing memory settings..."
+    
+    # Disable swap usage for consistent latency
+    sudo sysctl -w vm.swappiness=1 >/dev/null 2>&1 || warn "Could not set swappiness"
+    
+    # Optimize memory allocation
+    sudo sysctl -w vm.dirty_ratio=15 >/dev/null 2>&1 || warn "Could not set dirty_ratio"
+    sudo sysctl -w vm.dirty_background_ratio=5 >/dev/null 2>&1 || warn "Could not set dirty_background_ratio"
+    
+    log "✓ System performance optimizations applied"
+    info "System configured for high-throughput packet processing"
+}
+
+# ============================================================================
+# STEP 7: NETWORK CONFIGURATION
 # ============================================================================
 
 configure_network() {
     section "Configuring Network Routing for XDP Pipeline"
+    
+    # Configure hairpin routing - processed packets return via ens5
+    info "Configuring hairpin routing for VXLAN pipeline..."
+    if sudo ip route del default via 172.30.82.1 dev ens6 >/dev/null 2>&1; then
+        log "✓ Removed ens6 default route - packets will now egress via ens5"
+    else
+        info "ens6 default route already removed or not found"
+    fi
     
     # Target configuration from .env or defaults
     local TARGET_IP="172.30.82.95"
@@ -808,11 +868,15 @@ main() {
     verify_setup
     echo ""
     
-    log "Step 6/7: Configuring network..."
+    log "Step 6/7: Optimizing system performance..."
+    optimize_system_performance
+    echo ""
+    
+    log "Step 7/7: Configuring network..."
     configure_network
     echo ""
     
-    log "Step 7/7: Finalizing..."
+    log "Step 8/8: Finalizing..."
     show_status
     
     local end_time

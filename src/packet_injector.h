@@ -35,9 +35,9 @@
  * ===================================
  */
 #define MAX_WORKER_THREADS 8           /* Maximum worker threads (match CPU cores for cache locality) */
-#define DEFAULT_WORKER_THREADS 4       /* Default number of worker threads */
-#define PACKET_QUEUE_SIZE 4096         /* Per-worker queue size (power of 2 for efficient modulo) */
-#define BATCH_SIZE 64                  /* Packets per sendto() batch (balanced latency vs efficiency) */
+#define DEFAULT_WORKER_THREADS 8       /* Default number of worker threads (match CPU cores) */
+#define PACKET_QUEUE_SIZE 8192         /* Per-worker queue size (power of 2 for efficient modulo) */
+#define BATCH_SIZE 128                 /* Packets per sendto() batch (optimized for high throughput) */
 #define MAX_PACKET_SIZE 3000           /* Maximum packet size to match ens5 MTU and support VXLAN decapsulation */
 
 /*
@@ -51,7 +51,7 @@
  * TIMING CONSTANTS (in microseconds unless noted)
  * ===============================================
  */
-#define WORKER_YIELD_TIME_US 100       /* Worker thread yield time when no packets available */
+#define WORKER_YIELD_TIME_US 10        /* Worker thread yield time when no packets available (aggressive) */
 #define RING_BUFFER_TIMEOUT_MS 1       /* Ring buffer polling timeout in milliseconds */
 #define MONITOR_INTERVAL_SEC 1         /* Performance monitoring interval in seconds */
 
