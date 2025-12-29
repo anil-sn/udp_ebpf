@@ -1264,12 +1264,29 @@ show_ip_statistics() {
     fi
     
     if [[ -s "$vxlan_temp" ]] || [[ -s "$tap_temp" ]]; then
-        
         # Combined summary with allowed/denied breakdown
         local vxlan_packets=$(grep -c "vni\|IP.*>" "$vxlan_temp" 2>/dev/null || echo "0")
         local tap_packets=$(grep -c "IP.*>" "$tap_temp" 2>/dev/null || echo "0")
         local vxlan_ips=$(grep -E '^\s*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\s*>\|IP.*>' "$vxlan_temp" 2>/dev/null | sed -E 's/.*IP ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | sort -u | wc -l 2>/dev/null || echo "0")
         local tap_ips=$(grep 'IP.*>' "$tap_temp" 2>/dev/null | sed -E 's/.*IP ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | sort -u | wc -l 2>/dev/null || echo "0")
+        
+        # Sanitize variables - ensure they are integers
+        vxlan_packets=${vxlan_packets:-0}
+        tap_packets=${tap_packets:-0}
+        vxlan_ips=${vxlan_ips:-0}
+        tap_ips=${tap_ips:-0}
+        
+        # Remove any non-numeric characters
+        vxlan_packets=$(echo "$vxlan_packets" | tr -cd '0-9' | head -c 10)
+        tap_packets=$(echo "$tap_packets" | tr -cd '0-9' | head -c 10)
+        vxlan_ips=$(echo "$vxlan_ips" | tr -cd '0-9' | head -c 10)
+        tap_ips=$(echo "$tap_ips" | tr -cd '0-9' | head -c 10)
+        
+        # Set defaults if empty
+        vxlan_packets=${vxlan_packets:-0}
+        tap_packets=${tap_packets:-0}
+        vxlan_ips=${vxlan_ips:-0}
+        tap_ips=${tap_ips:-0}
         
         # Count allowed and denied IPs
         local allowed_count=0
@@ -1278,6 +1295,9 @@ show_ip_statistics() {
         # Count allowed IPs from TAP interface (these made it through)
         if [[ -s "$tap_temp" ]]; then
             allowed_count=$(grep 'IP.*>' "$tap_temp" 2>/dev/null | sed -E 's/.*IP ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | sort -u | wc -l 2>/dev/null || echo "0")
+            allowed_count=${allowed_count:-0}
+            allowed_count=$(echo "$allowed_count" | tr -cd '0-9' | head -c 10)
+            allowed_count=${allowed_count:-0}
         fi
         
         # Estimate denied count (VXLAN captured but not in TAP = blocked)
@@ -1286,13 +1306,18 @@ show_ip_statistics() {
             denied_count=0
         fi
         
+        # Calculate rates safely
+        local tap_pps=$(awk "BEGIN {printf \"%.0f\", $tap_packets/30}" 2>/dev/null || echo "0")
+        local denied_pps=$(awk "BEGIN {printf \"%.0f\", ($vxlan_packets - $tap_packets)/30}" 2>/dev/null || echo "0")
+        local total_pps=$(awk "BEGIN {printf \"%.0f\", $vxlan_packets/30}" 2>/dev/null || echo "0")
+        
         printf "\n   📈 TRAFFIC SUMMARY (Allowed vs Denied):\n"
         printf "   ┌─────────────────┬─────────────────┬─────────────────┬─────────────────┐\n"
         printf "   │ Traffic Type    │ Total Packets   │ Unique IPs      │ Status          │\n"
         printf "   ├─────────────────┼─────────────────┼─────────────────┼─────────────────┤\n"
-        printf "   │ ✅ ALLOWED      │ %7d (%5.0f/s) │ %7d         │ Processed       │\n" "$tap_packets" "$(awk "BEGIN {print $tap_packets/30}" 2>/dev/null || echo "0")" "$allowed_count"
-        printf "   │ ❌ DENIED       │ %7d (%5.0f/s) │ %7d         │ Blocked         │\n" "$((vxlan_packets - tap_packets))" "$(awk "BEGIN {print ($vxlan_packets - $tap_packets)/30}" 2>/dev/null || echo "0")" "$denied_count"
-        printf "   │ 📊 TOTAL        │ %7d (%5.0f/s) │ %7d         │ Captured        │\n" "$vxlan_packets" "$(awk "BEGIN {print $vxlan_packets/30}" 2>/dev/null || echo "0")" "$vxlan_ips"
+        printf "   │ ✅ ALLOWED      │ %7d (%5s/s) │ %7d         │ Processed       │\n" "$tap_packets" "$tap_pps" "$allowed_count"
+        printf "   │ ❌ DENIED       │ %7d (%5s/s) │ %7d         │ Blocked         │\n" "$((vxlan_packets - tap_packets))" "$denied_pps" "$denied_count"
+        printf "   │ 📊 TOTAL        │ %7d (%5s/s) │ %7d         │ Captured        │\n" "$vxlan_packets" "$total_pps" "$vxlan_ips"
         printf "   └─────────────────┴─────────────────┴─────────────────┴─────────────────┘\n"
         
         print_color "green" "\n   ✅ ANALYSIS LAYERS:"
