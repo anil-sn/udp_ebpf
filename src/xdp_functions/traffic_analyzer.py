@@ -250,8 +250,8 @@ class TrafficAnalyzer:
                     pps = count / duration
                     print(f"   • {ip}: {count:,} packets ({pps:.1f} pps)")
         else:
-            # Fallback to traditional view
-            self.print_traditional_analysis(vxlan_ips, ipsec_ips, tap_ips, duration)
+            # Fallback to flow analysis view
+            self.print_traffic_flow_analysis({}, tap_ips, duration)
         
         # Calculate totals
         total_vxlan = sum(vxlan_ips.values())
