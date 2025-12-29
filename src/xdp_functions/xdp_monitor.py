@@ -68,9 +68,11 @@ class XDPPipelineMonitor:
     
     def check_bpf_programs(self) -> int:
         """Check how many XDP programs are loaded"""
-        stdout, stderr, rc = self.run_command(["sudo", "bpftool", "prog", "list", "type", "xdp"])
+        stdout, stderr, rc = self.run_command(["sudo", "bpftool", "prog", "list"], timeout=10)
         if rc == 0:
-            return len([line for line in stdout.split('\n') if 'xdp' in line.lower()])
+            # Count lines containing 'xdp' (case insensitive)
+            xdp_lines = [line for line in stdout.split('\n') if 'xdp' in line.lower() and line.strip()]
+            return len(xdp_lines)
         return 0
     
     def display_bpf_status(self):
