@@ -71,21 +71,17 @@ show_vxlan_analysis() {
     timeout 30s sudo tcpdump -i tap0 -nn -c 1000 > "$tap_temp" 2>/dev/null &
     local tap_pid=$!
     
-    # Wait for captures to complete with timeout
-    echo "   Waiting for captures to complete (30s)..."
-    local count=0
-    while [ $count -lt 35 ]; do
-        # Check if any processes are still running
-        if ! kill -0 $vxlan_pid 2>/dev/null && ! kill -0 $ipsec_pid 2>/dev/null && ! kill -0 $tap_pid 2>/dev/null; then
-            break
-        fi
-        sleep 1
-        count=$((count + 1))
-    done
+    # Simple wait approach - let timeout handle it
+    echo "   Waiting for captures to complete (max 35s)..."
+    sleep 35
     
-    # Kill any remaining processes
-    kill $vxlan_pid $ipsec_pid $tap_pid 2>/dev/null || true
-    wait $vxlan_pid $ipsec_pid $tap_pid 2>/dev/null || true
+    # Force cleanup of any remaining tcpdump processes
+    sudo pkill -f "tcpdump.*port.*4789" 2>/dev/null || true
+    sudo pkill -f "tcpdump.*port.*4500" 2>/dev/null || true  
+    sudo pkill -f "tcpdump.*tap0" 2>/dev/null || true
+    
+    # Brief pause for cleanup
+    sleep 1
     
     echo
     
