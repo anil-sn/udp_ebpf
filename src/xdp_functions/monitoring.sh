@@ -90,7 +90,6 @@ show_vxlan_analysis() {
     echo "   • Processing Rate: ${processing_rate}%"
     echo "   • Status:          All VXLAN traffic processed (no blocking)"
 }
-}
 
 # Legacy function aliases for backward compatibility
 monitor_pipeline() {
