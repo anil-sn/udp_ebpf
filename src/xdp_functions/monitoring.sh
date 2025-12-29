@@ -133,6 +133,49 @@ show_statistics() {
 }
 
 # System status check
+# Pipeline status check function
+show_pipeline_status() {
+    print_color "blue" "🔍 XDP VXLAN Pipeline Status"
+    echo
+    
+    # Check for running processes
+    local loader_pid=$(pgrep -f "vxlan_loader" | head -1)
+    local injector_count=$(pgrep -f "packet_injector" | wc -l)
+    local prog_count=$(check_bpf_program)
+    
+    if [ -n "$loader_pid" ]; then
+        print_color "green" "✅ vxlan_loader running (PID: $loader_pid)"
+    else
+        print_color "red" "❌ vxlan_loader not running"
+    fi
+    
+    if [ "$injector_count" -gt 0 ]; then
+        print_color "green" "✅ $injector_count packet_injector process(es) running"
+    else
+        print_color "red" "❌ No packet_injector processes running"
+    fi
+    
+    if [ "$prog_count" -gt 0 ]; then
+        print_color "green" "✅ $prog_count XDP program(s) loaded"
+    else
+        print_color "red" "❌ No XDP programs loaded"
+    fi
+    
+    echo
+    
+    # Determine overall status
+    if [ -n "$loader_pid" ] && [ "$injector_count" -gt 0 ] && [ "$prog_count" -gt 0 ]; then
+        print_color "green" "🟢 Pipeline Status: RUNNING"
+        echo
+        print_color "blue" "📊 Quick Statistics:"
+        python3 src/xdp_functions/analyze_stats.py --compact 2>/dev/null || print_color "yellow" "⚠ Statistics unavailable"
+    else
+        print_color "red" "🔴 Pipeline Status: STOPPED"
+        echo
+        print_color "yellow" "💡 Use './xdp.sh start' to start the pipeline"
+    fi
+}
+
 system_status() {
     local prog_count=$(check_bpf_program)
     if [ "$prog_count" -eq 0 ]; then
