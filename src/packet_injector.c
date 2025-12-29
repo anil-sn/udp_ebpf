@@ -25,7 +25,7 @@ static struct packet_buffer* dequeue_packet(struct packet_queue *q);
 static int send_packet_batch(struct worker_context *ctx, struct packet_buffer **packets, int count);
 static void* worker_thread(void *arg);
 static int handle_ring_buffer_event(void *ctx, void *data, size_t len);
-static int setup_optimized_raw_socket(const char* interface);
+static int setup_optimized_raw_socket(const char* interface, int worker_id);
 static int init_workers(const char* target_interface);
 static void* monitor_thread(void *arg);
 static void signal_handler(int sig);
@@ -36,6 +36,9 @@ static struct worker_context workers[MAX_WORKER_THREADS];
 static int num_workers = DEFAULT_WORKER_THREADS;
 static struct packet_queue packet_queues[MAX_WORKER_THREADS];
 static struct ring_buffer *rb;
+
+/* Shared TAP interface file descriptor for multi-worker coordination */
+static int shared_tap_fd = -1;
 
 /* Memory pools for zero-allocation packet handling */
 static struct packet_buffer *packet_pool;
@@ -543,34 +546,62 @@ static int handle_ring_buffer_event(void *ctx __attribute__((unused)), void *dat
  * - Buffer sizing prevents drops during temporary congestion
  * - Socket reuse eliminates TIME_WAIT delays during restart
  */
-static int setup_optimized_raw_socket(const char* interface) {
+static int setup_optimized_raw_socket(const char* interface, int worker_id) {
 
     // Check if we are using TAP (Unified Mode)
     if (strncmp(interface, "tap", 3) == 0) {
-        struct ifreq ifr;
-        int fd, err;
+        /*
+         * SHARED TAP FILE DESCRIPTOR COORDINATION
+         * =======================================
+         *
+         * TAP interfaces can only be attached by one process at a time.
+         * Worker 0 creates the TAP interface, workers 1-7 duplicate the FD.
+         * This maintains full 8-worker performance while respecting TAP limitations.
+         */
+        if (worker_id == 0) {
+            /* Worker 0: Create TAP interface and store shared FD */
+            struct ifreq ifr;
+            int fd, err;
 
-        if ((fd = open("/dev/net/tun", O_RDWR)) < 0) {
-            perror("[!] Opening /dev/net/tun");
-            return -1;
+            if ((fd = open("/dev/net/tun", O_RDWR)) < 0) {
+                perror("[!] Opening /dev/net/tun");
+                return -1;
+            }
+
+            memset(&ifr, 0, sizeof(ifr));
+            ifr.ifr_flags = IFF_TAP | IFF_NO_PI; // IFF_NO_PI is critical!
+            strncpy(ifr.ifr_name, interface, IFNAMSIZ);
+
+            if ((err = ioctl(fd, TUNSETIFF, (void *) &ifr)) < 0) {
+                perror("[!] ioctl(TUNSETIFF)");
+                close(fd);
+                return -1;
+            }
+
+            // Non-blocking mode
+            int flags = fcntl(fd, F_GETFL, 0);
+            fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+            shared_tap_fd = fd;  /* Store for other workers */
+            printf("[+] TAP interface %s created by worker 0 (fd: %d)\n", interface, fd);
+            return fd;
+        } else {
+            /* Workers 1-7: Duplicate the shared FD */
+            if (shared_tap_fd < 0) {
+                printf("[!] Shared TAP FD not available for worker %d\n", worker_id);
+                return -1;
+            }
+            
+            int dup_fd = dup(shared_tap_fd);
+            if (dup_fd < 0) {
+                perror("[!] dup(shared_tap_fd)");
+                return -1;
+            }
+            
+            printf("[+] TAP interface %s shared with worker %d (fd: %d)\n", 
+                   interface, worker_id, dup_fd);
+            return dup_fd;
         }
-
-        memset(&ifr, 0, sizeof(ifr));
-        ifr.ifr_flags = IFF_TAP | IFF_NO_PI; // IFF_NO_PI is critical!
-        strncpy(ifr.ifr_name, interface, IFNAMSIZ);
-
-        if ((err = ioctl(fd, TUNSETIFF, (void *) &ifr)) < 0) {
-            perror("[!] ioctl(TUNSETIFF)");
-            close(fd);
-            return -1;
-        }
-
-        // Non-blocking mode
-        int flags = fcntl(fd, F_GETFL, 0);
-        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-
-        printf("[+] TAP interface %s opened (fd: %d)\n", interface, fd);
-        return fd;
     }
 
     /*
@@ -706,12 +737,12 @@ static int init_workers(const char* target_interface) {
          * =============================
          *
          * Each worker gets its own optimized raw socket to:
-         * - Enable parallel I/O operations
-         * - Prevent serialization bottlenecks
+         * - Enable parallel I/O operations (raw sockets)
+         * - Share TAP interface efficiently (TAP mode)
          * - Allow independent error handling
          * - Maximize kernel-level parallelism
          */
-        ctx->raw_socket = setup_optimized_raw_socket(target_interface);
+        ctx->raw_socket = setup_optimized_raw_socket(target_interface, i);
         if (ctx->raw_socket < 0) {
             printf("[!] Failed to create socket for worker %d\n", i);
             return -1;
