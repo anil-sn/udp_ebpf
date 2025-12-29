@@ -41,14 +41,14 @@ class XDPPipelineMonitor:
         return []
     
     def convert_bpf_ip_correct(self, ip_int: int) -> str:
-        """Convert BPF integer IP to dotted decimal (network byte order from bpftool)"""
-        # bpftool outputs IP integers in network byte order (big-endian)
-        # Standard network-to-host conversion
-        d = ip_int & 0xFF          # LSB = last octet
-        c = (ip_int >> 8) & 0xFF   # Second octet  
-        b = (ip_int >> 16) & 0xFF  # Third octet
-        a = (ip_int >> 24) & 0xFF  # MSB = first octet
-        return f"{a}.{b}.{c}.{d}"
+        """Convert BPF integer IP to dotted decimal (little-endian from bpftool)"""
+        # bpftool outputs IP integers in little-endian format
+        # We need to reverse the complete byte order
+        a = ip_int & 0xFF          # First byte
+        b = (ip_int >> 8) & 0xFF   # Second byte  
+        c = (ip_int >> 16) & 0xFF  # Third byte
+        d = (ip_int >> 24) & 0xFF  # Fourth byte
+        return f"{d}.{c}.{b}.{a}"  # Reverse the order completely
     
     def load_allowlist_json(self) -> Optional[Dict]:
         """Load allowlist from JSON file"""
