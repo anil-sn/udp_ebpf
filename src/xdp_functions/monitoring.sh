@@ -200,6 +200,62 @@ performance_test() {
     print_color "green" "\n✅ Performance test completed"
 }
 
+# Show BPF maps information  
+show_bpf_maps() {
+    print_color "blue" "🗺️  BPF Maps Status"
+    echo "===================="
+    echo
+    
+    # Check if BPF maps are pinned
+    BPF_PATH="/sys/fs/bpf"
+    if [ -d "$BPF_PATH" ]; then
+        print_color "cyan" "📍 Pinned BPF Maps:"
+        if ls "$BPF_PATH"/*vxlan* >/dev/null 2>&1; then
+            for map in "$BPF_PATH"/*vxlan*; do
+                if [ -e "$map" ]; then
+                    basename "$map"
+                    # Try to show map info if bpftool is available
+                    if command -v bpftool >/dev/null 2>&1; then
+                        bpftool map show pinned "$map" 2>/dev/null | grep -E "type|max_entries" | sed 's/^/    /'
+                    fi
+                fi
+            done
+        else
+            echo "  No VXLAN maps found"
+        fi
+        echo
+        
+        print_color "cyan" "📊 Map Statistics (if available):"
+        if command -v bpftool >/dev/null 2>&1; then
+            if [ -e "$BPF_PATH/stats_map" ]; then
+                echo "  Stats Map:"
+                bpftool map dump pinned "$BPF_PATH/stats_map" 2>/dev/null | head -10 | sed 's/^/    /'
+            fi
+            if [ -e "$BPF_PATH/ip_allowlist" ]; then
+                allowlist_count=$(bpftool map dump pinned "$BPF_PATH/ip_allowlist" 2>/dev/null | grep -c "key:" || echo "0")
+                echo "  IP Allowlist entries: $allowlist_count"
+            fi
+        else
+            echo "  Install bpftool for detailed map information"
+        fi
+    else
+        print_color "red" "❌ BPF filesystem not mounted"
+    fi
+    echo
+    
+    print_color "cyan" "🔧 Active XDP Programs:"
+    if command -v bpftool >/dev/null 2>&1; then
+        bpftool prog show type xdp 2>/dev/null || echo "  No XDP programs found"
+    else
+        # Fallback: check via proc or ip command
+        if ip link show | grep -q "xdp"; then
+            echo "  XDP programs detected (use 'ip link show' for details)"
+        else
+            echo "  No XDP programs detected"
+        fi
+    fi
+}
+
 # Show detailed system information
 show_detailed_info() {
     print_color "blue" "📋 XDP VXLAN Pipeline - Detailed Information"
@@ -239,6 +295,63 @@ show_detailed_info() {
     
     print_color "cyan" "📈 Performance Statistics:"
     python3 src/xdp_functions/analyze_stats.py --detailed 2>/dev/null || print_color "yellow" "⚠️  Statistics unavailable - run './xdp.sh start' first"
+}
+
+# Show system logs related to XDP pipeline
+show_logs() {
+    local log_type="${1:-all}"
+    local lines="${2:-50}"
+    
+    print_color "blue" "📋 XDP Pipeline Logs"
+    echo "====================="
+    echo
+    
+    case "$log_type" in
+        "all"|"")
+            print_color "cyan" "🔍 Recent VXLAN Loader Logs:"
+            if [ -f "/tmp/vxlan_loader.log" ]; then
+                tail -n "$lines" /tmp/vxlan_loader.log
+            else
+                echo "  No vxlan_loader.log found"
+            fi
+            echo
+            
+            print_color "cyan" "📊 Recent Packet Injector Logs:"
+            if [ -f "/tmp/packet_injector.log" ]; then
+                tail -n "$lines" /tmp/packet_injector.log
+            else
+                echo "  No packet_injector.log found"
+            fi
+            echo
+            
+            print_color "cyan" "🔍 System Kernel Logs (XDP related):"
+            dmesg | grep -i -E "xdp|bpf|ena" | tail -n "$lines" || echo "  No XDP-related kernel messages"
+            ;;
+        "kernel")
+            print_color "cyan" "🔍 Kernel Logs (XDP/BPF related):"
+            dmesg | grep -i -E "xdp|bpf|ena" | tail -n "$lines" || echo "  No XDP-related kernel messages"
+            ;;
+        "vxlan")
+            print_color "cyan" "🔍 VXLAN Loader Logs:"
+            if [ -f "/tmp/vxlan_loader.log" ]; then
+                tail -n "$lines" /tmp/vxlan_loader.log
+            else
+                echo "  No vxlan_loader.log found"
+            fi
+            ;;
+        "injector")
+            print_color "cyan" "📊 Packet Injector Logs:"
+            if [ -f "/tmp/packet_injector.log" ]; then
+                tail -n "$lines" /tmp/packet_injector.log
+            else
+                echo "  No packet_injector.log found"
+            fi
+            ;;
+        *)
+            print_color "red" "❌ Unknown log type: $log_type"
+            echo "Available types: all, kernel, vxlan, injector"
+            ;;
+    esac
 }
 
 # Help function
