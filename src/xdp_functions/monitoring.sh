@@ -1223,29 +1223,51 @@ show_ip_statistics() {
         print_color "red" "  ❌ Could not read pipeline statistics"
     fi
     
-    print_color "green" "\n🔍 Live Traffic Analysis (10s sample):"
-    print_color "yellow" "   Sampling VXLAN traffic on ens5..."
+    print_color "green" "\n🔍 Live Traffic Analysis (XDP-level capture):"
+    print_color "yellow" "   Sampling VXLAN traffic at XDP level on ${INTERFACE}..."
     
-    # Sample traffic for 10 seconds and analyze by source IP
-    local temp_file="/tmp/vxlan_traffic_$$.txt"
-    timeout 10 sudo tcpdump -i ens5 -n -q 'udp port 4789' 2>"$temp_file" >/dev/null || true
+    # Sample traffic using xdpdump to see what XDP program actually receives
+    local temp_file="/tmp/xdp_traffic_$$.txt"
+    
+    # Use xdpdump with tcpdump pipeline as suggested
+    {
+        timeout 5 sudo xdpdump -i "${INTERFACE}" -w - | tcpdump -r - -n -s 0 -q 'udp port 4789' -c 10 2>"$temp_file" >/dev/null &
+        local xdpdump_pid=$!
+        sleep 5
+        kill "$xdpdump_pid" 2>/dev/null || true
+        wait "$xdpdump_pid" 2>/dev/null || true
+    } 2>/dev/null
     
     if [ -s "$temp_file" ]; then
-        echo "   Source IP Traffic Analysis:"
+        echo "   VXLAN Source IP Analysis (XDP-level):"
         echo "   ┌─────────────────┬─────────┬─────────┬──────────┐"
         echo "   │ Source IP       │ Packets │ PPS     │ Status   │"
         echo "   ├─────────────────┼─────────┼─────────┼──────────┤"
         
-        # Extract and count source IPs
+        # Extract source IPs from VXLAN traffic
         grep -E '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ >' "$temp_file" 2>/dev/null | \
         sed -E 's/.* ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | \
-        sort | uniq -c | sort -nr | head -10 | \
+        sort | uniq -c | sort -nr | head -8 | \
         while read -r count ip; do
-            local pps=$(awk "BEGIN {printf \"%.1f\", $count/10}")
+            [ -z "$count" ] || [ -z "$ip" ] && continue
+            local pps=$(awk "BEGIN {printf \"%.1f\", $count/5}")
             
-            # Check if IP is in allowlist by converting to integer and checking
+            # Check if IP is in allowlist by checking the map dump
             local status="❌ Filtered"
-            if sudo bpftool map dump id "$ip_map_id" --json 2>/dev/null | grep -q "\"$ip\"" 2>/dev/null; then
+            if sudo bpftool map dump id "$ip_map_id" --json 2>/dev/null | jq -r '.[].formatted.key' 2>/dev/null | \
+               while read -r ip_int; do
+                   if [ -n "$ip_int" ] && [ "$ip_int" != "null" ]; then
+                       local a=$((ip_int & 0xFF))
+                       local b=$(((ip_int >> 8) & 0xFF))
+                       local c=$(((ip_int >> 16) & 0xFF))
+                       local d=$(((ip_int >> 24) & 0xFF))
+                       local mapped_ip="$d.$c.$b.$a"
+                       if [ "$mapped_ip" = "$ip" ]; then
+                           echo "FOUND"
+                           break
+                       fi
+                   fi
+               done | grep -q "FOUND"; then
                 status="✅ Allowed"
             fi
             
@@ -1253,8 +1275,14 @@ show_ip_statistics() {
         done
         
         echo "   └─────────────────┴─────────┴─────────┴──────────┘"
+        
+        # Show VXLAN traffic summary
+        local total_packets=$(grep -c "UDP" "$temp_file" 2>/dev/null || echo "0")
+        printf "   📊 Captured %d VXLAN packets in 5 seconds (~%.0f pps)\n" "$total_packets" "$(awk "BEGIN {print $total_packets/5}")"
+        
     else
-        print_color "yellow" "   ❌ No VXLAN traffic captured during sample period"
+        print_color "yellow" "   ❌ No VXLAN traffic captured during XDP sample"
+        print_color "blue" "   💡 Check if XDP program is loaded and VXLAN traffic is flowing"
     fi
     
     rm -f "$temp_file" 2>/dev/null || true
