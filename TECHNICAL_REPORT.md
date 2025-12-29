@@ -29,16 +29,11 @@ flowchart LR
   end
  subgraph AWS_Lanes["5x Parallel Lanes"]
     direction TB
-        I1["AWS IPSEC VM<br/>Fragment packets MTU > 1360<br/>and encrypt packets<br/>StrongSwan"]
-        M1["Mirror EC2<br/>XDP Pipeline with<br/>Integrated VXLAN Termination and DF bit removal"]
-        I2["AWS IPSEC VM<br/>Fragment packets MTU > 1360<br/>and encrypt packets<br/>StrongSwan"]
-        M2["Mirror EC2<br/>XDP Pipeline with<br/>Integrated VXLAN Termination and DF bit removal"]
-        I3["AWS IPSEC VM<br/>Fragment packets MTU > 1360<br/>and encrypt packets<br/>StrongSwan"]
-        M3["Mirror EC2<br/>XDP Pipeline with<br/>Integrated VXLAN Termination and DF bit removal"]
-        I4["AWS IPSEC VM<br/>Fragment packets MTU > 1360<br/>and encrypt packets<br/>StrongSwan"]
-        M4["Mirror EC2<br/>XDP Pipeline with<br/>Integrated VXLAN Termination and DF bit removal"]
-        I5["AWS IPSEC VM<br/>Fragment packets MTU > 1360<br/>and encrypt packets<br/>StrongSwan"]
-        M5["Mirror EC2<br/>XDP Pipeline with<br/>Integrated VXLAN Termination and DF bit removal"]
+        U1["Unified AWS VM<br/>XDP Pipeline + IPSEC Integration<br/>VXLAN Termination, DF bit removal<br/>Fragment packets (MTU > 1360) & encrypt<br/>StrongSwan + XDP"]
+        U2["Unified AWS VM<br/>XDP Pipeline + IPSEC Integration<br/>VXLAN Termination, DF bit removal<br/>Fragment packets (MTU > 1360) & encrypt<br/>StrongSwan + XDP"]
+        U3["Unified AWS VM<br/>XDP Pipeline + IPSEC Integration<br/>VXLAN Termination, DF bit removal<br/>Fragment packets (MTU > 1360) & encrypt<br/>StrongSwan + XDP"]
+        U4["Unified AWS VM<br/>XDP Pipeline + IPSEC Integration<br/>VXLAN Termination, DF bit removal<br/>Fragment packets (MTU > 1360) & encrypt<br/>StrongSwan + XDP"]
+        U5["Unified AWS VM<br/>XDP Pipeline + IPSEC Integration<br/>VXLAN Termination, DF bit removal<br/>Fragment packets (MTU > 1360) & encrypt<br/>StrongSwan + XDP"]
   end
  subgraph Mirroring_Flow["Traffic Mirroring & Tunnels"]
         MirrorNLB["Mirror NLB<br/>Traffic Distribution"]
@@ -58,11 +53,16 @@ flowchart LR
         T5["Tunnel 5<br/>500Mbps"]
   end
  subgraph GCP_Receivers["Reception"]
-        G1["GCP IPSEC VM<br/>8-core, 20GB RAM<br/><b>Post-XDP Processing</b>"]
-        G2["GCP IPSEC VM<br/>8-core, 20GB RAM<br/><b>Post-XDP Processing</b>"]
-        G3["GCP IPSEC VM<br/>8-core, 20GB RAM<br/><b>Post-XDP Processing</b>"]
-        G4["GCP IPSEC VM<br/>8-core, 20GB RAM<br/><b>Post-XDP Processing</b>"]
-        G5["GCP IPSEC VM<br/>8-core, 20GB RAM<br/><b>Post-XDP Processing</b>"]
+        G1["GCP IPSEC VM<br/>8-core, 20GB RAM<br/><b>IPSec Decryption</b>"]
+        G2["GCP IPSEC VM<br/>8-core, 20GB RAM<br/><b>IPSec Decryption</b>"]
+        G3["GCP IPSEC VM<br/>8-core, 20GB RAM<br/><b>IPSec Decryption</b>"]
+        G4["GCP IPSEC VM<br/>8-core, 20GB RAM<br/><b>IPSec Decryption</b>"]
+        G5["GCP IPSEC VM<br/>8-core, 20GB RAM<br/><b>IPSec Decryption</b>"]
+        N1["Nginx Proxy<br/>Packet Reassembly<br/>Fragment Recovery<br/>5-tuple Restoration"]
+        N2["Nginx Proxy<br/>Packet Reassembly<br/>Fragment Recovery<br/>5-tuple Restoration"]
+        N3["Nginx Proxy<br/>Packet Reassembly<br/>Fragment Recovery<br/>5-tuple Restoration"]
+        N4["Nginx Proxy<br/>Packet Reassembly<br/>Fragment Recovery<br/>5-tuple Restoration"]
+        N5["Nginx Proxy<br/>Packet Reassembly<br/>Fragment Recovery<br/>5-tuple Restoration"]
   end
  subgraph GCP_Cloud["GCP Region"]
     direction TB
@@ -70,28 +70,28 @@ flowchart LR
         IntNLB_GCP["Internal NLB<br>FDI Load Balancer<br/>10.2.41.17:8081"]
         K8S["Kubernetes<br>GCP FDI Collector<br/>324 Device Processing"]
   end
-    M1 -- XDP Processed --> I1
-    M2 -- XDP Processed --> I2
-    M3 -- XDP Processed --> I3
-    M4 -- XDP Processed --> I4
-    M5 -- XDP Processed --> I5
     ExtNLB -. Mirror Traffic .-> MirrorNLB
-    MirrorNLB --> M1 & M2 & M3 & M4 & M5
-    I1 === T1
-    I2 === T2
-    I3 === T3
-    I4 === T4
-    I5 === T5
+    MirrorNLB --> U1 & U2 & U3 & U4 & U5
+    U1 === T1
+    U2 === T2
+    U3 === T3
+    U4 === T4
+    U5 === T5
     T1 === G1
     T2 === G2
     T3 === G3
     T4 === G4
     T5 === G5
-    G1 -- DNAT44 to FDI LB --> IntNLB_GCP
-    G2 -- DNAT44 to FDI LB --> IntNLB_GCP
-    G3 -- DNAT44 to FDI LB --> IntNLB_GCP
-    G4 -- DNAT44 to FDI LB --> IntNLB_GCP
-    G5 -- DNAT44 to FDI LB --> IntNLB_GCP
+    G1 -- Fragmented Packets --> N1
+    G2 -- Fragmented Packets --> N2
+    G3 -- Fragmented Packets --> N3
+    G4 -- Fragmented Packets --> N4
+    G5 -- Fragmented Packets --> N5
+    N1 -- Reassembled + 5-tuple --> IntNLB_GCP
+    N2 -- Reassembled + 5-tuple --> IntNLB_GCP
+    N3 -- Reassembled + 5-tuple --> IntNLB_GCP
+    N4 -- Reassembled + 5-tuple --> IntNLB_GCP
+    N5 -- Reassembled + 5-tuple --> IntNLB_GCP
     IntNLB_GCP --> K8S
     CR --> ExtNLB
 
@@ -136,11 +136,12 @@ flowchart LR
 **Traffic Mirroring Infrastructure:**
 - **Mirror NLB**: Dedicated load balancer for mirrored traffic distribution
 - **5x Parallel Lanes**: Redundant processing lanes for high availability
-  - **Mirror EC2 Instances**: XDP Pipeline with integrated VXLAN termination and traffic filtering
+  - **Unified AWS VMs**: Integrated XDP Pipeline + IPSec processing to eliminate inter-VM packet drops
     - **XDP Processing**: VXLAN decapsulation, NAT translation, and packet filtering within kernel
+    - **IPSec Integration**: Direct StrongSwan policy-based tunnel endpoints with packet fragmentation (MTU > 1360)
     - **Production Mode**: Firewall permit list active (324 devices)
     - **Pre-Production Mode**: Allow all traffic for testing
-  - **AWS IPSEC VMs**: StrongSwan policy-based IPSec tunnel endpoints with packet fragmentation (MTU > 1360) and encryption
+    - **Architecture Benefit**: Zero packet drops between processing stages
 - **Capacity**: 500 Mbps per tunnel × 5 tunnels = 2.5 Gbps total bandwidth
 
 #### **3. Hybrid Connectivity Layer**
@@ -159,16 +160,27 @@ flowchart LR
 **IPSec Reception Layer:**
 - **GCP IPSEC VMs**: 5 instances per environment (Production/Pre-Production)
 - **Configuration**: 8-core, 20GB RAM per instance
-- **Traffic Processing**: Receives pre-processed packets from AWS XDP Pipeline
+- **Traffic Processing**: Receives encrypted packets from AWS unified VMs
 - **Tunnel Termination**: StrongSwan policy matching AWS configuration
+- **Fragmentation Issue**: IPSec decryption yields fragmented packets where subsequent fragments lack UDP headers
+
+**Packet Reassembly Layer (NEW):**
+- **Nginx Proxy Instances**: 5 instances co-located with GCP IPSEC VMs
+- **Purpose**: Reassemble fragmented packets before load balancer distribution
+- **Functionality**: 
+  - Fragment collection and reassembly
+  - UDP port restoration for 5-tuple load balancing
+  - Complete packet reconstruction with source/destination port information
+- **Performance**: Maintains 5-tuple flow integrity for Internal NLB distribution
 
 **Processing Infrastructure:**
-- **Internal NLB (GCP)**: FDI Load Balancer (100.77.8.123:8081)
+- **Internal NLB (GCP)**: FDI Load Balancer receiving reassembled packets with complete 5-tuple
+- **Load Balancing**: Now supports proper 5-tuple distribution (src_ip, dst_ip, src_port, dst_port, protocol)
 - **DNAT44 Translation**: Source IP preservation with destination NAT
 - **Kubernetes Cluster**: GCP FDI Collector for final data processing
 - **Scaling**: Horizontal pod autoscaling based on traffic load
 
-#### **5. XDP Pipeline Integration Points (AWS Mirror EC2)**
+#### **5. XDP Pipeline Integration Points (Unified AWS VMs)**
 
 **Traffic Entry Point:**
 - **Interface**: ens5 (AWS Traffic Mirror input)
@@ -258,12 +270,10 @@ graph LR
             P_MNLB["Prod Mirror NLB<br/>Filtered Traffic"]
             
             subgraph P_Lanes [Prod Parallel Stack - 5 Lanes]
-                P_MEC2["Prod Mirror EC2<br/>(XDP Pipeline with Integrated VXLAN Termination)<br/><b>[Firewall: 324 Device Permit]</b>"]
-                P_IVM["Prod IPSEC VMs<br/>(Fragment MTU > 1360 & Encrypt)<br/>(5 × 500Mbps = 2.5Gbps)"]
+                P_UVM["Prod Unified AWS VM<br/>(XDP Pipeline + IPSEC Integration)<br/><b>[Firewall: 324 Device Permit]</b><br/>(Fragment MTU > 1360 & Encrypt)<br/>(5 × 500Mbps = 2.5Gbps)"]
             end
 
-            P_MNLB --> P_MEC2
-            P_MEC2 --> P_IVM
+            P_MNLB --> P_UVM
         end
 
         %% -----------------------------------------
@@ -274,12 +284,10 @@ graph LR
             PP_MNLB["Pre-Prod Mirror NLB<br/>Full Traffic"]
             
             subgraph PP_Lanes [Pre-Prod Parallel Stack - 5 Lanes]
-                PP_MEC2["Pre-Prod Mirror EC2<br/>(XDP Pipeline with Integrated VXLAN Termination)<br/><b>[Allow All - Testing]</b>"]
-                                PP_IVM["Pre-Prod IPSEC VMs<br/>(Fragment MTU > 1360 & Encrypt)<br/>(5 × 500Mbps = 2.5Gbps)"]
+                PP_UVM["Pre-Prod Unified AWS VM<br/>(XDP Pipeline + IPSEC Integration)<br/><b>[Allow All - Testing]</b><br/>(Fragment MTU > 1360 & Encrypt)<br/>(5 × 500Mbps = 2.5Gbps)"]
             end
             
-            PP_MNLB --> PP_MEC2
-            PP_MEC2 --> PP_IVM
+            PP_MNLB --> PP_UVM
         end
 
         %% Connecting Splitter to Environments
@@ -295,8 +303,8 @@ graph LR
         PP_Tunnel["PRE-PRODUCTION Tunnels<br/>(StrongSwan Policy)<br/>5 × 500Mbps = 2.5Gbps<br/>AES-256 Encryption"]
     end
 
-    P_IVM === P_Tunnel
-    PP_IVM === PP_Tunnel
+    P_UVM === P_Tunnel
+    PP_UVM === PP_Tunnel
 
     %% ==========================================
     %% 5. GCP REGION (RECEIVER)
@@ -309,11 +317,12 @@ graph LR
         %% -----------------------------------------
         subgraph GCP_PROD [PRODUCTION RECEIVER]
             direction TB
-            P_GVM["Prod GCP IPSEC VMs<br/>(5 × 8-core, 20GB RAM)<br/><b>Post-XDP Processing</b>"]
-            P_ILB["Prod Internal NLB<br/>(FDI Load Balancer)<br/>172.30.82.95:8081"]
+            P_GVM["Prod GCP IPSEC VMs<br/>(5 × 8-core, 20GB RAM)<b>IPSec Decryption</b>"]
+            P_NGINX["Prod Nginx Proxies<br/>(Packet Reassembly)<br/>Fragment Recovery + 5-tuple Restoration"]
+            P_ILB["Prod Internal NLB<br/>(FDI Load Balancer)<br/>172.30.82.95:8081<br/>5-tuple Load Balancing"]
             P_K8S["Production K8s<br/>(FDI Collector)<br/>Stable Processing"]
             
-            P_GVM -->|Pre-processed by AWS XDP| P_ILB --> P_K8S
+            P_GVM --> P_NGINX --> P_ILB --> P_K8S
         end
 
         %% -----------------------------------------
@@ -321,11 +330,12 @@ graph LR
         %% -----------------------------------------
         subgraph GCP_PREPROD [PRE-PRODUCTION RECEIVER]
             direction TB
-            PP_GVM["Pre-Prod GCP IPSEC VMs<br/>(5 × 8-core, 20GB RAM)<br/><b>Post-XDP Processing</b>"]
-            PP_ILB["Pre-Prod Internal NLB<br/>(FDI Load Balancer)<br/>Test Environment"]
+            PP_GVM["Pre-Prod GCP IPSEC VMs<br/>(5 × 8-core, 20GB RAM)<br/><b>IPSec Decryption</b>"]
+            PP_NGINX["Pre-Prod Nginx Proxies<br/>(Packet Reassembly)<br/>Fragment Recovery + 5-tuple Restoration"]
+            PP_ILB["Pre-Prod Internal NLB<br/>(FDI Load Balancer)<br/>Test Environment<br/>5-tuple Load Balancing"]
             PP_K8S["Pre-Production K8s<br/>(FDI Collector)<br/>Validation & Testing"]
             
-            PP_GVM -->|Pre-processed by AWS XDP| PP_ILB --> PP_K8S
+            PP_GVM --> PP_NGINX --> PP_ILB --> PP_K8S
         end
     end
 
@@ -341,29 +351,48 @@ graph LR
 
 ### Traffic Flow Analysis
 
-**1. AWS Side (Sender)**
+**1. AWS Side (Sender) - Unified VM Architecture**
 - **Ingress**: Traffic enters via External NLB (2.3-2.6 Gbps peak)
-- **Mirroring**: Traffic is mirrored to 5 sets of instances for monitoring
-- **XDP Processing (Integrated VXLAN Termination)**:
-  - VXLAN Termination occurs within the XDP Pipeline at Mirror EC2
-  - DNAT44 is applied within XDP kernel program
-  - Source IP (SIP): Customer Router IP (preserved)
-  - Dest IP (DIP): NAT Target IP (172.30.82.95)
-  - Port: UDP 8081 (translated from 31765)
+- **Mirroring**: Traffic is mirrored to 5 unified AWS VM instances for monitoring
+- **Integrated Processing Pipeline**:
+  - **VXLAN Termination**: Occurs within XDP Pipeline on unified AWS VM
+  - **DNAT44 Translation**: Applied within XDP kernel program
+  - **IPSec Processing**: Direct StrongSwan processing without inter-VM transfer
+  - **Source IP (SIP)**: Customer Router IP (preserved end-to-end)
+  - **Dest IP (DIP)**: NAT Target IP (172.30.82.95)
+  - **Port Translation**: UDP 31765 → 8081
+- **Architecture Benefit**: Zero packet drops between XDP and IPSec stages
 
 **2. The Connection (Tunnel)**
-- **Protocol**: StrongSwan Policy-based IPSEC
+- **Protocol**: StrongSwan Policy-based IPSEC with AES-256 encryption
 - **Capacity**: 5 Tunnels × 500Mbps each = ~2500Mbps Total Bandwidth
-- **Security**: Full IPSec encryption between AWS and GCP
+- **Security**: Full IPSec ESP encryption between AWS unified VMs and GCP
 
-**3. GCP Side (Receiver) - Post-XDP Processing**
-- **Ingress**: 5 GCP IPSEC VMs receive pre-processed traffic from AWS XDP Pipeline
-- **Traffic Characteristics (Post-XDP)**:
-  - **XDP VXLAN Pipeline already processed traffic at AWS Mirror EC2 level**
-  - Packets already have DNAT applied (Port 31765 → 172.30.82.95:8081)
-  - Source IP (SIP): Original Customer Router IP (preserved)
-  - Dest IP (DIP): NAT Target IP (172.30.82.95)
-  - Port: UDP 8081 (translated from original port 31765)
+**3. GCP Side (Receiver) - Enhanced with Fragmentation Handling**
+- **IPSec Termination**: 5 GCP IPSEC VMs receive encrypted traffic from AWS
+- **Fragmentation Challenge**: Large packets fragmented during IPSec decryption lose UDP headers
+- **Nginx Proxy Layer (NEW)**:
+  - **Fragment Collection**: Collects fragmented packets from GCP IPSEC VMs
+  - **Packet Reassembly**: Reconstructs complete packets with full UDP headers
+  - **5-tuple Restoration**: Ensures src_ip, dst_ip, src_port, dst_port, protocol available
+  - **Performance**: Maintains high-throughput processing without bottlenecks
+- **Load Balancer Processing**:
+  - **Internal NLB**: Receives reassembled packets with complete 5-tuple information
+  - **Distribution Method**: Consistent hash-based load balancing across Kubernetes pods
+  - **Session Affinity**: Proper flow distribution maintained
+  - **Target**: 172.30.82.95:8081 → Kubernetes FDI Collector pods
+
+**Traffic Flow Summary:**
+```
+Customer Routers → AWS External NLB → AWS Unified VMs (XDP+IPSec) → 
+IPSec Tunnels → GCP IPSEC VMs → Nginx Proxies → GCP Internal NLB → 
+Kubernetes Pods
+```
+
+**Key Improvements:**
+- **AWS Side**: Eliminated inter-VM packet drops through unified architecture
+- **GCP Side**: Resolved fragmentation-induced load balancing issues through Nginx proxy layer
+- **End-to-End**: Maintained 85K+ PPS processing capability with improved reliability
 
 ## XDP Pipeline Integration
 
