@@ -1163,3 +1163,105 @@ show_detailed_info() {
         echo "Dynamic scaling module not found"
     fi
 }
+
+# Show per-IP traffic statistics and allowlist status
+show_ip_statistics() {
+    print_color "cyan" "📊 VXLAN Pipeline - Per-IP Statistics Analysis"
+    echo "============================================================="
+    
+    # Get map IDs
+    local stats_map_id=$(sudo bpftool map list | grep "stats_map" | grep "percpu_array" | head -1 | cut -d: -f1 | tr -d ' ')
+    local ip_map_id=$(sudo bpftool map list | grep "ip_allowlist" | head -1 | cut -d: -f1 | tr -d ' ')
+    
+    if [ -z "$stats_map_id" ] || [ -z "$ip_map_id" ]; then
+        print_color "red" "❌ Error: Could not find required eBPF maps"
+        print_color "yellow" "   Make sure the pipeline is running with: ./xdp.sh start"
+        return 1
+    fi
+    
+    print_color "green" "\n🎯 Current IP Allowlist:"
+    # Display allowlist with formatted IPs
+    if sudo bpftool map dump id "$ip_map_id" --json >/dev/null 2>&1; then
+        sudo bpftool map dump id "$ip_map_id" --json | jq -r '.[] | .formatted.key' 2>/dev/null | \
+        while read -r ip_int; do
+            if [ -n "$ip_int" ] && [ "$ip_int" != "null" ]; then
+                # Convert integer to IP address
+                local a=$((ip_int & 0xFF))
+                local b=$(((ip_int >> 8) & 0xFF))
+                local c=$(((ip_int >> 16) & 0xFF))
+                local d=$(((ip_int >> 24) & 0xFF))
+                printf "  ✅ %d.%d.%d.%d\n" "$d" "$c" "$b" "$a"
+            fi
+        done
+    else
+        print_color "red" "  ❌ Could not read IP allowlist"
+    fi
+    
+    print_color "green" "\n📈 Pipeline Statistics Summary:"
+    if sudo bpftool map dump id "$stats_map_id" --json >/dev/null 2>&1; then
+        local stats_json=$(sudo bpftool map dump id "$stats_map_id" --json 2>/dev/null)
+        
+        # Extract key statistics by summing across CPUs
+        local total_pkts=$(echo "$stats_json" | jq -r '.[] | select(.formatted.key == 0) | [.formatted.values[].value] | add // 0' 2>/dev/null || echo "0")
+        local vxlan_pkts=$(echo "$stats_json" | jq -r '.[] | select(.formatted.key == 1) | [.formatted.values[].value] | add // 0' 2>/dev/null || echo "0")
+        local inner_pkts=$(echo "$stats_json" | jq -r '.[] | select(.formatted.key == 2) | [.formatted.values[].value] | add // 0' 2>/dev/null || echo "0")
+        local nat_applied=$(echo "$stats_json" | jq -r '.[] | select(.formatted.key == 3) | [.formatted.values[].value] | add // 0' 2>/dev/null || echo "0")
+        local forwarded=$(echo "$stats_json" | jq -r '.[] | select(.formatted.key == 4) | [.formatted.values[].value] | add // 0' 2>/dev/null || echo "0")
+        
+        printf "  Total Packets:     %'d\n" "$total_pkts"
+        printf "  VXLAN Packets:     %'d (%.1f%%)\n" "$vxlan_pkts" $(awk "BEGIN {print ($vxlan_pkts/$total_pkts)*100}" 2>/dev/null || echo "0")
+        printf "  Inner Packets:     %'d\n" "$inner_pkts"
+        printf "  NAT Applied:       %'d\n" "$nat_applied"
+        printf "  Forwarded:         %'d\n" "$forwarded"
+        
+        # Calculate efficiency
+        if [ "$total_pkts" -gt 0 ]; then
+            local efficiency=$(awk "BEGIN {printf \"%.1f\", ($nat_applied/$total_pkts)*100}")
+            printf "  NAT Efficiency:    %s%%\n" "$efficiency"
+        fi
+    else
+        print_color "red" "  ❌ Could not read pipeline statistics"
+    fi
+    
+    print_color "green" "\n🔍 Live Traffic Analysis (10s sample):"
+    print_color "yellow" "   Sampling VXLAN traffic on ens5..."
+    
+    # Sample traffic for 10 seconds and analyze by source IP
+    local temp_file="/tmp/vxlan_traffic_$$.txt"
+    timeout 10 sudo tcpdump -i ens5 -n -q 'udp port 4789' 2>"$temp_file" >/dev/null || true
+    
+    if [ -s "$temp_file" ]; then
+        echo "   Source IP Traffic Analysis:"
+        echo "   ┌─────────────────┬─────────┬─────────┬──────────┐"
+        echo "   │ Source IP       │ Packets │ PPS     │ Status   │"
+        echo "   ├─────────────────┼─────────┼─────────┼──────────┤"
+        
+        # Extract and count source IPs
+        grep -E '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ >' "$temp_file" 2>/dev/null | \
+        sed -E 's/.* ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | \
+        sort | uniq -c | sort -nr | head -10 | \
+        while read -r count ip; do
+            local pps=$(awk "BEGIN {printf \"%.1f\", $count/10}")
+            
+            # Check if IP is in allowlist by converting to integer and checking
+            local status="❌ Filtered"
+            if sudo bpftool map dump id "$ip_map_id" --json 2>/dev/null | grep -q "\"$ip\"" 2>/dev/null; then
+                status="✅ Allowed"
+            fi
+            
+            printf "   │ %-15s │ %7d │ %7s │ %-8s │\n" "$ip" "$count" "$pps" "$status"
+        done
+        
+        echo "   └─────────────────┴─────────┴─────────┴──────────┘"
+    else
+        print_color "yellow" "   ❌ No VXLAN traffic captured during sample period"
+    fi
+    
+    rm -f "$temp_file" 2>/dev/null || true
+    
+    print_color "blue" "\n💡 Usage Tips:"
+    echo "  • IPs with ✅ are processed by the pipeline"
+    echo "  • IPs with ❌ are filtered out (not in allowlist)" 
+    echo "  • Use './xdp.sh ips' to manage the allowlist"
+    echo "  • Run this command periodically to monitor IP-level performance"
+}

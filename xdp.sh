@@ -42,6 +42,7 @@ COMMANDS:
     restart         Stop and restart the pipeline
     status          Show pipeline status and basic info
     stats           Show real-time packet statistics (compact format)
+    ipstats         Show per-IP traffic statistics and allowlist status
     config          Show current pipeline configuration
     maps            Show detailed eBPF maps status and contents
     ips             Display IP allowlist management options:
@@ -348,6 +349,9 @@ case "$CMD" in
             print_color "blue" "Populating ARP table for configured NAT target $NAT_IP..."
             populate_arp_table "$NAT_IP" "$TARGET_INTERFACE"
         fi
+        ;;  
+    "ipstats")
+        show_ip_statistics "$@"
         ;;
     "cleanup") 
         cleanup_pipeline "$@"
