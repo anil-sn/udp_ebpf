@@ -76,7 +76,7 @@ show_vxlan_analysis() {
     
     # Calculate differences
     local ens5_delta=$((ens5_rx_after - ens5_rx_before))
-    local tap0_delta=$((tap0_tx_after - tap0_before))
+    local tap0_delta=$((tap0_tx_after - tap0_tx_before))
     local processing_rate=0
     
     if [ $ens5_delta -gt 0 ]; then
