@@ -48,7 +48,7 @@ class XDPPipelineMonitor:
         b = (ip_int >> 8) & 0xFF   # Second byte  
         c = (ip_int >> 16) & 0xFF  # Third byte
         d = (ip_int >> 24) & 0xFF  # Fourth byte
-        return f"{d}.{c}.{b}.{a}"  # Reverse the order completely  # Reverse the order completely
+        return f"{d}.{c}.{b}.{a}"  # Reverse the order completely
     
     def load_allowlist_json(self) -> Optional[Dict]:
         """Load allowlist from JSON file"""
@@ -99,7 +99,10 @@ class XDPPipelineMonitor:
         for entry in ip_data:
             if "formatted" in entry and "key" in entry["formatted"]:
                 ip_int = entry["formatted"]["key"]
+                # Debug: print raw value
+                print(f"  DEBUG: Raw IP int: {ip_int} (0x{ip_int:08x})")
                 ip_str = self.convert_bpf_ip_correct(ip_int)  # Fixed function
+                print(f"  DEBUG: Converted to: {ip_str}")
                 ips.append(ip_str)
         
         # Sort IPs for consistent display
