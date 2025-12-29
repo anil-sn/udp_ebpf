@@ -714,11 +714,11 @@ show_bpf_maps() {
                 # Use jq for reliable JSON parsing
                 echo "$ip_json" | jq -r '.[].formatted.key' 2>/dev/null | head -20 | while read -r ip_int; do
                     if [ -n "$ip_int" ] && [[ "$ip_int" =~ ^[0-9]+$ ]]; then
-                        # Convert integer IP to dotted decimal (network byte order)
-                        local a=$(( (ip_int >> 24) & 0xFF ))
-                        local b=$(( (ip_int >> 16) & 0xFF ))
-                        local c=$(( (ip_int >> 8) & 0xFF ))
-                        local d=$(( ip_int & 0xFF ))
+                        # Convert integer IP to dotted decimal (little-endian from bpftool)
+                        local a=$(( ip_int & 0xFF ))
+                        local b=$(( (ip_int >> 8) & 0xFF ))
+                        local c=$(( (ip_int >> 16) & 0xFF ))
+                        local d=$(( (ip_int >> 24) & 0xFF ))
                         local ip_addr="$a.$b.$c.$d"
                         printf "│ %15s │                 Allowed                     │\n" "$ip_addr"
                     fi
@@ -727,11 +727,11 @@ show_bpf_maps() {
                 # Fallback: parse without jq using grep/sed
                 echo "$ip_json" | grep -o '"formatted":{"key":[0-9]*' | sed 's/"formatted":{"key"://' | head -20 | while read -r ip_int; do
                     if [ -n "$ip_int" ] && [[ "$ip_int" =~ ^[0-9]+$ ]]; then
-                        # Convert integer IP to dotted decimal
-                        local a=$(( (ip_int >> 24) & 0xFF ))
-                        local b=$(( (ip_int >> 16) & 0xFF ))
-                        local c=$(( (ip_int >> 8) & 0xFF ))
-                        local d=$(( ip_int & 0xFF ))
+                        # Convert integer IP to dotted decimal (little-endian from bpftool)
+                        local a=$(( ip_int & 0xFF ))
+                        local b=$(( (ip_int >> 8) & 0xFF ))
+                        local c=$(( (ip_int >> 16) & 0xFF ))
+                        local d=$(( (ip_int >> 24) & 0xFF ))
                         local ip_addr="$a.$b.$c.$d"
                         printf "│ %15s │                 Allowed                     │\n" "$ip_addr"
                     fi

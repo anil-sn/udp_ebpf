@@ -157,19 +157,20 @@ class TrafficAnalyzer:
         for ip, total_count, vxlan_count, ipsec_count, tap_count in ip_totals[:10]:
             pps = total_count / duration
             
-            # Determine protocol and status
-            if vxlan_count > 0:
-                status = self.check_allowlist_status(ip)
-                protocol = "VXLAN Inner"
-            elif ipsec_count > 0:
+            # Determine protocol and status based on where IP appears
+            if ipsec_count > 0:
                 status = "🔐 IPSec/ESP"
-                protocol = "Encrypted"
             elif tap_count > 0:
-                status = self.check_allowlist_status(ip)
-                protocol = "TAP Output"
+                # IP appeared in TAP = successfully processed 
+                status = "✅ PROCESSED"
+            elif vxlan_count > 0:
+                # IP in VXLAN but not TAP = check allowlist to see why
+                if ip in self.allowlist_ips:
+                    status = "✅ ALLOWED"  # Should be processed but TAP capture might be incomplete
+                else:
+                    status = "❌ DENIED"   # Blocked by allowlist
             else:
                 status = "❓ Unknown"
-                protocol = "Mixed"
             
             print(f"   │ {ip:<15} │ {total_count:>7} │ {pps:>7.1f} │ {status:<16} │")
             found_traffic = True
