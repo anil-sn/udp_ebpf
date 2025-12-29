@@ -1276,17 +1276,17 @@ show_ip_statistics() {
         vxlan_ips=${vxlan_ips:-0}
         tap_ips=${tap_ips:-0}
         
-        # Remove any non-numeric characters
-        vxlan_packets=$(echo "$vxlan_packets" | tr -cd '0-9' | head -c 10)
-        tap_packets=$(echo "$tap_packets" | tr -cd '0-9' | head -c 10)
-        vxlan_ips=$(echo "$vxlan_ips" | tr -cd '0-9' | head -c 10)
-        tap_ips=$(echo "$tap_ips" | tr -cd '0-9' | head -c 10)
+        # Remove any non-numeric characters and validate
+        vxlan_packets=$(printf "%s" "$vxlan_packets" | tr -cd '0-9' || echo "0")
+        tap_packets=$(printf "%s" "$tap_packets" | tr -cd '0-9' || echo "0")
+        vxlan_ips=$(printf "%s" "$vxlan_ips" | tr -cd '0-9' || echo "0")
+        tap_ips=$(printf "%s" "$tap_ips" | tr -cd '0-9' || echo "0")
         
-        # Set defaults if empty
-        vxlan_packets=${vxlan_packets:-0}
-        tap_packets=${tap_packets:-0}
-        vxlan_ips=${vxlan_ips:-0}
-        tap_ips=${tap_ips:-0}
+        # Ensure no empty values
+        [ -z "$vxlan_packets" ] && vxlan_packets=0
+        [ -z "$tap_packets" ] && tap_packets=0
+        [ -z "$vxlan_ips" ] && vxlan_ips=0
+        [ -z "$tap_ips" ] && tap_ips=0
         
         # Count allowed and denied IPs
         local allowed_count=0
@@ -1295,14 +1295,17 @@ show_ip_statistics() {
         # Count allowed IPs from TAP interface (these made it through)
         if [[ -s "$tap_temp" ]]; then
             allowed_count=$(grep 'IP.*>' "$tap_temp" 2>/dev/null | sed -E 's/.*IP ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+ >.*/\1/' | sort -u | wc -l 2>/dev/null || echo "0")
-            allowed_count=${allowed_count:-0}
-            allowed_count=$(echo "$allowed_count" | tr -cd '0-9' | head -c 10)
-            allowed_count=${allowed_count:-0}
+            allowed_count=$(printf "%s" "$allowed_count" | tr -cd '0-9' || echo "0")
+            [ -z "$allowed_count" ] && allowed_count=0
         fi
         
         # Estimate denied count (VXLAN captured but not in TAP = blocked)
-        denied_count=$((vxlan_ips - allowed_count))
-        if [ "$denied_count" -lt 0 ]; then
+        if [ "$vxlan_ips" -ge 0 ] && [ "$allowed_count" -ge 0 ]; then
+            denied_count=$((vxlan_ips - allowed_count))
+            if [ "$denied_count" -lt 0 ]; then
+                denied_count=0
+            fi
+        else
             denied_count=0
         fi
         
