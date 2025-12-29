@@ -68,22 +68,28 @@ show_vxlan_analysis() {
     
     # Simple 5 second captures with limits
     echo "   Capturing VXLAN (4789)..."
-    local vxlan_count=$(timeout 5s sudo tcpdump -i ens5 -nn -c 50 'udp port 4789' 2>/dev/null | grep -c "VXLAN" || echo "0")
+    local vxlan_count=$(timeout 5s sudo tcpdump -i ens5 -nn -c 50 'udp port 4789' 2>/dev/null | grep -c "VXLAN" 2>/dev/null || echo "0")
     
     sleep 1
     sudo pkill -9 tcpdump 2>/dev/null || true
     
     echo "   Capturing IPSec (4500)..."  
-    local ipsec_count=$(timeout 5s sudo tcpdump -i ens5 -nn -c 50 'udp port 4500' 2>/dev/null | grep -c "UDP-encap" || echo "0")
+    local ipsec_count=$(timeout 5s sudo tcpdump -i ens5 -nn -c 50 'udp port 4500' 2>/dev/null | grep -c "UDP-encap" 2>/dev/null || echo "0")
     
     # Final cleanup
     sudo pkill -9 tcpdump 2>/dev/null || true
     
+    # Debug: show raw values
+    echo "   Debug: vxlan_count raw='$vxlan_count', ipsec_count raw='$ipsec_count'"
+    
     # Ensure variables are numbers and strip whitespace
-    vxlan_count=$(echo "${vxlan_count:-0}" | tr -d '\n\r\t ' | grep -o '[0-9]*' | head -1)
+    vxlan_count=$(printf '%s' "${vxlan_count:-0}" | tr -cd '0-9')
     vxlan_count=${vxlan_count:-0}
-    ipsec_count=$(echo "${ipsec_count:-0}" | tr -d '\n\r\t ' | grep -o '[0-9]*' | head -1)
+    ipsec_count=$(printf '%s' "${ipsec_count:-0}" | tr -cd '0-9')
     ipsec_count=${ipsec_count:-0}
+    
+    # Debug: show processed values
+    echo "   Debug: vxlan_count processed='$vxlan_count', ipsec_count processed='$ipsec_count'"
     
     # Calculate rates (5 second window)
     local vxlan_pps=$((vxlan_count / 5))
