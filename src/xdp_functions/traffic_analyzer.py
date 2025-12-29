@@ -211,7 +211,6 @@ class TrafficAnalyzer:
     def analyze_and_display(self, vxlan_file: str, ipsec_file: str, tap_file: str, duration: int = 30):
         """Simplified, clear traffic analysis"""
         print("🎯 Traffic Analysis Results:")
-        print(f"   ✅ Loaded allowlist from: {self.allowlist_file}")
         print(f"   📄 Allowlist contains {len(self.allowlist_ips)} IPs")
 
         # Parse traffic files
