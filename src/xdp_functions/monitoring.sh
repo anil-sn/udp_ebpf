@@ -79,8 +79,10 @@ show_vxlan_analysis() {
     # Final cleanup
     sudo pkill -9 tcpdump 2>/dev/null || true
     
-    # Ensure variables are numbers
+    # Ensure variables are numbers and strip whitespace
+    vxlan_count=$(echo "${vxlan_count:-0}" | tr -d '\n\r\t ' | grep -o '[0-9]*' | head -1)
     vxlan_count=${vxlan_count:-0}
+    ipsec_count=$(echo "${ipsec_count:-0}" | tr -d '\n\r\t ' | grep -o '[0-9]*' | head -1)
     ipsec_count=${ipsec_count:-0}
     
     # Calculate rates (5 second window)
