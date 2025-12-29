@@ -95,7 +95,6 @@ show_vxlan_analysis() {
     # Cleanup
     rm -f "$vxlan_temp" "$tap_temp" 2>/dev/null || true
 }
-}
 
 # Legacy function aliases for backward compatibility
 monitor_pipeline() {
