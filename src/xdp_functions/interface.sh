@@ -95,11 +95,11 @@ monitor_interface_pps() {
     # Enhanced header with color coding and statistics
     echo ""
     print_color "cyan" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    print_color "yellow" "                                    🚀 ENHANCED NETWORK PERFORMANCE MONITOR 🚀"
+    print_color "yellow" "                                     NETWORK PERFORMANCE MONITOR "
     print_color "cyan" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
     # Interface status summary
-    print_color "blue" "📊 INTERFACE OVERVIEW:"
+    print_color "blue" " INTERFACE OVERVIEW:"
     printf "   %-8s: %s (Input Traffic)\n" "$incoming_iface" "$(print_color 'green' '●') ACTIVE"
     printf "   %-8s: %s (Processed Traffic)\n" "$target_iface" "$(print_color 'green' '●') ACTIVE"  
     printf "   %-8s: %s (IPSec Tunnel)\n" "$ipsec_iface" "$(print_color 'yellow' '●') MONITORING"
@@ -113,7 +113,7 @@ monitor_interface_pps() {
     print_color "cyan" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
     # Set trap for Ctrl+C
-    trap 'print_color "yellow" "\n📊 PPS monitoring stopped"; return 0' INT
+    trap 'print_color "yellow" "\n PPS monitoring stopped"; return 0' INT
     
     while true; do
         sleep "$interval"
