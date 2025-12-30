@@ -249,6 +249,8 @@
 /* Boolean and Validation Constants */
 #define IP_ALLOWED                     1            /* IP allowlist allowed value */
 #define IP_BLOCKED                     0            /* IP allowlist blocked value */
+#define IP_FILTERING_ENABLED           1            /* IP filtering enabled value */
+#define IP_FILTERING_DISABLED          0            /* IP filtering disabled value */
 #define INTERFACE_INVALID              0            /* Invalid interface index */
 #define BPF_SUBMIT_FLAGS_NONE          0            /* No flags for bpf_ringbuf_submit */
 

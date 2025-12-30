@@ -124,6 +124,15 @@ start_pipeline() {
             print_color "yellow" "Warning: ip_allowlist.json not found"
         fi
         
+        # Initialize IP filter configuration (default: enabled for backward compatibility)
+        print_color "blue" "Initializing IP filter configuration..."
+        sleep 1  # Give BPF maps time to initialize
+        if bpftool map update name ip_filter_config key hex 00 00 00 00 value hex 01 2>/dev/null; then
+            print_color "green" "✓ IP filtering initialized (default: ENABLED)"
+        else
+            print_color "yellow" "⚠ Could not initialize IP filter config (will use BPF program default)"
+        fi
+        
         # Allow time for vxlan_loader to fully initialize NAT rules and maps
         print_color "blue" "Waiting for BPF map initialization..."
         sleep 3

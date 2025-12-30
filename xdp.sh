@@ -60,6 +60,10 @@ COMMANDS:
                    'ips remove-bulk <IP,IP>' - Remove comma-separated list of IPs
                    'ips watch [interval]'  - Watch JSON file for changes and auto-sync
                    Shows all currently loaded allowed IPs from the BPF map
+    filter          Manage IP allowlist filtering
+                   'filter enable'              - Enable IP allowlist filtering (packets not in allowlist are dropped)
+                   'filter disable'             - Disable IP allowlist filtering (all packets allowed)  
+                   'filter status'              - Show current filtering status and allowlist info
     logs            Show recent pipeline log entries
                    Usage: logs [count] [filter]
     info            Show detailed system and configuration info
@@ -89,6 +93,12 @@ EXAMPLES:
     ./xdp.sh ips status                     # Check JSON vs map status for all IPs
     ./xdp.sh ips reload                     # Clear and reload IPs from JSON  
     ./xdp.sh ips orphaned                   # Show IPs in map but not in JSON
+    ./xdp.sh filter enable                  # Enable IP allowlist filtering
+    ./xdp.sh filter disable                 # Disable IP allowlist filtering
+    ./xdp.sh filter status                  # Show filtering status
+    ./xdp.sh filter enable                  # Enable IP allowlist filtering
+    ./xdp.sh filter disable                 # Disable IP allowlist filtering
+    ./xdp.sh filter status                  # Show filtering status
     ./xdp.sh logs 50 ALERT                  # Show last 50 log entries with alerts
     ./xdp.sh stats                          # Show detailed pipeline analysis
     ./xdp.sh stats --compact                # Show compact statistics
@@ -293,6 +303,36 @@ case "$CMD" in
                 echo "  ./xdp.sh ips remove 1.2.3.4    # Remove single IP at runtime"
                 echo "  ./xdp.sh ips add-bulk 1.1.1.1,2.2.2.2  # Add multiple IPs"
                 echo "  ./xdp.sh ips watch 60          # Watch for JSON changes every 60s"
+                exit 1
+                ;;
+        esac
+        ;;
+    "filter")
+        # IP filtering control
+        source "$SCRIPT_DIR/xdp_functions/ip_filter.sh"
+        FILTER_ACTION="${1:-status}"
+        case "$FILTER_ACTION" in
+            "enable")
+                enable_ip_filtering "${@:2}"
+                ;;
+            "disable")
+                disable_ip_filtering "${@:2}"
+                ;;
+            "status"|"")
+                show_ip_filtering_status "${@:2}"
+                ;;
+            *)
+                print_color "red" "ERROR: Invalid filter command: $FILTER_ACTION"
+                echo ""
+                echo "Valid filter commands:"
+                echo "  enable   - Enable IP allowlist filtering"
+                echo "  disable  - Disable IP allowlist filtering"  
+                echo "  status   - Show current filtering status"
+                echo ""
+                echo "Examples:"
+                echo "  ./xdp.sh filter enable     # Enable filtering"
+                echo "  ./xdp.sh filter disable    # Disable filtering"
+                echo "  ./xdp.sh filter status     # Show status"
                 exit 1
                 ;;
         esac

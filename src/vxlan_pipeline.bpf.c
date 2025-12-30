@@ -275,6 +275,14 @@ struct {
     __uint(max_entries, IP_ALLOWLIST_MAX_ENTRIES); /* Support up to 10K allowed IPs */
 } ip_allowlist SEC(".maps");
 
+/* IP filtering configuration map - Runtime enable/disable control */
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __type(key, __u32);        /* Always use key=0 */
+    __type(value, __u8);       /* 1 = enabled, 0 = disabled */
+    __uint(max_entries, 1);    /* Single configuration entry */
+} ip_filter_config SEC(".maps");
+
 /* Packet data structure for ring buffer */
 struct packet_event {
     __u32 ifindex;     /* Target interface index */
@@ -416,6 +424,15 @@ static __always_inline void update_stat(__u32 index, __u64 value)
 static __always_inline int is_ip_allowed(struct iphdr *iph) {
     if (!iph) return 0;
 
+    /* Check if IP filtering is enabled */
+    __u32 key = 0;
+    __u8 *enabled = bpf_map_lookup_elem(&ip_filter_config, &key);
+    if (!enabled || *enabled == IP_FILTERING_DISABLED) {
+        /* IP filtering disabled - allow all packets */
+        return 1;
+    }
+
+    /* IP filtering enabled - proceed with allowlist check */
     /* Check destination IP first (most common case for NAT) */
     __u8 *allowed = bpf_map_lookup_elem(&ip_allowlist, &iph->daddr);
     if (allowed && *allowed == IP_ALLOWED) {
