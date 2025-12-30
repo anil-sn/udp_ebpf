@@ -2,6 +2,13 @@
 # XDP VXLAN Pipeline Control - Main Entry Point
 
 set -euo pipefail
+
+# Auto-elevate to root if not already running as root
+if [ "$EUID" -ne 0 ]; then
+    echo "⚡ XDP operations require root privileges. Auto-elevating..."
+    exec sudo -E "$0" "$@"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/src"
 
 # Source all function modules

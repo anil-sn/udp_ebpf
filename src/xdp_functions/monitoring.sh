@@ -384,6 +384,5 @@ show_monitor_help() {
 
 # Make functions available when script is sourced
 if [ "${BASH_SOURCE[0]}" != "${0}" ]; then
-    print_color "green" "✅ XDP monitoring functions loaded (Python-based)"
-    print_color "yellow" "💡 Use 'show_monitor_help' to see available commands"
+    print_color "yellow" "'show_monitor_help'"
 fi
