@@ -86,16 +86,32 @@ monitor_interface_pps() {
     prev_stats["target_rx_missed"]=$(echo "$target_stats" | cut -d: -f9)
     prev_stats["ipsec_rx_missed"]=$(echo "$ipsec_stats" | cut -d: -f9)
     
-    # Compact header with interface names and error stats
+    # Initialize tracking variables for enhanced monitoring
+    local -A max_pps peak_errors total_packets
+    local iteration_count=0
+    local alert_threshold_pps=5000
+    local alert_threshold_errors=1000
+    
+    # Enhanced header with color coding and statistics
     echo ""
-    printf "%-8s | %-12s %-12s %-12s | %-12s %-12s %-12s | %-12s %-12s %-12s\n" \
-        "TIME" "${incoming_iface}-RX" "${incoming_iface}-TX" "${incoming_iface}-ERR" \
-        "${target_iface}-RX" "${target_iface}-TX" "${target_iface}-ERR" \
-        "${ipsec_iface}-RX" "${ipsec_iface}-TX" "${ipsec_iface}-ERR"
-    printf "%-8s | %-12s %-12s %-12s | %-12s %-12s %-12s | %-12s %-12s %-12s\n" \
-        "--------" "------------" "------------" "------------" \
-        "------------" "------------" "------------" \
-        "------------" "------------" "------------"
+    print_color "cyan" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_color "yellow" "                                    🚀 ENHANCED NETWORK PERFORMANCE MONITOR 🚀"
+    print_color "cyan" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    # Interface status summary
+    print_color "blue" "📊 INTERFACE OVERVIEW:"
+    printf "   %-8s: %s (Input Traffic)\n" "$incoming_iface" "$(print_color 'green' '●') ACTIVE"
+    printf "   %-8s: %s (Processed Traffic)\n" "$target_iface" "$(print_color 'green' '●') ACTIVE"  
+    printf "   %-8s: %s (IPSec Tunnel)\n" "$ipsec_iface" "$(print_color 'yellow' '●') MONITORING"
+    echo ""
+    
+    # Enhanced table header with visual separators
+    print_color "cyan" "┌─────────┬─────────────────────────────────────────────┬─────────────────────────────────────────────┬─────────────────────────────────────────────┐"
+    printf "│%-8s │ %-43s │ %-43s │ %-43s │\n" "" "$(print_color 'green' "🔄 $incoming_iface (INGRESS)")" "$(print_color 'blue' "⚡ $target_iface (PROCESSING)")" "$(print_color 'yellow' "🔒 $ipsec_iface (SECURITY)")"
+    print_color "cyan" "├─────────┼─────────────────────────────────────────────┼─────────────────────────────────────────────┼─────────────────────────────────────────────┤"
+    printf "│%-8s │ %-13s %-13s %-13s │ %-13s %-13s %-13s │ %-13s %-13s %-13s │\n" \  
+        "TIME" "RX-PPS" "TX-PPS" "ERRORS/s" "RX-PPS" "TX-PPS" "ERRORS/s" "RX-PPS" "TX-PPS" "ERRORS/s"
+    print_color "cyan" "├─────────┼─────────────────────────────────────────────┼─────────────────────────────────────────────┼─────────────────────────────────────────────┤"
     
     # Set trap for Ctrl+C
     trap 'print_color "yellow" "\n📊 PPS monitoring stopped"; return 0' INT
@@ -103,6 +119,7 @@ monitor_interface_pps() {
     while true; do
         sleep "$interval"
         iterations=$((iterations + 1))
+        iteration_count=$((iteration_count + 1))
         
         # Get current statistics
         incoming_stats=$(get_interface_stats "$incoming_iface")
@@ -147,12 +164,38 @@ monitor_interface_pps() {
         local target_err_rate=$(( (target_rx_dropped + target_tx_dropped + target_rx_errors + target_tx_errors + target_rx_missed - prev_stats["target_rx_dropped"] - prev_stats["target_tx_dropped"] - prev_stats["target_rx_errors"] - prev_stats["target_tx_errors"] - prev_stats["target_rx_missed"]) / interval ))
         local ipsec_err_rate=$(( (ipsec_rx_dropped + ipsec_tx_dropped + ipsec_rx_errors + ipsec_tx_errors + ipsec_rx_missed - prev_stats["ipsec_rx_dropped"] - prev_stats["ipsec_tx_dropped"] - prev_stats["ipsec_rx_errors"] - prev_stats["ipsec_tx_errors"] - prev_stats["ipsec_rx_missed"]) / interval ))
         
-        # Format and display
+        # Track maximums for summary
+        [[ $incoming_rx_pps -gt ${max_pps["incoming_rx"]:-0} ]] && max_pps["incoming_rx"]=$incoming_rx_pps
+        [[ $target_rx_pps -gt ${max_pps["target_rx"]:-0} ]] && max_pps["target_rx"]=$target_rx_pps
+        [[ $ipsec_err_rate -gt ${peak_errors["ipsec"]:-0} ]] && peak_errors["ipsec"]=$ipsec_err_rate
+        
+        # Color-coded formatting based on thresholds
         local timestamp=$(date +"%H:%M:%S")
-        printf "%-8s | %'8d pps %'8d pps %'8d err | %'8d pps %'8d pps %'8d err | %'8d pps %'8d pps %'8d err\n" \
-            "$timestamp" "$incoming_rx_pps" "$incoming_tx_pps" "$incoming_err_rate" \
-            "$target_rx_pps" "$target_tx_pps" "$target_err_rate" \
-            "$ipsec_rx_pps" "$ipsec_tx_pps" "$ipsec_err_rate"
+        
+        # Format PPS with color coding
+        local incoming_rx_fmt=$(format_pps_with_color $incoming_rx_pps)
+        local incoming_tx_fmt=$(format_pps_with_color $incoming_tx_pps)
+        local target_rx_fmt=$(format_pps_with_color $target_rx_pps)
+        local target_tx_fmt=$(format_pps_with_color $target_tx_pps)
+        local ipsec_rx_fmt=$(format_pps_with_color $ipsec_rx_pps)
+        local ipsec_tx_fmt=$(format_pps_with_color $ipsec_tx_pps)
+        
+        # Format errors with color coding
+        local incoming_err_fmt=$(format_errors_with_color $incoming_err_rate)
+        local target_err_fmt=$(format_errors_with_color $target_err_rate)
+        local ipsec_err_fmt=$(format_errors_with_color $ipsec_err_rate)
+        
+        # Enhanced display with color coding and status indicators
+        printf "│%-8s │ %s %s %s │ %s %s %s │ %s %s %s │\n" \
+            "$timestamp" \
+            "$(printf "%-13s" "$incoming_rx_fmt")" "$(printf "%-13s" "$incoming_tx_fmt")" "$(printf "%-13s" "$incoming_err_fmt")" \
+            "$(printf "%-13s" "$target_rx_fmt")" "$(printf "%-13s" "$target_tx_fmt")" "$(printf "%-13s" "$target_err_fmt")" \
+            "$(printf "%-13s" "$ipsec_rx_fmt")" "$(printf "%-13s" "$ipsec_tx_fmt")" "$(printf "%-13s" "$ipsec_err_fmt")"
+        
+        # Show alert summary every 10 iterations
+        if [[ $((iteration_count % 10)) -eq 0 ]]; then
+            show_alert_summary $incoming_rx_pps $target_rx_pps $ipsec_err_rate
+        fi
         
         # Update previous values - packets
         prev_stats["incoming_rx"]=$incoming_rx
@@ -424,4 +467,46 @@ show_interface_info() {
         fi
     done
     echo "└─────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┘"
+}
+
+# Helper function for color-coded PPS formatting
+format_pps_with_color() {
+    local pps=$1
+    if [[ $pps -gt 2000 ]]; then
+        print_color 'green' "${pps} pps"
+    elif [[ $pps -gt 1000 ]]; then
+        print_color 'yellow' "${pps} pps"
+    elif [[ $pps -gt 0 ]]; then
+        print_color 'white' "${pps} pps"
+    else
+        print_color 'gray' "${pps} pps"
+    fi
+}
+
+# Helper function for color-coded error formatting
+format_errors_with_color() {
+    local errors=$1
+    if [[ $errors -gt 2000 ]]; then
+        print_color 'red' "🚨 ${errors}"
+    elif [[ $errors -gt 1000 ]]; then
+        print_color 'yellow' "⚠️  ${errors}"
+    elif [[ $errors -gt 0 ]]; then
+        print_color 'orange' "${errors} err"
+    else
+        print_color 'green' "✓ ${errors}"
+    fi
+}
+
+# Helper function for alert summary
+show_alert_summary() {
+    local incoming_pps=$1
+    local target_pps=$2
+    local ipsec_errors=$3
+    
+    # Show alerts if thresholds exceeded
+    if [[ $ipsec_errors -gt 2000 ]]; then
+        print_color "red" "├─ 🚨 CRITICAL: IPSec interface showing ${ipsec_errors} errors/sec - Check tunnel status! ─┤"
+    elif [[ $incoming_pps -gt 3000 ]] || [[ $target_pps -gt 3000 ]]; then
+        print_color "yellow" "├─ ⚡ HIGH LOAD: Traffic exceeding 3K pps - Monitor for saturation ─┤"
+    fi
 }
