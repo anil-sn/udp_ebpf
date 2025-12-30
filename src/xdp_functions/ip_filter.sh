@@ -7,8 +7,13 @@ enable_ip_filtering() {
     # Check if BPF program is loaded
     if ! bpftool map show name ip_filter_config >/dev/null 2>&1; then
         if bpftool map show name ip_allowlist >/dev/null 2>&1; then
-            print_color "red" "✗ IP filtering not available. Pipeline needs restart."
-            echo "    Run: ./xdp.sh restart  # to upgrade to filtering-capable version"
+            print_color "yellow" "⚠ XDP program is running in LEGACY MODE"
+            echo "  - IP filtering is already ALWAYS ENABLED (cannot be disabled)"
+            echo "  - To get runtime enable/disable control: ./xdp.sh restart"
+            
+            local count=$(bpftool map dump name ip_allowlist 2>/dev/null | grep -c "key" || echo "0")
+            echo "  - Current allowlist size: $count IPs"
+            return 0
         else
             print_color "red" "✗ XDP program not loaded. Please start pipeline first."
             echo "    Run: ./xdp.sh start"
@@ -41,8 +46,10 @@ disable_ip_filtering() {
     # Check if BPF program is loaded
     if ! bpftool map show name ip_filter_config >/dev/null 2>&1; then
         if bpftool map show name ip_allowlist >/dev/null 2>&1; then
-            print_color "red" "✗ IP filtering not available. Pipeline needs restart."
-            echo "    Run: ./xdp.sh restart  # to upgrade to filtering-capable version"
+            print_color "yellow" "⚠ XDP program is running in LEGACY MODE"
+            echo "  - IP filtering is ALWAYS ENABLED (cannot be disabled)"
+            echo "  - To get runtime enable/disable control: ./xdp.sh restart"
+            return 0
         else
             print_color "red" "✗ XDP program not loaded. Please start pipeline first."
             echo "    Run: ./xdp.sh start"
@@ -73,11 +80,29 @@ show_ip_filtering_status() {
             echo "  - Run './xdp.sh start' to load pipeline"
             return 1
         else
-            print_color "yellow" "Status: LEGACY MODE"
-            echo "  - XDP program loaded but IP filtering map not available"
-            echo "  - You may need to restart the pipeline to enable filtering"
-            echo "  - Run './xdp.sh restart' to upgrade to filtering-capable version"
-            return 1
+            print_color "yellow" "Status: LEGACY MODE (No Runtime Control)"
+            echo "  - XDP program is running but lacks IP filter control map"
+            echo "  - Current behavior: IP filtering is ALWAYS ENABLED"
+            echo "  - To get runtime enable/disable control:"
+            echo "    ./xdp.sh restart"
+            echo ""
+            
+            # Show allowlist info in legacy mode
+            local count=$(bpftool map dump name ip_allowlist 2>/dev/null | grep -c "key" || echo "0")
+            echo "  - Current allowlist size: $count IPs"
+            if [ "$count" -eq 0 ]; then
+                print_color "red" "  ✗ WARNING: Allowlist is empty - all packets will be DROPPED"
+                echo "    Use: ./xdp.sh ips reload  # to load IPs from JSON"
+            else
+                print_color "green" "  ✓ Allowlist contains $count IPs (filtering active)"
+            fi
+            
+            echo ""
+            echo "Legacy commands (still work):"
+            echo "  ./xdp.sh ips show          # Show current allowlist"
+            echo "  ./xdp.sh ips reload        # Reload allowlist from JSON"
+            echo "  ./xdp.sh ips status        # Check allowlist sync status"
+            return 0
         fi
     fi
     
