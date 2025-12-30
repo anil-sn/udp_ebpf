@@ -105,13 +105,13 @@ monitor_interface_pps() {
     printf "   %-8s: %s (IPSec Tunnel)\n" "$ipsec_iface" "$(print_color 'yellow' '●') MONITORING"
     echo ""
     
-    # Enhanced table header with visual separators
-    print_color "cyan" "┌─────────┬─────────────────────────────────────────────┬─────────────────────────────────────────────┬─────────────────────────────────────────────┐"
-    printf "│%-8s │ %-43s │ %-43s │ %-43s │\n" "" "$(print_color 'green' "🔄 $incoming_iface (INGRESS)")" "$(print_color 'blue' "⚡ $target_iface (PROCESSING)")" "$(print_color 'yellow' "🔒 $ipsec_iface (SECURITY)")"
-    print_color "cyan" "├─────────┼─────────────────────────────────────────────┼─────────────────────────────────────────────┼─────────────────────────────────────────────┤"
-    printf "│%-8s │ %-14s %-14s %-13s │ %-14s %-14s %-13s │ %-14s %-14s %-13s │\n" \
+    # Simple, clean table header
+    echo ""
+    printf "%-8s | %-45s | %-45s | %-45s\n" "" "🔄 $incoming_iface (INGRESS)" "⚡ $target_iface (PROCESSING)" "🔒 $ipsec_iface (SECURITY)"
+    echo "---------|-----------------------------------------------|-----------------------------------------------|-----------------------------------------------"
+    printf "%-8s | %-15s %-15s %-13s | %-15s %-15s %-13s | %-15s %-15s %-13s\n" \
         "TIME" "RX-PPS" "TX-PPS" "ERRORS/s" "RX-PPS" "TX-PPS" "ERRORS/s" "RX-PPS" "TX-PPS" "ERRORS/s"
-    print_color "cyan" "├─────────┼─────────────────────────────────────────────┼─────────────────────────────────────────────┼─────────────────────────────────────────────┤"
+    echo "---------|-----------------------------------------------|-----------------------------------------------|-----------------------------------------------"
     
     # Set trap for Ctrl+C
     trap 'print_color "yellow" "\n📊 PPS monitoring stopped"; return 0' INT
@@ -185,8 +185,8 @@ monitor_interface_pps() {
         local target_err_fmt=$(format_errors_with_color $target_err_rate)
         local ipsec_err_fmt=$(format_errors_with_color $ipsec_err_rate)
         
-        # Enhanced display with proper column alignment
-        printf "│%-8s │ %-14s %-14s %-13s │ %-14s %-14s %-13s │ %-14s %-14s %-13s │\n" \
+        # Simple, clean data display
+        printf "%-8s | %-15s %-15s %-13s | %-15s %-15s %-13s | %-15s %-15s %-13s\n" \
             "$timestamp" \
             "${incoming_rx_pps} pps" "${incoming_tx_pps} pps" "$(format_simple_errors $incoming_err_rate)" \
             "${target_rx_pps} pps" "${target_tx_pps} pps" "$(format_simple_errors $target_err_rate)" \
