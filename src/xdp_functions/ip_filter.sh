@@ -6,7 +6,13 @@ enable_ip_filtering() {
     
     # Check if BPF program is loaded
     if ! bpftool map show name ip_filter_config >/dev/null 2>&1; then
-        print_color "red" "✗ XDP program not loaded. Please start pipeline first."
+        if bpftool map show name ip_allowlist >/dev/null 2>&1; then
+            print_color "red" "✗ IP filtering not available. Pipeline needs restart."
+            echo "    Run: ./xdp.sh restart  # to upgrade to filtering-capable version"
+        else
+            print_color "red" "✗ XDP program not loaded. Please start pipeline first."
+            echo "    Run: ./xdp.sh start"
+        fi
         return 1
     fi
     
@@ -34,7 +40,13 @@ disable_ip_filtering() {
     
     # Check if BPF program is loaded
     if ! bpftool map show name ip_filter_config >/dev/null 2>&1; then
-        print_color "red" "✗ XDP program not loaded. Please start pipeline first."
+        if bpftool map show name ip_allowlist >/dev/null 2>&1; then
+            print_color "red" "✗ IP filtering not available. Pipeline needs restart."
+            echo "    Run: ./xdp.sh restart  # to upgrade to filtering-capable version"
+        else
+            print_color "red" "✗ XDP program not loaded. Please start pipeline first."
+            echo "    Run: ./xdp.sh start"
+        fi
         return 1
     fi
     
@@ -52,12 +64,21 @@ disable_ip_filtering() {
 show_ip_filtering_status() {
     print_color "blue" "=== IP Filtering Status ==="
     
-    # Check if BPF program is loaded
+    # Check if BPF program is loaded - try multiple maps for better detection
     if ! bpftool map show name ip_filter_config >/dev/null 2>&1; then
-        print_color "red" "Status: NOT AVAILABLE"
-        echo "  - XDP program not loaded"
-        echo "  - Run './xdp.sh start' to load pipeline"
-        return 1
+        # Try alternative detection methods
+        if ! bpftool map show name ip_allowlist >/dev/null 2>&1 && ! bpftool map show name stats_map >/dev/null 2>&1; then
+            print_color "red" "Status: NOT AVAILABLE"
+            echo "  - XDP program not loaded"
+            echo "  - Run './xdp.sh start' to load pipeline"
+            return 1
+        else
+            print_color "yellow" "Status: LEGACY MODE"
+            echo "  - XDP program loaded but IP filtering map not available"
+            echo "  - You may need to restart the pipeline to enable filtering"
+            echo "  - Run './xdp.sh restart' to upgrade to filtering-capable version"
+            return 1
+        fi
     fi
     
     # Get current config value
