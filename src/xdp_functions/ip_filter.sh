@@ -108,9 +108,9 @@ show_ip_filtering_status() {
     
     # Get current config value
     local status_output=$(bpftool map lookup name ip_filter_ctrl key hex 00 00 00 00 2>/dev/null)
-    local status=$(echo "$status_output" | grep -o "value.*" | grep -o "[0-9a-f][0-9a-f]" | tail -1)
+    local status=$(echo "$status_output" | grep -o '"value":\s*[0-9]' | grep -o '[0-9]' | tail -1)
     
-    if [ "$status" = "01" ]; then
+    if [ "$status" = "1" ]; then
         print_color "green" "Status: ENABLED ✓"
         echo "  - IP allowlist filtering is ACTIVE"
         echo "  - Only allowlisted IPs can pass through"
@@ -129,7 +129,7 @@ show_ip_filtering_status() {
             print_color "yellow" "  ⚠ WARNING: Allowlist is empty - all packets will be DROPPED"
         fi
         
-    elif [ "$status" = "00" ]; then
+    elif [ "$status" = "0" ]; then
         print_color "yellow" "Status: DISABLED"
         echo "  - IP filtering is INACTIVE"  
         echo "  - ALL IP addresses are allowed through"
