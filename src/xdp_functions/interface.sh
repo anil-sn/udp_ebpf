@@ -106,12 +106,12 @@ monitor_interface_pps() {
     echo ""
     
     # Enhanced table header with visual separators
-    print_color "cyan" "┌─────────┬─────────────────────────────────────────────┬─────────────────────────────────────────────┬─────────────────────────────────────────────┐"
-    printf "│%-8s │ %-43s │ %-43s │ %-43s │\n" "" "$(print_color 'green' "🔄 $incoming_iface (INGRESS)")" "$(print_color 'blue' "⚡ $target_iface (PROCESSING)")" "$(print_color 'yellow' "🔒 $ipsec_iface (SECURITY)")"
-    print_color "cyan" "├─────────┼─────────────────────────────────────────────┼─────────────────────────────────────────────┼─────────────────────────────────────────────┤"
-    printf "│%-8s │ %-13s %-13s %-13s │ %-13s %-13s %-13s │ %-13s %-13s %-13s │\n" \
+    print_color "cyan" "┌─────────┬──────────────────────────────────────┬────────────────────────────────────────────────┬────────────────────────────────────────────────┐"
+    printf "│%-8s │ %-46s │ %-46s │ %-46s │\n" "" "$(print_color 'green' "🔄 $incoming_iface (INGRESS)")" "$(print_color 'blue' "⚡ $target_iface (PROCESSING)")" "$(print_color 'yellow' "🔒 $ipsec_iface (SECURITY)")"
+    print_color "cyan" "├─────────┼──────────────────────────────────────┼────────────────────────────────────────────────┼────────────────────────────────────────────────┤"
+    printf "│%-8s │ %-15s %-15s %-15s │ %-15s %-15s %-15s │ %-15s %-15s %-15s │\n" \
         "TIME" "RX-PPS" "TX-PPS" "ERRORS/s" "RX-PPS" "TX-PPS" "ERRORS/s" "RX-PPS" "TX-PPS" "ERRORS/s"
-    print_color "cyan" "├─────────┼─────────────────────────────────────────────┼─────────────────────────────────────────────┼─────────────────────────────────────────────┤"
+    print_color "cyan" "├─────────┼──────────────────────────────────────┼────────────────────────────────────────────────┼────────────────────────────────────────────────┤"
     
     # Set trap for Ctrl+C
     trap 'print_color "yellow" "\n📊 PPS monitoring stopped"; return 0' INT
@@ -185,12 +185,12 @@ monitor_interface_pps() {
         local target_err_fmt=$(format_errors_with_color $target_err_rate)
         local ipsec_err_fmt=$(format_errors_with_color $ipsec_err_rate)
         
-        # Enhanced display with color coding and status indicators
-        printf "│%-8s │ %s %s %s │ %s %s %s │ %s %s %s │\n" \
+        # Enhanced display with proper column alignment
+        printf "│%-8s │ %-15s %-15s %-15s │ %-15s %-15s %-15s │ %-15s %-15s %-15s │\n" \
             "$timestamp" \
-            "$(printf "%-13s" "$incoming_rx_fmt")" "$(printf "%-13s" "$incoming_tx_fmt")" "$(printf "%-13s" "$incoming_err_fmt")" \
-            "$(printf "%-13s" "$target_rx_fmt")" "$(printf "%-13s" "$target_tx_fmt")" "$(printf "%-13s" "$target_err_fmt")" \
-            "$(printf "%-13s" "$ipsec_rx_fmt")" "$(printf "%-13s" "$ipsec_tx_fmt")" "$(printf "%-13s" "$ipsec_err_fmt")"
+            "${incoming_rx_pps} pps" "${incoming_tx_pps} pps" "$(format_simple_errors $incoming_err_rate)" \
+            "${target_rx_pps} pps" "${target_tx_pps} pps" "$(format_simple_errors $target_err_rate)" \
+            "${ipsec_rx_pps} pps" "${ipsec_tx_pps} pps" "$(format_simple_errors $ipsec_err_rate)"
         
         # Show alert summary every 10 iterations
         if [[ $((iteration_count % 10)) -eq 0 ]]; then
@@ -467,6 +467,20 @@ show_interface_info() {
         fi
     done
     echo "└─────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┘"
+}
+
+# Helper function for simple error formatting without breaking alignment
+format_simple_errors() {
+    local errors=$1
+    if [[ $errors -gt 2000 ]]; then
+        echo "🚨 ${errors}"
+    elif [[ $errors -gt 1000 ]]; then
+        echo "⚠️ ${errors}"
+    elif [[ $errors -gt 0 ]]; then
+        echo "${errors} err"
+    else
+        echo "✓ ${errors}"
+    fi
 }
 
 # Helper function for color-coded PPS formatting
