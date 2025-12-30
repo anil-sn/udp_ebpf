@@ -185,7 +185,7 @@ monitor_interface_pps() {
         local ipsec_err_fmt=$(format_errors_with_color $ipsec_err_rate)
         
         # Simple, clean data display
-        printf "%-12s %-12s %-12s %-12s  %-12s %-12s %-12s %-12s %-12s %-12s\n" \
+        printf "%-12s %-12s %-12s %-12s   %-12s %-12s %-12s  %-12s %-12s %-12s\n" \
             "$timestamp" \
             "${incoming_rx_pps} pps" "${incoming_tx_pps} pps" "$(format_simple_errors $incoming_err_rate)" \
             "${target_rx_pps} pps" "${target_tx_pps} pps" "$(format_simple_errors $target_err_rate)" \
