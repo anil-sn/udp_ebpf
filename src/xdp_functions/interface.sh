@@ -23,7 +23,7 @@ get_interface_stats() {
     local iface="$1"
     
     if ! check_interface_exists "$iface"; then
-        echo "0:0:0:0:0:0"
+        echo "0:0:0:0:0:0:0:0:0:0"
         return 1
     fi
     
@@ -34,19 +34,24 @@ get_interface_stats() {
     local tx_bytes=$(cat "/sys/class/net/$iface/statistics/tx_bytes" 2>/dev/null || echo "0")
     local rx_dropped=$(cat "/sys/class/net/$iface/statistics/rx_dropped" 2>/dev/null || echo "0")
     local tx_dropped=$(cat "/sys/class/net/$iface/statistics/tx_dropped" 2>/dev/null || echo "0")
+    local rx_errors=$(cat "/sys/class/net/$iface/statistics/rx_errors" 2>/dev/null || echo "0")
+    local tx_errors=$(cat "/sys/class/net/$iface/statistics/tx_errors" 2>/dev/null || echo "0")
+    local rx_missed=$(cat "/sys/class/net/$iface/statistics/rx_missed_errors" 2>/dev/null || echo "0")
+    local tx_carrier=$(cat "/sys/class/net/$iface/statistics/tx_carrier_errors" 2>/dev/null || echo "0")
     
-    echo "$rx_packets:$tx_packets:$rx_bytes:$tx_bytes:$rx_dropped:$tx_dropped"
+    echo "$rx_packets:$tx_packets:$rx_bytes:$tx_bytes:$rx_dropped:$tx_dropped:$rx_errors:$tx_errors:$rx_missed:$tx_carrier"
 }
 
-# Enhanced PPS monitoring for both incoming and target interfaces
+# Enhanced PPS monitoring for three interfaces: incoming, target, and ipsec
 monitor_interface_pps() {
     local incoming_iface="${INTERFACE:-ens5}"
-    local target_iface="${TARGET_INTERFACE:-ens6}"
+    local target_iface="${TARGET_INTERFACE:-tap0}"
+    local ipsec_iface="ipsec0"
     local interval="${1:-1}"
     local duration="${2:-0}"  # 0 = infinite
     
-    print_color "cyan" "🔍 DUAL INTERFACE PPS MONITOR"
-    print_color "blue" "Incoming: $incoming_iface | Target: $target_iface | Interval: ${interval}s"
+    print_color "cyan" "🔍 TRIPLE INTERFACE PPS MONITOR"
+    print_color "blue" "Incoming: $incoming_iface | Target: $target_iface | IPSec: $ipsec_iface | Interval: ${interval}s"
     echo ""
     
     # Storage for previous statistics
@@ -57,15 +62,40 @@ monitor_interface_pps() {
     # Initial readings
     local incoming_stats=$(get_interface_stats "$incoming_iface")
     local target_stats=$(get_interface_stats "$target_iface")
+    local ipsec_stats=$(get_interface_stats "$ipsec_iface")
     
     prev_stats["incoming_rx"]=$(echo "$incoming_stats" | cut -d: -f1)
     prev_stats["incoming_tx"]=$(echo "$incoming_stats" | cut -d: -f2)
     prev_stats["target_rx"]=$(echo "$target_stats" | cut -d: -f1)
     prev_stats["target_tx"]=$(echo "$target_stats" | cut -d: -f2)
+    prev_stats["ipsec_rx"]=$(echo "$ipsec_stats" | cut -d: -f1)
+    prev_stats["ipsec_tx"]=$(echo "$ipsec_stats" | cut -d: -f2)
+    prev_stats["incoming_rx_dropped"]=$(echo "$incoming_stats" | cut -d: -f5)
+    prev_stats["incoming_tx_dropped"]=$(echo "$incoming_stats" | cut -d: -f6)
+    prev_stats["target_rx_dropped"]=$(echo "$target_stats" | cut -d: -f5)
+    prev_stats["target_tx_dropped"]=$(echo "$target_stats" | cut -d: -f6)
+    prev_stats["ipsec_rx_dropped"]=$(echo "$ipsec_stats" | cut -d: -f5)
+    prev_stats["ipsec_tx_dropped"]=$(echo "$ipsec_stats" | cut -d: -f6)
+    prev_stats["incoming_rx_errors"]=$(echo "$incoming_stats" | cut -d: -f7)
+    prev_stats["incoming_tx_errors"]=$(echo "$incoming_stats" | cut -d: -f8)
+    prev_stats["target_rx_errors"]=$(echo "$target_stats" | cut -d: -f7)
+    prev_stats["target_tx_errors"]=$(echo "$target_stats" | cut -d: -f8)
+    prev_stats["ipsec_rx_errors"]=$(echo "$ipsec_stats" | cut -d: -f7)
+    prev_stats["ipsec_tx_errors"]=$(echo "$ipsec_stats" | cut -d: -f8)
+    prev_stats["incoming_rx_missed"]=$(echo "$incoming_stats" | cut -d: -f9)
+    prev_stats["target_rx_missed"]=$(echo "$target_stats" | cut -d: -f9)
+    prev_stats["ipsec_rx_missed"]=$(echo "$ipsec_stats" | cut -d: -f9)
     
-    # Header
-    printf "%-8s | %-15s | %-15s | %-15s | %-15s\n" "TIME" "INCOMING-RX" "INCOMING-TX" "TARGET-RX" "TARGET-TX"
-    printf "%-8s | %-15s | %-15s | %-15s | %-15s\n" "--------" "---------------" "---------------" "---------------" "---------------"
+    # Compact header with interface names and error stats
+    echo ""
+    printf "%-8s | %-12s %-12s %-12s | %-12s %-12s %-12s | %-12s %-12s %-12s\n" \
+        "TIME" "${incoming_iface}-RX" "${incoming_iface}-TX" "${incoming_iface}-ERR" \
+        "${target_iface}-RX" "${target_iface}-TX" "${target_iface}-ERR" \
+        "${ipsec_iface}-RX" "${ipsec_iface}-TX" "${ipsec_iface}-ERR"
+    printf "%-8s | %-12s %-12s %-12s | %-12s %-12s %-12s | %-12s %-12s %-12s\n" \
+        "--------" "------------" "------------" "------------" \
+        "------------" "------------" "------------" \
+        "------------" "------------" "------------"
     
     # Set trap for Ctrl+C
     trap 'print_color "yellow" "\n📊 PPS monitoring stopped"; return 0' INT
@@ -77,29 +107,77 @@ monitor_interface_pps() {
         # Get current statistics
         incoming_stats=$(get_interface_stats "$incoming_iface")
         target_stats=$(get_interface_stats "$target_iface")
+        ipsec_stats=$(get_interface_stats "$ipsec_iface")
         
-        # Parse current values
+        # Parse current values - packets
         local incoming_rx=$(echo "$incoming_stats" | cut -d: -f1)
         local incoming_tx=$(echo "$incoming_stats" | cut -d: -f2)
         local target_rx=$(echo "$target_stats" | cut -d: -f1)
         local target_tx=$(echo "$target_stats" | cut -d: -f2)
+        local ipsec_rx=$(echo "$ipsec_stats" | cut -d: -f1)
+        local ipsec_tx=$(echo "$ipsec_stats" | cut -d: -f2)
+        
+        # Parse current values - drops and errors
+        local incoming_rx_dropped=$(echo "$incoming_stats" | cut -d: -f5)
+        local incoming_tx_dropped=$(echo "$incoming_stats" | cut -d: -f6)
+        local target_rx_dropped=$(echo "$target_stats" | cut -d: -f5)
+        local target_tx_dropped=$(echo "$target_stats" | cut -d: -f6)
+        local ipsec_rx_dropped=$(echo "$ipsec_stats" | cut -d: -f5)
+        local ipsec_tx_dropped=$(echo "$ipsec_stats" | cut -d: -f6)
+        local incoming_rx_errors=$(echo "$incoming_stats" | cut -d: -f7)
+        local incoming_tx_errors=$(echo "$incoming_stats" | cut -d: -f8)
+        local target_rx_errors=$(echo "$target_stats" | cut -d: -f7)
+        local target_tx_errors=$(echo "$target_stats" | cut -d: -f8)
+        local ipsec_rx_errors=$(echo "$ipsec_stats" | cut -d: -f7)
+        local ipsec_tx_errors=$(echo "$ipsec_stats" | cut -d: -f8)
+        local incoming_rx_missed=$(echo "$incoming_stats" | cut -d: -f9)
+        local target_rx_missed=$(echo "$target_stats" | cut -d: -f9)
+        local ipsec_rx_missed=$(echo "$ipsec_stats" | cut -d: -f9)
         
         # Calculate PPS
         local incoming_rx_pps=$(( (incoming_rx - prev_stats["incoming_rx"]) / interval ))
         local incoming_tx_pps=$(( (incoming_tx - prev_stats["incoming_tx"]) / interval ))
         local target_rx_pps=$(( (target_rx - prev_stats["target_rx"]) / interval ))
         local target_tx_pps=$(( (target_tx - prev_stats["target_tx"]) / interval ))
+        local ipsec_rx_pps=$(( (ipsec_rx - prev_stats["ipsec_rx"]) / interval ))
+        local ipsec_tx_pps=$(( (ipsec_tx - prev_stats["ipsec_tx"]) / interval ))
+        
+        # Calculate Error/Drop rates
+        local incoming_err_rate=$(( (incoming_rx_dropped + incoming_tx_dropped + incoming_rx_errors + incoming_tx_errors + incoming_rx_missed - prev_stats["incoming_rx_dropped"] - prev_stats["incoming_tx_dropped"] - prev_stats["incoming_rx_errors"] - prev_stats["incoming_tx_errors"] - prev_stats["incoming_rx_missed"]) / interval ))
+        local target_err_rate=$(( (target_rx_dropped + target_tx_dropped + target_rx_errors + target_tx_errors + target_rx_missed - prev_stats["target_rx_dropped"] - prev_stats["target_tx_dropped"] - prev_stats["target_rx_errors"] - prev_stats["target_tx_errors"] - prev_stats["target_rx_missed"]) / interval ))
+        local ipsec_err_rate=$(( (ipsec_rx_dropped + ipsec_tx_dropped + ipsec_rx_errors + ipsec_tx_errors + ipsec_rx_missed - prev_stats["ipsec_rx_dropped"] - prev_stats["ipsec_tx_dropped"] - prev_stats["ipsec_rx_errors"] - prev_stats["ipsec_tx_errors"] - prev_stats["ipsec_rx_missed"]) / interval ))
         
         # Format and display
         local timestamp=$(date +"%H:%M:%S")
-        printf "%-8s | %'10d pps | %'10d pps | %'10d pps | %'10d pps\n" \
-            "$timestamp" "$incoming_rx_pps" "$incoming_tx_pps" "$target_rx_pps" "$target_tx_pps"
+        printf "%-8s | %'8d pps %'8d pps %'8d err | %'8d pps %'8d pps %'8d err | %'8d pps %'8d pps %'8d err\n" \
+            "$timestamp" "$incoming_rx_pps" "$incoming_tx_pps" "$incoming_err_rate" \
+            "$target_rx_pps" "$target_tx_pps" "$target_err_rate" \
+            "$ipsec_rx_pps" "$ipsec_tx_pps" "$ipsec_err_rate"
         
-        # Update previous values
+        # Update previous values - packets
         prev_stats["incoming_rx"]=$incoming_rx
         prev_stats["incoming_tx"]=$incoming_tx
         prev_stats["target_rx"]=$target_rx
         prev_stats["target_tx"]=$target_tx
+        prev_stats["ipsec_rx"]=$ipsec_rx
+        prev_stats["ipsec_tx"]=$ipsec_tx
+        
+        # Update previous values - errors and drops
+        prev_stats["incoming_rx_dropped"]=$incoming_rx_dropped
+        prev_stats["incoming_tx_dropped"]=$incoming_tx_dropped
+        prev_stats["target_rx_dropped"]=$target_rx_dropped
+        prev_stats["target_tx_dropped"]=$target_tx_dropped
+        prev_stats["ipsec_rx_dropped"]=$ipsec_rx_dropped
+        prev_stats["ipsec_tx_dropped"]=$ipsec_tx_dropped
+        prev_stats["incoming_rx_errors"]=$incoming_rx_errors
+        prev_stats["incoming_tx_errors"]=$incoming_tx_errors
+        prev_stats["target_rx_errors"]=$target_rx_errors
+        prev_stats["target_tx_errors"]=$target_tx_errors
+        prev_stats["ipsec_rx_errors"]=$ipsec_rx_errors
+        prev_stats["ipsec_tx_errors"]=$ipsec_tx_errors
+        prev_stats["incoming_rx_missed"]=$incoming_rx_missed
+        prev_stats["target_rx_missed"]=$target_rx_missed
+        prev_stats["ipsec_rx_missed"]=$ipsec_rx_missed
         
         # Check duration limit
         if [ "$duration" -gt 0 ]; then
