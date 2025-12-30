@@ -1437,6 +1437,14 @@ GCP Side: IPSec VM → XDP Pipeline → Internal NLB → FDI Collector
 | `restart` | Stop and restart pipeline | `./xdp.sh restart` |
 | `status` | Show pipeline status and basic info | `./xdp.sh status` |
 
+### IP Filtering Control Commands
+
+| Command | Description | Usage Example |
+|---------|-------------|---------------|
+| `filter status` | Show IP filtering status (enabled/disabled) | `./xdp.sh filter status` |
+| `filter enable` | Enable IP allowlist filtering | `./xdp.sh filter enable` |
+| `filter disable` | Disable IP allowlist filtering (pass-through) | `./xdp.sh filter disable` |
+
 ### Monitoring Commands
 
 | Command | Description | Usage Example |
@@ -1848,6 +1856,221 @@ cd .. && ./xdp.sh status
 | **XDP Not Attached** | Hook: DETACHED | `./xdp.sh info` | `./xdp.sh cleanup && ./xdp.sh start` |
 | **Memory Issues** | High memory usage | `./xdp.sh info` | Reduce ring buffer size |
 | **IP Sync Issues** | Allowlist out of sync | `./xdp.sh ips status` | `./xdp.sh ips sync` |
+
+## BPF Map Management with bpftool
+
+### Overview
+
+The XDP VXLAN Pipeline utilizes several eBPF maps for high-performance packet processing and configuration. This section provides comprehensive `bpftool` commands for inspecting and managing these maps during operation and troubleshooting.
+
+### Core BPF Maps in the Pipeline
+
+| Map Name | Type | Purpose | Key Format | Value Format |
+|----------|------|---------|------------|--------------|
+| `ip_allowlist` | BPF_MAP_TYPE_HASH | IP filtering allowlist | IPv4 address (4 bytes) | Flag (1 byte) |
+| `stats_map` | BPF_MAP_TYPE_PERCPU_ARRAY | Per-CPU packet statistics | Stat ID (0-15) | Counter (8 bytes) |
+| `nat_map` | BPF_MAP_TYPE_HASH | NAT translation rules | Source port (2 bytes) | Target IP+Port (6 bytes) |
+| `ip_filter_ctrl` | BPF_MAP_TYPE_ARRAY | IP filtering enable/disable | Index (0) | Enable flag (1 byte) |
+| `interface_map` | BPF_MAP_TYPE_DEVMAP | Interface redirection | Interface index | Device reference |
+| `redirect_map` | BPF_MAP_TYPE_DEVMAP_HASH | Fast packet redirection | Interface key | Target interface |
+
+### Common bpftool Operations
+
+#### Map Discovery and Listing
+
+```bash
+# List all BPF maps in the system
+bpftool map list
+
+# Show maps for our specific program
+bpftool map list | grep -E "(ip_allowlist|stats_map|nat_map|ip_filter_ctrl)"
+
+# Get detailed map information
+bpftool map show name ip_allowlist
+bpftool map show name stats_map
+```
+
+#### IP Allowlist Management
+
+```bash
+# Display all entries in the IP allowlist
+bpftool map dump name ip_allowlist
+
+# Add a specific IP to allowlist (key: IP in hex, value: 1 = allowed)
+bpftool map update name ip_allowlist key hex c0 a8 01 64 value hex 01
+# Example above adds 192.168.1.100 (0xc0a80164) to allowlist
+
+# Remove an IP from allowlist
+bpftool map delete name ip_allowlist key hex c0 a8 01 64
+
+# Check if specific IP exists in allowlist
+bpftool map lookup name ip_allowlist key hex c0 a8 01 64
+
+# Count total entries in allowlist
+bpftool map dump name ip_allowlist | grep -c "key"
+```
+
+#### IP Filter Control Operations
+
+```bash
+# Check current IP filtering status
+bpftool map lookup name ip_filter_ctrl key hex 00 00 00 00
+
+# Enable IP filtering (value: 1)
+bpftool map update name ip_filter_ctrl key hex 00 00 00 00 value hex 01
+
+# Disable IP filtering (value: 0) - pass-through mode
+bpftool map update name ip_filter_ctrl key hex 00 00 00 00 value hex 00
+
+# Dump entire control map
+bpftool map dump name ip_filter_ctrl
+```
+
+#### Statistics Monitoring
+
+```bash
+# Display all per-CPU statistics
+bpftool map dump name stats_map
+
+# Get specific statistic (e.g., total packets - index 0)
+bpftool map lookup name stats_map key hex 00 00 00 00
+
+# Monitor statistics in JSON format for parsing
+bpftool map dump name stats_map --json
+
+# Watch statistics in real-time (every 2 seconds)
+watch -n 2 'bpftool map dump name stats_map'
+```
+
+#### NAT Configuration Inspection
+
+```bash
+# Display all NAT translation rules
+bpftool map dump name nat_map
+
+# Look up NAT rule for specific source port (e.g., port 12345 = 0x3039)
+bpftool map lookup name nat_map key hex 39 30
+
+# Add new NAT rule (source port -> target IP:port)
+# Example: port 8080 -> 172.30.82.95:8081
+bpftool map update name nat_map key hex 90 1f value hex ac 1e 52 5f 91 1f
+
+# Remove NAT rule
+bpftool map delete name nat_map key hex 90 1f
+```
+
+#### Interface and Redirection Maps
+
+```bash
+# Show interface redirection configuration
+bpftool map dump name interface_map
+bpftool map dump name redirect_map
+
+# Update interface mapping (advanced - use with caution)
+# This should typically be managed by the XDP program
+bpftool map show name redirect_map
+```
+
+### Advanced bpftool Techniques
+
+#### JSON Output for Scripting
+
+```bash
+# Get map data in JSON format for automated processing
+bpftool map dump name ip_allowlist --json
+bpftool map dump name stats_map --json | jq '.'
+
+# Extract specific values using jq
+bpftool map lookup name ip_filter_ctrl key hex 00 00 00 00 --json | jq -r '.value'
+```
+
+#### Map Pinning and Persistence
+
+```bash
+# Check pinned maps in BPF filesystem
+ls -la /sys/fs/bpf/
+
+# Show details of pinned maps
+bpftool map show pinned /sys/fs/bpf/vxlan_ip_allowlist
+bpftool map show pinned /sys/fs/bpf/vxlan_stats_map
+
+# Pin a map for persistence (if not auto-pinned)
+bpftool map pin name ip_allowlist /sys/fs/bpf/custom_allowlist
+
+# Unpin a map
+rm /sys/fs/bpf/custom_allowlist
+```
+
+#### Troubleshooting and Debugging
+
+```bash
+# Check map memory usage and limits
+bpftool map show name ip_allowlist | grep -E "(max_entries|memory)"
+
+# Verify map is attached to program
+bpftool prog show | grep -A 10 vxlan_pipeline
+
+# Check for map errors or issues
+dmesg | grep -i bpf
+
+# Monitor map operations in real-time
+bpftool map event
+```
+
+### Practical Usage Examples
+
+#### Scenario 1: Adding New Device to Allowlist
+
+```bash
+# 1. Convert IP to hex (192.168.50.100 = 0xc0a83264)
+printf "0x%02x%02x%02x%02x\n" 192 168 50 100
+
+# 2. Add to allowlist
+bpftool map update name ip_allowlist key hex c0 a8 32 64 value hex 01
+
+# 3. Verify addition
+bpftool map lookup name ip_allowlist key hex c0 a8 32 64
+
+# 4. Check total count
+bpftool map dump name ip_allowlist | grep -c "key"
+```
+
+#### Scenario 2: Temporarily Disable Filtering for Testing
+
+```bash
+# 1. Check current status
+bpftool map lookup name ip_filter_ctrl key hex 00 00 00 00
+
+# 2. Disable filtering (allow all traffic)
+bpftool map update name ip_filter_ctrl key hex 00 00 00 00 value hex 00
+
+# 3. Run tests...
+
+# 4. Re-enable filtering
+bpftool map update name ip_filter_ctrl key hex 00 00 00 00 value hex 01
+```
+
+#### Scenario 3: Performance Analysis
+
+```bash
+# Monitor packet rates and drops
+while true; do
+    echo "=== $(date) ==="
+    bpftool map dump name stats_map --json | jq -r '
+        .[] | select(.key[0] == 0) | .values[] | 
+        "CPU " + (.|keys[0]) + ": " + (.[] | tostring) + " packets"
+    '
+    sleep 5
+done
+```
+
+### Security Considerations for bpftool
+
+- **Root Privileges**: Most bpftool operations require root access
+- **Map Modifications**: Direct map modifications bypass application logic - use with caution
+- **Production Safety**: Always test bpftool commands in pre-production environment first
+- **Backup Configurations**: Document current map states before making changes
+- **Monitoring**: Log all manual map modifications for audit trails
 
 ## Security Considerations
 
