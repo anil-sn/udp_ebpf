@@ -107,11 +107,10 @@ monitor_interface_pps() {
     
     # Simple, clean table header
     echo ""
-    printf "%-8s | %-45s | %-45s | %-45s\n" "" "🔄 $incoming_iface (INGRESS)" "⚡ $target_iface (PROCESSING)" "🔒 $ipsec_iface (SECURITY)"
-    echo "---------|-----------------------------------------------|-----------------------------------------------|-----------------------------------------------"
-    printf "%-8s | %-15s %-15s %-13s | %-15s %-15s %-13s | %-15s %-15s %-13s\n" \
-        "TIME" "RX-PPS" "TX-PPS" "ERRORS/s" "RX-PPS" "TX-PPS" "ERRORS/s" "RX-PPS" "TX-PPS" "ERRORS/s"
-    echo "---------|-----------------------------------------------|-----------------------------------------------|-----------------------------------------------"
+    printf "%-9s %-12s %-12s %-10s  %-12s %-12s %-10s  %-12s %-12s %-10s\n" \
+        "TIME" "ens5-RX" "ens5-TX" "ens5-ERR" "tap0-RX" "tap0-TX" "tap0-ERR" "ipsec0-RX" "ipsec0-TX" "ipsec0-ERR"
+    printf "%-9s %-12s %-12s %-10s  %-12s %-12s %-10s  %-12s %-12s %-10s\n" \
+        "---------" "------------" "------------" "----------" "------------" "------------" "----------" "------------" "------------" "----------"
     
     # Set trap for Ctrl+C
     trap 'print_color "yellow" "\n📊 PPS monitoring stopped"; return 0' INT
@@ -186,7 +185,7 @@ monitor_interface_pps() {
         local ipsec_err_fmt=$(format_errors_with_color $ipsec_err_rate)
         
         # Simple, clean data display
-        printf "%-8s | %-15s %-15s %-13s | %-15s %-15s %-13s | %-15s %-15s %-13s\n" \
+        printf "%-9s %-12s %-12s %-10s  %-12s %-12s %-10s  %-12s %-12s %-10s\n" \
             "$timestamp" \
             "${incoming_rx_pps} pps" "${incoming_tx_pps} pps" "$(format_simple_errors $incoming_err_rate)" \
             "${target_rx_pps} pps" "${target_tx_pps} pps" "$(format_simple_errors $target_err_rate)" \
