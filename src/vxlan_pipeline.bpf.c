@@ -281,7 +281,7 @@ struct {
     __type(key, __u32);        /* Always use key=0 */
     __type(value, __u8);       /* 1 = enabled, 0 = disabled */
     __uint(max_entries, 1);    /* Single configuration entry */
-} ip_filter_config SEC(".maps");
+} ip_filter_ctrl SEC(".maps");
 
 /* Packet data structure for ring buffer */
 struct packet_event {
@@ -426,7 +426,7 @@ static __always_inline int is_ip_allowed(struct iphdr *iph) {
 
     /* Check if IP filtering is enabled */
     __u32 key = 0;
-    __u8 *enabled = bpf_map_lookup_elem(&ip_filter_config, &key);
+    __u8 *enabled = bpf_map_lookup_elem(&ip_filter_ctrl, &key);
     if (!enabled || *enabled == IP_FILTERING_DISABLED) {
         /* IP filtering disabled - allow all packets */
         return 1;

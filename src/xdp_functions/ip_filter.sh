@@ -5,7 +5,7 @@ enable_ip_filtering() {
     print_color "blue" "Enabling IP allowlist filtering..."
     
     # Check if BPF program is loaded
-    if ! bpftool map show name ip_filter_config >/dev/null 2>&1; then
+    if ! bpftool map show name ip_filter_ctrl >/dev/null 2>&1; then
         if bpftool map show name ip_allowlist >/dev/null 2>&1; then
             print_color "yellow" "⚠ XDP program is running in LEGACY MODE"
             echo "  - IP filtering is already ALWAYS ENABLED (cannot be disabled)"
@@ -22,7 +22,7 @@ enable_ip_filtering() {
     fi
     
     # Set config flag to 1 (enabled)
-    if bpftool map update name ip_filter_config key hex 00 00 00 00 value hex 01; then
+    if bpftool map update name ip_filter_ctrl key hex 00 00 00 00 value hex 01; then
         print_color "green" "✓ IP filtering ENABLED"
         echo "  - Only IPs in allowlist will be allowed through"
         
@@ -44,7 +44,7 @@ disable_ip_filtering() {
     print_color "blue" "Disabling IP allowlist filtering..."
     
     # Check if BPF program is loaded
-    if ! bpftool map show name ip_filter_config >/dev/null 2>&1; then
+    if ! bpftool map show name ip_filter_ctrl >/dev/null 2>&1; then
         if bpftool map show name ip_allowlist >/dev/null 2>&1; then
             print_color "yellow" "⚠ XDP program is running in LEGACY MODE"
             echo "  - IP filtering is ALWAYS ENABLED (cannot be disabled)"
@@ -58,7 +58,7 @@ disable_ip_filtering() {
     fi
     
     # Set config flag to 0 (disabled)
-    if bpftool map update name ip_filter_config key hex 00 00 00 00 value hex 00; then
+    if bpftool map update name ip_filter_ctrl key hex 00 00 00 00 value hex 00; then
         print_color "green" "✓ IP filtering DISABLED"
         echo "  - All IP addresses will be allowed through"
         echo "  - Allowlist is ignored but preserved"
@@ -72,7 +72,7 @@ show_ip_filtering_status() {
     print_color "blue" "=== IP Filtering Status ==="
     
     # Check if BPF program is loaded - try multiple maps for better detection
-    if ! bpftool map show name ip_filter_config >/dev/null 2>&1; then
+    if ! bpftool map show name ip_filter_ctrl >/dev/null 2>&1; then
         # Try alternative detection methods
         if ! bpftool map show name ip_allowlist >/dev/null 2>&1 && ! bpftool map show name stats_map >/dev/null 2>&1; then
             print_color "red" "Status: NOT AVAILABLE"
@@ -107,7 +107,7 @@ show_ip_filtering_status() {
     fi
     
     # Get current config value
-    local status_output=$(bpftool map lookup name ip_filter_config key hex 00 00 00 00 2>/dev/null)
+    local status_output=$(bpftool map lookup name ip_filter_ctrl key hex 00 00 00 00 2>/dev/null)
     local status=$(echo "$status_output" | grep -o "value.*" | grep -o "[0-9a-f][0-9a-f]" | tail -1)
     
     if [ "$status" = "01" ]; then
@@ -157,7 +157,7 @@ initialize_ip_filter_config() {
     print_color "blue" "Initializing IP filter configuration..."
     
     # Default to enabled for backward compatibility
-    bpftool map update name ip_filter_config key hex 00 00 00 00 value hex 01 2>/dev/null
+    bpftool map update name ip_filter_ctrl key hex 00 00 00 00 value hex 01 2>/dev/null
     
     if [ $? -eq 0 ]; then
         print_color "green" "✓ IP filtering initialized (default: ENABLED)"
