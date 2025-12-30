@@ -96,9 +96,6 @@ EXAMPLES:
     ./xdp.sh filter enable                  # Enable IP allowlist filtering
     ./xdp.sh filter disable                 # Disable IP allowlist filtering
     ./xdp.sh filter status                  # Show filtering status
-    ./xdp.sh filter enable                  # Enable IP allowlist filtering
-    ./xdp.sh filter disable                 # Disable IP allowlist filtering
-    ./xdp.sh filter status                  # Show filtering status
     ./xdp.sh logs 50 ALERT                  # Show last 50 log entries with alerts
     ./xdp.sh stats                          # Show detailed pipeline analysis
     ./xdp.sh stats --compact                # Show compact statistics
