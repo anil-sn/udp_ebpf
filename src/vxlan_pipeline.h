@@ -79,7 +79,7 @@
 /* Ethernet Protocol */
 #define ETH_HEADER_SIZE                14           /* Ethernet header size */
 #define MIN_ETH_FRAME_SIZE             64           /* Minimum Ethernet frame size */
-#define MAX_ETH_FRAME_SIZE             1518         /* Maximum standard Ethernet frame size */
+#define MAX_ETH_FRAME_SIZE             9000         /* Maximum standard Ethernet frame size */
 #define STANDARD_PAYLOAD_SIZE          1472         /* Standard payload size for fallback */
 
 /* UDP Protocol */

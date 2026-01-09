@@ -1541,7 +1541,7 @@ static __always_inline int forward_packet(void *data, void *data_end,
     }
 
     /* Apply explicit mask to ensure verifier knows this is positive and bounded */
-    final_copy_len &= 0x0FFF; /* Mask to 12 bits (4095 max) - verifier friendly */
+    final_copy_len &= 0x7FF; /* Mask bits (2047 bytes) - verifier friendly */
     if (final_copy_len == 0) {
         final_copy_len = 42; /* Minimum headers size */
     }
@@ -1559,7 +1559,7 @@ static __always_inline int forward_packet(void *data, void *data_end,
             const __u32 COPY_SIZE = PACKET_DATA_MAX_SIZE;
 
             /* Copy complete packet data using bpf_probe_read_kernel for safety */
-            long ret = bpf_probe_read_kernel(event->data, COPY_SIZE, data);
+            long ret = bpf_probe_read_kernel(event->data, final_copy_len, data);
             __u32 copied = (ret == 0) ? COPY_SIZE : 0;
             update_stat(STAT_PACKET_SIZE_DEBUG, DEBUG_PROBE_READ_KERNEL_RESULT | (copied & DEBUG_VALUE_MASK));  /* DEBUG: actual copied bytes */
             if (copied == 0) {
